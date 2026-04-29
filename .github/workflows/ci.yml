@@ -91,8 +91,13 @@ jobs:
           CGO_ENABLED: "1"
           WORKSPACE: ${{ github.workspace }}
         run: |
+          # Prefer static linking of the ledger so the test binaries don't
+          # need libopenagentlock_ledger.so on LD_LIBRARY_PATH at runtime.
           export CGO_CFLAGS="-I${WORKSPACE}/ledger/include"
-          export CGO_LDFLAGS="-L${WORKSPACE}/ledger/target/release -lopenagentlock_ledger"
+          export CGO_LDFLAGS="-L${WORKSPACE}/ledger/target/release -l:libopenagentlock_ledger.a -ldl -lpthread -lm"
+          # Belt + suspenders: also set LD_LIBRARY_PATH for any runtime
+          # consumer that did pick up the dylib.
+          export LD_LIBRARY_PATH="${WORKSPACE}/ledger/target/release${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           go vet ./...
           go test -race ./...
 
