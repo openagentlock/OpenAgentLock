@@ -16,7 +16,6 @@ theme:
   language: en
   logo: assets/logo-mark.svg
   favicon: assets/favicon.svg
-  custom_dir: docs/.overrides
   features:
     - navigation.instant
     - navigation.tabs

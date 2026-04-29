@@ -1,10 +1,16 @@
 # Multi-stage build of the OpenAgentLock control plane.
 #
+# Build context is the repo root (the published docker-publish.yml uses
+# `context: .` and `file: control-plane/Dockerfile`).
+#
 # Layers:
-#   1. rust-builder — compiles ledger/ to a staticlib (libopenagentlock_ledger.a)
-#   2. dashboard-builder — builds the Vite/Bun SPA into control-plane/internal/dashboard/dist
-#   3. go-builder — compiles the Go binary, linking the Rust staticlib via CGO
-#   4. runtime — distroless
+#   1. rust-builder       — compiles ledger/ to libopenagentlock_ledger.a
+#   2. dashboard-builder  — builds the Vite SPA. Vite's outDir resolves to
+#                           /src/control-plane/internal/dashboard/dist
+#                           (see control-plane/dashboard-ui/vite.config.ts).
+#   3. go-builder         — compiles the Go binary, linking the Rust
+#                           staticlib via CGO.
+#   4. runtime            — distroless cc.
 
 # ---------- 1. rust-builder ----------
 FROM rust:1-slim AS rust-builder
@@ -15,10 +21,12 @@ RUN cargo build --release --lib
 
 # ---------- 2. dashboard-builder ----------
 FROM oven/bun:1.3 AS dashboard-builder
+# vite outDir is "../internal/dashboard/dist", so we need both dirs
+# present at the right relative paths.
+WORKDIR /src/control-plane
+COPY control-plane/dashboard-ui ./dashboard-ui
 WORKDIR /src/control-plane/dashboard-ui
-COPY control-plane/dashboard-ui/package.json control-plane/dashboard-ui/bun.lockb* ./
 RUN bun install --frozen-lockfile || bun install
-COPY control-plane/dashboard-ui/ ./
 RUN bun run build
 
 # ---------- 3. go-builder ----------
@@ -34,7 +42,7 @@ COPY control-plane/internal ./internal
 COPY control-plane/api ./api
 COPY --from=rust-builder /src/ledger/include /src/ledger/include
 COPY --from=rust-builder /src/ledger/target/release/libopenagentlock_ledger.a /src/ledger/target/release/libopenagentlock_ledger.a
-COPY --from=dashboard-builder /src/control-plane/dashboard-ui/dist /src/control-plane/internal/dashboard/dist
+COPY --from=dashboard-builder /src/control-plane/internal/dashboard/dist /src/control-plane/internal/dashboard/dist
 
 ENV CGO_ENABLED=1
 ENV CGO_CFLAGS="-I/src/ledger/include"

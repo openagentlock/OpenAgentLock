@@ -2,13 +2,15 @@
 
 ## Reporting a vulnerability
 
-OpenAgentLock is a security-focused project. To report a suspected vulnerability privately, use **GitHub's private vulnerability reporting**:
+Once this repository is public, the preferred channel is **GitHub's private vulnerability reporting**:
 
-- <https://github.com/openagentlock/openagentlock/security/advisories/new>
+- <https://github.com/openagentlock/OpenAgentLock/security/advisories/new>
 
-Include a description, reproduction steps, and impact assessment. We'll acknowledge within 72 hours.
+(Private vulnerability reporting on private repos is gated to the GitHub Advanced Security add-on, so the form is only usable while the repository is public, or for orgs on a paid plan.)
 
-If for some reason you can't reach the private advisory form, file a public issue with as little detail as possible (just enough for us to recognize it as a security report) and we'll coordinate from there. Do **not** post a working exploit in a public issue.
+If the form isn't reachable for any reason, open a GitHub issue with **just enough detail to recognize the report as a security issue** — please don't include a working exploit, reproduction steps, or PoC payloads. We'll move the conversation to a private channel from there.
+
+We acknowledge reports within 72 hours.
 
 ## Scope
 
@@ -30,7 +32,7 @@ Out of scope:
 
 Once a fix lands and a release is cut, we will:
 
-1. Publish the GitHub Security Advisory with a CVE if applicable.
+1. Publish a GitHub Security Advisory with a CVE if applicable.
 2. Credit the reporter unless they request anonymity.
 3. Note the fix version in `CHANGELOG.md`.
 

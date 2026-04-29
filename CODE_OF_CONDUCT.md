@@ -8,6 +8,6 @@ We pledge to make participation in our community a harassment-free experience fo
 
 ## Enforcement
 
-Report unacceptable behavior by opening a GitHub issue at <https://github.com/openagentlock/openagentlock/issues>. If the report is sensitive and you'd prefer a private channel, use a [GitHub private vulnerability advisory](https://github.com/openagentlock/openagentlock/security/advisories/new) — the form is general-purpose and we'll route conduct reports through the maintainers from there.
+Report unacceptable behavior by opening a GitHub issue at <https://github.com/openagentlock/openagentlock/issues>. If the report is sensitive and you'd prefer a private channel, use a [GitHub private vulnerability advisory](https://github.com/openagentlock/OpenAgentLock/security/advisories/new) — the form is general-purpose and we'll route conduct reports through the maintainers from there.
 
 The full Contributor Covenant 2.1 text governs this project. Maintainers may remove, edit, or reject contributions that do not align with this Code of Conduct, and may temporarily or permanently ban any contributor for behaviors deemed inappropriate, threatening, offensive, or harmful.
