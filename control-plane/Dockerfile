@@ -7,7 +7,7 @@
 #   4. runtime — distroless
 
 # ---------- 1. rust-builder ----------
-FROM rust:1.78-slim AS rust-builder
+FROM rust:1.95-slim AS rust-builder
 WORKDIR /src
 COPY ledger /src/ledger
 WORKDIR /src/ledger
