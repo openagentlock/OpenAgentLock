@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule: { interval: "weekly" }
+    commit-message: { prefix: "ci" }
+
+  - package-ecosystem: "gomod"
+    directory: "/control-plane"
+    schedule: { interval: "weekly" }
+    commit-message: { prefix: "go" }
+
+  - package-ecosystem: "cargo"
+    directory: "/ledger"
+    schedule: { interval: "weekly" }
+    commit-message: { prefix: "rust" }
+
+  - package-ecosystem: "npm"
+    directory: "/cli"
+    schedule: { interval: "weekly" }
+    commit-message: { prefix: "npm(cli)" }
+
+  - package-ecosystem: "npm"
+    directory: "/control-plane/dashboard-ui"
+    schedule: { interval: "weekly" }
+    commit-message: { prefix: "npm(dashboard)" }
+
+  - package-ecosystem: "docker"
+    directory: "/control-plane"
+    schedule: { interval: "weekly" }
+    commit-message: { prefix: "docker" }
+
+  - package-ecosystem: "pip"
+    directory: "/docs"
+    schedule: { interval: "weekly" }
+    commit-message: { prefix: "docs" }

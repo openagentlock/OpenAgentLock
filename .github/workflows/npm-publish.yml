@@ -1,0 +1,47 @@
+name: npm-publish
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish @openagentlock/cli
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3" }
+
+      - name: Install
+        working-directory: cli
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: cli
+        run: bun run typecheck
+
+      - name: Test
+        working-directory: cli
+        run: bun test
+
+      - name: Publish
+        working-directory: cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public

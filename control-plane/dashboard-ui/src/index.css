@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* color-scheme: respect the user's OS preference. Forcing "dark" hid the
+   browser's default focus ring against the dark panel; leaving it at
+   `light dark` plus an explicit focus outline below gives keyboard users
+   a visible ring in both modes. */
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  margin: 0;
+}
+
+@layer components {
+  .oal-table {
+    @apply w-full text-xs border-collapse;
+  }
+  .oal-table th {
+    /* text-[11px] is smaller than WCAG-recommended minimum body sizes,
+       but this is a dense admin table — caps-tracking keeps the labels
+       legible at that size on any modern display. */
+    @apply text-left px-3 py-2 font-semibold uppercase tracking-wider text-muted border-b border-border text-[11px];
+  }
+  .oal-table td {
+    @apply text-left px-3 py-1.5 border-b border-border;
+  }
+  .oal-panel {
+    @apply bg-panel border border-border rounded-md p-4;
+  }
+  .oal-chip {
+    @apply inline-block px-1.5 py-0.5 rounded text-[11px] bg-chip text-neutral-200;
+  }
+  .oal-input {
+    @apply bg-chip border border-border rounded px-2 py-1 text-xs text-neutral-100;
+  }
+  .oal-input:focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-panel border-accent;
+  }
+  .oal-btn {
+    @apply bg-chip border border-border rounded px-2.5 py-1 text-xs cursor-pointer hover:border-accent transition-colors disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+  .oal-btn:focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-panel border-accent;
+  }
+  .oal-btn-link {
+    @apply bg-transparent border-0 p-0 text-[11px] text-muted underline hover:text-neutral-100 cursor-pointer;
+  }
+  .oal-btn-link:focus-visible {
+    @apply outline-none ring-2 ring-accent rounded-sm text-neutral-100;
+  }
+}

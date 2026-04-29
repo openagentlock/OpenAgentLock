@@ -1,0 +1,66 @@
+{
+  "name": "@openagentlock/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "description": "OpenAgentLock CLI — a firewall for AI coding agents. Detects local agent harnesses (Claude Code, Codex CLI, Cursor, OpenCode, Cline, Gemini CLI, Continue, Copilot), gates risky tool calls via a Go control plane, anchors decisions in a Rust Merkle ledger.",
+  "keywords": [
+    "ai",
+    "agent",
+    "firewall",
+    "security",
+    "claude-code",
+    "codex",
+    "cursor",
+    "mcp",
+    "policy",
+    "audit",
+    "merkle",
+    "supply-chain"
+  ],
+  "homepage": "https://openagentlock.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openagentlock/openagentlock.git",
+    "directory": "cli"
+  },
+  "bugs": {
+    "url": "https://github.com/openagentlock/openagentlock/issues"
+  },
+  "author": "OpenAgentLock contributors",
+  "bin": {
+    "agentlock": "./src/index.ts"
+  },
+  "files": [
+    "src/",
+    "tsconfig.json",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "detect": "bun run src/index.ts detect",
+    "install-into": "bun run src/index.ts install",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/index.ts --target=bun --outdir=dist"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^3.1.0",
+    "@noble/hashes": "^2.2.0",
+    "@opentui/core": "*",
+    "@opentui/react": "^0.1.102",
+    "commander": "^12.1.0",
+    "react": "^19.2.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.14",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

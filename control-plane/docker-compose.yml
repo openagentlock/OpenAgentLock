@@ -1,0 +1,15 @@
+services:
+  control-plane:
+    build: .
+    image: openagentlock-control-plane:dev
+    ports:
+      - "127.0.0.1:7878:7878"
+    environment:
+      AGENTLOCK_LISTEN: "0.0.0.0:7878"
+    volumes:
+      - ../dev/agentlock:/var/lib/agentlock
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/control-plane", "--health"]
+      interval: 10s
+      timeout: 2s
+      retries: 3

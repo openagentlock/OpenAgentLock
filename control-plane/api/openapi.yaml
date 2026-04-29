@@ -1,0 +1,379 @@
+openapi: 3.1.0
+info:
+  title: OpenAgentLock control-plane API
+  version: 0.0.1-draft
+  description: |
+    Local HTTP API the OpenAgentLock CLI/TUI (`agentlock`) talks to.
+    Runs in Docker on the developer's machine, defaults to 127.0.0.1:7878.
+    All state is local; no outbound traffic.
+
+    Status: DRAFT. This file is the contract under sign-off review.
+servers:
+  - url: http://127.0.0.1:7878
+paths:
+  /v1/health:
+    get:
+      summary: Liveness probe.
+      responses:
+        "200": { description: ok }
+
+  /v1/sessions:
+    post:
+      summary: Start a session. YubiKey touch required for the genesis attestation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionStartRequest' }
+      responses:
+        "201":
+          description: session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+
+  /v1/sessions/{id}/rotate:
+    post:
+      summary: Rotate the session root. Requires a fresh hardware touch.
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200":
+          description: rotated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+
+  /v1/sessions/{id}/end:
+    post:
+      summary: End the session and burn the in-memory key.
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: ended } }
+
+  /v1/gates/check:
+    post:
+      summary: Pre-tool gate check. Hot path.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GateCheckRequest' }
+      responses:
+        "200":
+          description: verdict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GateCheckResponse' }
+
+  /v1/approvals/pending:
+    get:
+      summary: List currently-pending approval requests (TUI subscribes).
+      responses:
+        "200":
+          description: list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Approval' }
+
+  /v1/approvals/{id}/approve:
+    post:
+      summary: Approve a pending request with a signed decision.
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApprovalDecision' }
+      responses: { "200": { description: approved } }
+
+  /v1/approvals/{id}/refuse:
+    post:
+      summary: Refuse a pending request with a signed decision.
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApprovalDecision' }
+      responses: { "200": { description: refused } }
+
+  /v1/mcp/pin/check:
+    post:
+      summary: Check a fingerprint against the TOFU store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/McpPinCheck' }
+      responses:
+        "200":
+          description: verdict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GateCheckResponse' }
+
+  /v1/mcp/pin/accept:
+    post:
+      summary: Pin a new MCP fingerprint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/McpPinAccept' }
+      responses: { "204": { description: pinned } }
+
+  /v1/ledger/tail:
+    get:
+      summary: Server-sent events stream of ledger appends.
+      responses: { "200": { description: stream } }
+
+  /v1/ledger/root:
+    get:
+      summary: Current Merkle root + seq.
+      responses:
+        "200":
+          description: root
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LedgerRoot' }
+
+  /v1/ledger/proof/{seq}:
+    get:
+      summary: Inclusion proof for a leaf.
+      parameters: [ { in: path, name: seq, required: true, schema: { type: integer } } ]
+      responses:
+        "200":
+          description: proof
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InclusionProof' }
+
+  /v1/ledger/verify:
+    post:
+      summary: Verify a ledger file end-to-end.
+      responses: { "200": { description: verified or failure detail } }
+
+  /v1/detect/report:
+    post:
+      summary: CLI uploads its detection result for the daemon to record.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DetectReport' }
+      responses: { "204": { description: recorded } }
+
+  /v1/install/plan:
+    post:
+      summary: |
+        Compute the planned filesystem changes for a chosen harness set.
+        Returns the diff; does not apply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstallPlanRequest' }
+      responses:
+        "200":
+          description: plan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InstallPlan' }
+
+  /v1/install/apply:
+    post:
+      summary: Apply a previously-issued plan. Idempotent on plan ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstallApplyRequest' }
+      responses: { "200": { description: applied } }
+
+  /v1/install/uninstall:
+    post:
+      summary: >
+        Uninstall OpenAgentLock hooks from the named session's installed
+        harnesses. Surgical — strips only entries marked _agentlock:true,
+        leaves any other user-owned settings untouched. Backup file from
+        apply-time is left on disk as audit trail.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstallUninstallRequest' }
+      responses: { "200": { description: uninstalled } }
+
+  /v1/sessions/{id}/insights:
+    get:
+      summary: Live insights digest for a session.
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: digest } }
+
+  /v1/sessions/{id}/report:
+    get:
+      summary: Final report (JSON or PDF, content negotiation).
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: report } }
+
+components:
+  schemas:
+    Verdict:
+      type: string
+      enum: [allow, deny, ask]
+
+    SignerKind:
+      type: string
+      enum:
+        - none                    # Unattested monitor mode; ledger not signed
+        - os_keychain             # OS-keychain — default
+        - totp_backed_software    # TOTP — TOTP unlock
+        - yubikey_piv             # hardware-key — PIV slot 9c
+        - yubikey_fido2           # hardware-key — FIDO2 / U2F
+        - software                # software — dev / CI only
+
+    Session:
+      type: object
+      required: [id, started_at, expires_at, policy_hash, session_pubkey, signer, signer_pubkey]
+      properties:
+        id: { type: string }
+        started_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        policy_hash: { type: string }
+        session_pubkey: { type: string }
+        signer: { $ref: '#/components/schemas/SignerKind' }
+        signer_pubkey: { type: string }
+
+    SessionStartRequest:
+      type: object
+      required: [policy_hash, session_pubkey, signer, signer_pubkey, attestation]
+      properties:
+        policy_hash: { type: string }
+        session_pubkey: { type: string }
+        signer: { $ref: '#/components/schemas/SignerKind' }
+        signer_pubkey: { type: string }
+        attestation: { type: string, description: "ed25519 signature over canonical attestation payload" }
+
+    GateCheckRequest:
+      type: object
+      required: [session_id, source, tool, input]
+      properties:
+        session_id: { type: string }
+        source: { type: string, enum: [claude-code, mcp-proxy, cursor, codex, opencode, cline, continue, gemini, copilot, other] }
+        tool: { type: string }
+        input: { type: object, additionalProperties: true }
+        cwd: { type: string }
+        meta: { type: object, additionalProperties: true }
+
+    GateCheckResponse:
+      type: object
+      required: [verdict, rule_id, reason, ledger_seq]
+      properties:
+        verdict: { $ref: '#/components/schemas/Verdict' }
+        rule_id: { type: string }
+        reason: { type: string }
+        ledger_seq: { type: integer }
+        approval_id: { type: string }
+        require_rotate: { type: boolean }
+
+    Approval:
+      type: object
+      required: [id, session_id, tool, input, rule_id, reason, deadline_at]
+      properties:
+        id: { type: string }
+        session_id: { type: string }
+        tool: { type: string }
+        input: { type: object, additionalProperties: true }
+        rule_id: { type: string }
+        reason: { type: string }
+        deadline_at: { type: string, format: date-time }
+
+    ApprovalDecision:
+      type: object
+      required: [approval_id, decision, signer, signature]
+      properties:
+        approval_id: { type: string }
+        decision: { $ref: '#/components/schemas/Verdict' }
+        signer: { $ref: '#/components/schemas/SignerKind' }
+        signature: { type: string }
+
+    McpPinCheck:
+      type: object
+      required: [server_label, fingerprint]
+      properties:
+        server_label: { type: string }
+        fingerprint: { type: string }
+
+    McpPinAccept:
+      type: object
+      required: [server_label, fingerprint, server_info, signature]
+      properties:
+        server_label: { type: string }
+        fingerprint: { type: string }
+        server_info: { type: object, additionalProperties: true }
+        signature: { type: string }
+
+    LedgerRoot:
+      type: object
+      required: [root, seq, genesis_pubkey, computed_at]
+      properties:
+        root: { type: string }
+        seq: { type: integer }
+        genesis_pubkey: { type: string }
+        computed_at: { type: string, format: date-time }
+
+    InclusionProof:
+      type: object
+      required: [seq, leaf, path, root]
+      properties:
+        seq: { type: integer }
+        leaf: { type: string }
+        path: { type: array, items: { type: string } }
+        root: { type: string }
+
+    DetectReport:
+      type: object
+      required: [reported_at, detections]
+      properties:
+        reported_at: { type: string, format: date-time }
+        detections:
+          type: array
+          items: { type: object, additionalProperties: true }
+
+    InstallPlanRequest:
+      type: object
+      required: [chosen]
+      properties:
+        chosen:
+          type: array
+          items: { type: string }
+        policy: { type: string, description: "name of policy file under policies/" }
+
+    InstallPlan:
+      type: object
+      required: [plan_id, steps, snapshot_id]
+      properties:
+        plan_id: { type: string }
+        snapshot_id: { type: string, description: "id of the pre-apply snapshot" }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [op, target]
+            properties:
+              op: { type: string, enum: [write_settings, install_proxy_config, register_hook, noop] }
+              target: { type: string, description: "absolute path that will be touched" }
+              detail: { type: object, additionalProperties: true }
+
+    InstallApplyRequest:
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id: { type: string }
+
+    InstallUninstallRequest:
+      type: object
+      required: [session_id]
+      properties:
+        session_id: { type: string }

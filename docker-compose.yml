@@ -1,0 +1,37 @@
+# OpenAgentLock control plane — drop-in compose file for end users.
+#
+# Pulls the published image from GitHub Container Registry. No build step
+# required.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f control-plane
+#   docker compose down
+#
+# Then point the `agentlock` CLI at http://127.0.0.1:7878 (the default).
+# Open the local web dashboard at http://127.0.0.1:7879
+
+services:
+  control-plane:
+    image: ghcr.io/openagentlock/control-plane:latest
+    container_name: agentlock
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7878:7878"   # CLI / hooks
+      - "127.0.0.1:7879:7879"   # local web dashboard
+    environment:
+      AGENTLOCK_LISTEN: "0.0.0.0:7878"
+      AGENTLOCK_DASHBOARD_LISTEN: "0.0.0.0:7879"
+      AGENTLOCK_POLICY: "/etc/agentlock/policies/default.yaml"
+      AGENTLOCK_HOME: "/var/lib/agentlock"
+    volumes:
+      - agentlock-state:/var/lib/agentlock
+      - ./policies:/etc/agentlock/policies:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/control-plane", "--health"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+
+volumes:
+  agentlock-state:

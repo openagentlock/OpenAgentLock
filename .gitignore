@@ -1,0 +1,46 @@
+# Bun / Node
+node_modules/
+*.log
+.DS_Store
+dist/
+.cache/
+
+# Bun
+bun.lockb.bak
+
+# Go build artifacts
+control-plane/control-plane
+control-plane/dashboard-ui/dist/
+!control-plane/dashboard-ui/dist/.gitkeep
+control-plane/internal/dashboard/dist/
+!control-plane/internal/dashboard/dist/.gitkeep
+
+# Rust build artifacts
+ledger/target/
+
+# VitePress
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
+# Local runtime
+dev/
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Editor backup
+.bak
+
+# CLI build
+cli/dist/
+cli/agentlock
+
+# OS
+Thumbs.db
+.tanstack/

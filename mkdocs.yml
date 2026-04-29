@@ -1,0 +1,123 @@
+site_name: OpenAgentLock
+site_url: https://openagentlock.dev/
+site_description: A locally-hosted, open-source firewall for AI coding agents.
+site_author: OpenAgentLock contributors
+copyright: Copyright &copy; 2026 OpenAgentLock contributors — FSL-1.1-Apache-2.0
+
+repo_url: https://github.com/openagentlock/openagentlock
+repo_name: openagentlock/openagentlock
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  logo: assets/logo-mark.svg
+  favicon: assets/favicon.svg
+  custom_dir: docs/.overrides
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - content.action.view
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle: { icon: material/brightness-auto, name: Switch to light mode }
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: black
+      toggle: { icon: material/brightness-7, name: Switch to dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: white
+      toggle: { icon: material/brightness-4, name: Switch to system preference }
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/openagentlock/openagentlock
+  status:
+    shipped: Shipped
+    not-yet: Not yet implemented
+    roadmap: Roadmap
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.caret
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Guide:
+      - Getting started: guide/getting-started.md
+      - Installation: guide/installation.md
+      - Policies and the five gates: guide/policies.md
+      - Signers: guide/signers.md
+      - The ledger: guide/ledger.md
+      - Local web dashboard: guide/dashboard.md
+      - Isolation: guide/isolation.md
+      - MCP: guide/mcp.md
+      - Threat model: guide/threat-model.md
+      - Authentication: guide/auth.md
+      - Windows notes: guide/windows.md
+  - Architecture:
+      - Overview: architecture/overview.md
+  - Reference:
+      - HTTP API: reference/api.md
+      - Detection registry: reference/detection.md
+      - Hooks: reference/hooks.md
+      - Hook → daemon path: reference/hook-daemon-path.md
+  - FAQ: faq.md
+  - Status: status.md
