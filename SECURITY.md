@@ -2,9 +2,13 @@
 
 ## Reporting a vulnerability
 
-Email **security@openagentlock.dev** with a description, reproduction steps, and impact assessment. We will acknowledge within 72 hours.
+OpenAgentLock is a security-focused project. To report a suspected vulnerability privately, use **GitHub's private vulnerability reporting**:
 
-Do not open public issues for vulnerabilities.
+- <https://github.com/openagentlock/openagentlock/security/advisories/new>
+
+Include a description, reproduction steps, and impact assessment. We'll acknowledge within 72 hours.
+
+If for some reason you can't reach the private advisory form, file a public issue with as little detail as possible (just enough for us to recognize it as a security report) and we'll coordinate from there. Do **not** post a working exploit in a public issue.
 
 ## Scope
 
@@ -26,7 +30,7 @@ Out of scope:
 
 Once a fix lands and a release is cut, we will:
 
-1. Publish a GitHub Security Advisory with a CVE if applicable.
+1. Publish the GitHub Security Advisory with a CVE if applicable.
 2. Credit the reporter unless they request anonymity.
 3. Note the fix version in `CHANGELOG.md`.
 
@@ -36,4 +40,4 @@ Once a fix lands and a release is cut, we will:
 - Hardware-key signer: PIV / FIDO2 via the host CLI; YubiKey not bridged into Docker (USB HID limitation).
 - TOTP signer: RFC 6238, 6-digit, default 30-second step.
 
-If you believe any of these primitives are misused or the chosen parameters are insufficient, please file a report.
+If you believe any of these primitives are misused or the chosen parameters are insufficient, please file a private advisory.

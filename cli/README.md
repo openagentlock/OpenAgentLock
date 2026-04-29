@@ -23,7 +23,7 @@ agentlock install           # plan + apply hooks for selected harnesses
 agentlock status            # control-plane health
 ```
 
-Full documentation: <https://openagentlock.dev/>
+Full documentation: <https://openagentlock.github.io/openagentlock/>
 
 Source: <https://github.com/openagentlock/openagentlock>
 

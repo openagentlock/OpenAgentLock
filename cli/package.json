@@ -18,7 +18,7 @@
     "merkle",
     "supply-chain"
   ],
-  "homepage": "https://openagentlock.dev",
+  "homepage": "https://openagentlock.github.io/openagentlock",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/openagentlock/openagentlock.git",

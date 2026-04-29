@@ -11,10 +11,10 @@
 [![npm](https://img.shields.io/npm/v/%40openagentlock%2Fcli?style=flat-square&label=%40openagentlock%2Fcli)](https://www.npmjs.com/package/@openagentlock/cli)
 [![ghcr](https://img.shields.io/badge/ghcr.io-control--plane-black?style=flat-square&logo=docker&logoColor=white)](https://github.com/openagentlock/openagentlock/pkgs/container/control-plane)
 [![license](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-black?style=flat-square)](LICENSE)
-[![docs](https://img.shields.io/badge/docs-openagentlock.dev-black?style=flat-square)](https://openagentlock.dev/)
+[![docs](https://img.shields.io/badge/docs-openagentlock.github.io/openagentlock-black?style=flat-square)](https://openagentlock.github.io/openagentlock/)
 [![stars](https://img.shields.io/github/stars/openagentlock/openagentlock?style=flat-square)](https://github.com/openagentlock/openagentlock/stargazers)
 
-[Documentation](https://openagentlock.dev/) · [Getting started](https://openagentlock.dev/guide/getting-started/) · [Status](https://openagentlock.dev/status/) · [Architecture](https://openagentlock.dev/architecture/overview/)
+[Documentation](https://openagentlock.github.io/openagentlock/) · [Getting started](https://openagentlock.github.io/openagentlock/guide/getting-started/) · [Status](https://openagentlock.github.io/openagentlock/status/) · [Architecture](https://openagentlock.github.io/openagentlock/architecture/overview/)
 
 </div>
 
@@ -41,7 +41,7 @@ agentlock install
 
 Then open the local web dashboard at <http://127.0.0.1:7879/>.
 
-Full walkthrough at <https://openagentlock.dev/guide/getting-started/>.
+Full walkthrough at <https://openagentlock.github.io/openagentlock/guide/getting-started/>.
 
 ## What ships today
 
@@ -58,7 +58,7 @@ Full walkthrough at <https://openagentlock.dev/guide/getting-started/>.
 | OIDC SSO + RBAC + LDAP | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | Signed PDF audit report | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 
-The complete shipped/not-yet matrix lives at <https://openagentlock.dev/status/>.
+The complete shipped/not-yet matrix lives at <https://openagentlock.github.io/openagentlock/status/>.
 
 ## How it works
 
@@ -83,7 +83,7 @@ Three languages, one repo:
 - **`control-plane/`** — Go HTTP service in Docker. Evaluates policy, drives install plan/apply, appends to ledger.
 - **`ledger/`** — Rust crate. Merkle log + verification, exposed to Go via FFI so verification logic exists in exactly one place.
 
-See [Architecture overview](https://openagentlock.dev/architecture/overview/) for the why behind the split.
+See [Architecture overview](https://openagentlock.github.io/openagentlock/architecture/overview/) for the why behind the split.
 
 ## The five gates
 
@@ -97,7 +97,7 @@ Every install ships [`policies/default.yaml`](policies/default.yaml) with five g
 | `rogue.net-egress` | `curl`, `wget`, MCP HTTP tools |
 | `rogue.destructive-bash` | `rm -rf`, `git push --force`, `DROP TABLE`, `kubectl delete` |
 
-See [Policies and the five gates](https://openagentlock.dev/guide/policies/) for the rule schema and authoring rules.
+See [Policies and the five gates](https://openagentlock.github.io/openagentlock/guide/policies/) for the rule schema and authoring rules.
 
 ## Repository layout
 
@@ -109,7 +109,7 @@ control-plane/              Go HTTP service in Docker                 — ghcr.i
   dashboard-ui/             Vite SPA embedded into the Go binary
 ledger/                     Rust crate (lib + cdylib + staticlib)     — openagentlock-ledger
 policies/default.yaml       baseline policy shipped with every install
-docs/                       MkDocs Material site (deployed to openagentlock.dev)
+docs/                       MkDocs Material site (deployed to openagentlock.github.io/openagentlock)
 assets/                     logo, favicon, social card
 Formula/agentlock.rb        Homebrew tap formula
 docker-compose.yml          one-command control-plane bring-up

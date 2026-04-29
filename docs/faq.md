@@ -37,7 +37,7 @@ Each piece sits at the language's sweet spot: TypeScript for harness-facing CLI 
 
 ## How do I report a security issue?
 
-Email **security@openagentlock.dev**. Do **not** open a public issue. See [`SECURITY.md`](https://github.com/openagentlock/openagentlock/blob/main/SECURITY.md).
+Use **GitHub's private vulnerability reporting**: <https://github.com/openagentlock/openagentlock/security/advisories/new>. Do **not** open a public issue with reproduction details. See [`SECURITY.md`](https://github.com/openagentlock/openagentlock/blob/main/SECURITY.md).
 
 ## What's coming next?
 

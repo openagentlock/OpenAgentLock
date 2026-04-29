@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/openagentlock/openagentlock/security/policy
     about: Report a vulnerability privately. See SECURITY.md.
   - name: Documentation
-    url: https://openagentlock.dev/
+    url: https://openagentlock.github.io/openagentlock/
     about: Browse the docs before opening an issue.

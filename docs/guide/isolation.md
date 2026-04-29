@@ -5,8 +5,10 @@ OpenAgentLock has rules about where it writes. None of them touch your real harn
 ## Where state goes
 
 - `${AGENTLOCK_HOME:-$HOME/.agentlock}` — control-plane SQLite ledger, pinned MCP public keys, session keys.
-- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` — Claude Code's own settings file. The installer adds hook entries here on `agentlock install`, removes them on `agentlock uninstall`. This is the only path we modify in the harness's territory.
+- `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` — Claude Code's own settings file. The installer adds hook entries here on `agentlock install`, removes them on `agentlock uninstall`.
 - `~/.codex/config.toml` — Codex CLI's own settings file. Same plan-apply-uninstall contract.
+
+These two files are the only paths we modify inside the harnesses' territory. The installer never touches anything else under `~/.claude` or `~/.codex` — only the hook entries it added.
 
 The control-plane Docker volume mounts `agentlock-state` into `/var/lib/agentlock`. Your host's `~/.agentlock` is the natural mount target if you prefer a bind mount over a named volume.
 
