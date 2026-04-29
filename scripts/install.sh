@@ -5,7 +5,7 @@
 #   curl -fsSL https://openagentlock.github.io/openagentlock/install.sh | bash
 #
 # What it does:
-#   1. Pulls the ghcr.io/openagentlock/control-plane image.
+#   1. Pulls the ghcr.io/openagentlock/agentlockd image.
 #   2. Drops a docker-compose.yml in your CWD if one isn't already there.
 #   3. Starts the control plane.
 #   4. Installs the CLI via Bun (or npm), if neither is found prints the manual command.
@@ -36,7 +36,7 @@ require docker
 ok "docker found"
 
 step "Pulling control-plane image"
-docker pull ghcr.io/openagentlock/control-plane:latest
+docker pull ghcr.io/openagentlock/agentlockd:latest
 ok "image pulled"
 
 if [[ ! -f docker-compose.yml ]]; then

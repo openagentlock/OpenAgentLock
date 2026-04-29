@@ -46,7 +46,7 @@ curl -O https://raw.githubusercontent.com/openagentlock/openagentlock/main/docke
 docker compose up -d
 ```
 
-The compose file references `ghcr.io/openagentlock/control-plane:latest` and binds two loopback ports:
+The compose file references `ghcr.io/openagentlock/agentlockd:latest` and binds two loopback ports:
 
 - `127.0.0.1:7878` — CLI and hook traffic
 - `127.0.0.1:7879` — local web dashboard
@@ -60,7 +60,7 @@ docker run -d --name agentlock \
   -p 127.0.0.1:7878:7878 \
   -p 127.0.0.1:7879:7879 \
   -v "$HOME/.agentlock:/var/lib/agentlock" \
-  ghcr.io/openagentlock/control-plane:latest
+  ghcr.io/openagentlock/agentlockd:latest
 ```
 
 ### Image tags
@@ -72,7 +72,7 @@ docker run -d --name agentlock \
 | `:0.x` | tracks the latest patch on a minor line |
 | `:sha-abcdef0` | pinned to a specific commit |
 
-We sign images with cosign keyless on every release; verify with `cosign verify ghcr.io/openagentlock/control-plane:<tag>`.
+We sign images with cosign keyless on every release; verify with `cosign verify ghcr.io/openagentlock/agentlockd:<tag>`.
 
 ## Platform support
 

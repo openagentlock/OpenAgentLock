@@ -31,7 +31,7 @@ auth:
   mode: oidc
   oidc:
     issuer: https://accounts.google.com
-    audience: openagentlock-control-plane
+    audience: agentlockd
     jwks_uri: https://www.googleapis.com/oauth2/v3/certs
     require_email_domain: yourcompany.com
 ```

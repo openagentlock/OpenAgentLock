@@ -11,8 +11,8 @@ npm i -g @openagentlock/cli
 The CLI talks to a local control plane (Go service in Docker, port 7878). Pull and start the control-plane image:
 
 ```bash
-docker pull ghcr.io/openagentlock/control-plane:latest
-docker run -d --name agentlock -p 127.0.0.1:7878:7878 ghcr.io/openagentlock/control-plane:latest
+docker pull ghcr.io/openagentlock/agentlockd:latest
+docker run -d --name agentlock -p 127.0.0.1:7878:7878 ghcr.io/openagentlock/agentlockd:latest
 ```
 
 Then use the CLI:

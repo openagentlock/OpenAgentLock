@@ -19,7 +19,7 @@ In scope:
 - The CLI (`cli/`)
 - The control plane (`control-plane/`)
 - The ledger crate (`ledger/`)
-- The published `ghcr.io/openagentlock/control-plane` Docker image
+- The published `ghcr.io/openagentlock/agentlockd` Docker image
 - The published `@openagentlock/cli` npm package
 
 Out of scope:

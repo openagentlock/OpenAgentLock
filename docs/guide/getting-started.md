@@ -20,12 +20,12 @@ The control plane is a small Go HTTP service that lives in a Docker container. I
 === "docker run"
 
     ```bash
-    docker pull ghcr.io/openagentlock/control-plane:latest
+    docker pull ghcr.io/openagentlock/agentlockd:latest
     docker run -d --name agentlock \
       -p 127.0.0.1:7878:7878 \
       -p 127.0.0.1:7879:7879 \
       -v "$HOME/.agentlock:/var/lib/agentlock" \
-      ghcr.io/openagentlock/control-plane:latest
+      ghcr.io/openagentlock/agentlockd:latest
     ```
 
 The service binds to `127.0.0.1:7878` (CLI / hook traffic) and `127.0.0.1:7879` (local web dashboard). Neither port should ever be exposed to a non-loopback interface.

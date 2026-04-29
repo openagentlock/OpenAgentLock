@@ -7,7 +7,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/openagentlock/openagentlock/ci.yml?branch=main&label=ci&style=flat-square)](https://github.com/openagentlock/openagentlock/actions/workflows/ci.yml)
 [![docker-publish](https://img.shields.io/github/actions/workflow/status/openagentlock/openagentlock/docker-publish.yml?branch=main&label=docker&style=flat-square)](https://github.com/openagentlock/openagentlock/actions/workflows/docker-publish.yml)
 [![npm](https://img.shields.io/npm/v/%40openagentlock%2Fcli?style=flat-square&label=%40openagentlock%2Fcli)](https://www.npmjs.com/package/@openagentlock/cli)
-[![ghcr](https://img.shields.io/badge/ghcr.io-control--plane-black?style=flat-square&logo=docker&logoColor=white)](https://github.com/openagentlock/openagentlock/pkgs/container/control-plane)
+[![ghcr](https://img.shields.io/badge/ghcr.io-agentlockd-black?style=flat-square&logo=docker&logoColor=white)](https://github.com/openagentlock/openagentlock/pkgs/container/agentlockd)
 [![license](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-black?style=flat-square)](LICENSE)
 [![docs](https://img.shields.io/badge/docs-openagentlock.github.io/openagentlock-black?style=flat-square)](https://openagentlock.github.io/openagentlock/)
 [![stars](https://img.shields.io/github/stars/openagentlock/openagentlock?style=flat-square)](https://github.com/openagentlock/openagentlock/stargazers)
@@ -104,7 +104,7 @@ See [Policies and the five gates](https://openagentlock.github.io/openagentlock/
 
 ```
 cli/                        TypeScript + Bun + OpenTUI                — @openagentlock/cli
-control-plane/              Go HTTP service in Docker                 — ghcr.io/openagentlock/control-plane
+control-plane/              Go HTTP service in Docker                 — ghcr.io/openagentlock/agentlockd
   api/openapi.yaml          source-of-truth API contract
   Dockerfile, docker-compose.yml
   dashboard-ui/             Vite SPA embedded into the Go binary

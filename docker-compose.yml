@@ -1,4 +1,4 @@
-# OpenAgentLock control plane — drop-in compose file for end users.
+# OpenAgentLock daemon (agentlockd) — drop-in compose file for end users.
 #
 # Pulls the published image from GitHub Container Registry. No build step
 # required.
@@ -13,7 +13,7 @@
 
 services:
   control-plane:
-    image: ghcr.io/openagentlock/control-plane:latest
+    image: ghcr.io/openagentlock/agentlockd:latest
     container_name: agentlock
     restart: unless-stopped
     ports:

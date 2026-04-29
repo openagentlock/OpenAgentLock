@@ -61,7 +61,7 @@ Flip to `mode: enforce` at the top of your policy file when you've reviewed acti
 
 | Channel | Status |
 |---|---|
-| `ghcr.io/openagentlock/control-plane` Docker image | <span class="md-status-pill shipped">Shipped</span> on tag |
+| `ghcr.io/openagentlock/agentlockd` Docker image | <span class="md-status-pill shipped">Shipped</span> on tag |
 | `@openagentlock/cli` on npm | <span class="md-status-pill shipped">Shipped</span> on tag |
 | `openagentlock/tap/agentlock` Homebrew formula | <span class="md-status-pill shipped">Shipped</span> on tag |
 | `pip install openagentlock` | <span class="md-status-pill not-yet">Not yet implemented</span> — Bun-native CLI; pip wrapper is roadmap if demand surfaces |

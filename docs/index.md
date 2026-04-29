@@ -97,7 +97,7 @@ Three steps:
 
 ```bash
 # 1. Pull the control-plane image
-docker pull ghcr.io/openagentlock/control-plane:latest
+docker pull ghcr.io/openagentlock/agentlockd:latest
 
 # 2. Start it (drops a docker-compose example in your CWD)
 curl -O https://raw.githubusercontent.com/openagentlock/openagentlock/main/docker-compose.yml

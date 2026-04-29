@@ -16,7 +16,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/control-plane
+  IMAGE_NAME: ${{ github.repository_owner }}/agentlockd
 
 jobs:
   build-and-push:
@@ -52,8 +52,8 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
           labels: |
-            org.opencontainers.image.title=OpenAgentLock control-plane
-            org.opencontainers.image.description=Local HTTP service for OpenAgentLock — policy evaluation, install plan/apply, ledger appends.
+            org.opencontainers.image.title=agentlockd
+            org.opencontainers.image.description=OpenAgentLock daemon — local HTTP service for policy evaluation, install plan/apply, and Merkle-ledger appends.
             org.opencontainers.image.licenses=FSL-1.1-Apache-2.0
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.url=https://openagentlock.github.io/openagentlock

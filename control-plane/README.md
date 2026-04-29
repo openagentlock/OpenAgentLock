@@ -1,16 +1,16 @@
 # control-plane
 
-OpenAgentLock control plane. Local HTTP service that evaluates policy, drives the install/uninstall plan-apply flow, and appends every decision to the Merkle ledger. Listens on `127.0.0.1:7878`. Go module path: `github.com/openagentlock/openagentlock/control-plane`.
+OpenAgentLock daemon (agentlockd). Local HTTP service that evaluates policy, drives the install/uninstall plan-apply flow, and appends every decision to the Merkle ledger. Listens on `127.0.0.1:7878`. Go module path: `github.com/openagentlock/openagentlock/control-plane`.
 
 ## Run with Docker
 
 ```bash
-docker pull ghcr.io/openagentlock/control-plane:latest
+docker pull ghcr.io/openagentlock/agentlockd:latest
 docker run -d --name agentlock \
   -p 127.0.0.1:7878:7878 \
   -p 127.0.0.1:7879:7879 \
   -v "$HOME/.agentlock:/var/lib/agentlock" \
-  ghcr.io/openagentlock/control-plane:latest
+  ghcr.io/openagentlock/agentlockd:latest
 ```
 
 Or via the published `docker-compose.yml`:

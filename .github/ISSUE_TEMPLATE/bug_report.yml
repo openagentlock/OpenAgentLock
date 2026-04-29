@@ -43,7 +43,7 @@ body:
     id: control-plane-version
     attributes:
       label: control-plane image tag
-      description: e.g. `ghcr.io/openagentlock/control-plane:0.1.0` or `:latest`
+      description: e.g. `ghcr.io/openagentlock/agentlockd:0.1.0` or `:latest`
     validations: { required: true }
 
   - type: dropdown
