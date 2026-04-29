@@ -6,11 +6,7 @@ hide:
 
 <div class="oal-hero" markdown>
 
-![OpenAgentLock](assets/logo-mark.svg){ .no-zoom }
-
-# OpenAgentLock
-
-A locally-hosted, open-source firewall for AI coding agents.
+![OpenAgentLock](assets/banner.svg){ .oal-banner .no-zoom }
 
 <p class="lede" markdown>
 Detect local agent harnesses, gate risky tool calls with a deterministic YAML policy, and anchor every decision in a tamper-evident Merkle ledger. Install once and keep working in **Claude Code, Codex CLI, and Cursor** as normal — your workflow does not change.
@@ -75,19 +71,22 @@ Software (dev/CI) and TOTP shipped. OS keychain and YubiKey land next.
 
 ## How it works
 
-```
-┌─────────────────┐    hook    ┌──────────────────┐    FFI    ┌────────────┐
-│  Agent harness  │  ─────────▶│   Control plane  │ ────────▶ │   Ledger   │
-│  (Claude Code,  │            │  (Go, Docker,    │           │  (Rust,    │
-│   Codex, …)     │◀─ verdict ─│   :7878)         │           │   Merkle)  │
-└─────────────────┘            └──────────────────┘           └────────────┘
-                                       │
-                                       ▼
-                              ┌──────────────────┐
-                              │   Local web      │
-                              │   dashboard      │
-                              │   (:7879)        │
-                              └──────────────────┘
+```mermaid
+flowchart LR
+    subgraph host["Your host"]
+      H["Agent harness<br/><i>Claude Code · Codex CLI · Cursor</i>"]
+      CLI["agentlock CLI<br/><i>owns long-lived signing key</i>"]
+    end
+    subgraph docker["Docker (127.0.0.1)"]
+      CP[":7878 control plane<br/><i>policy · install · ledger appender</i>"]
+      DB[":7879 web dashboard"]
+      L[("Merkle ledger<br/>Rust crate via FFI")]
+    end
+    H -->|"pre-tool hook"| CP
+    CP -->|"verdict"| H
+    CLI -->|"signed session"| CP
+    CP --> L
+    CP --- DB
 ```
 
 Three languages, one repo. The CLI runs on your host and owns the YubiKey path. The control plane runs in Docker and evaluates policy. The ledger is a Rust crate linked into Go via FFI so verification logic exists in exactly one place.

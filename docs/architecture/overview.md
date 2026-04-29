@@ -18,12 +18,13 @@ Three languages, one repo, three trust shapes.
 
 ## Data flow
 
-```
-[ harness ] → hook → [ control plane ] → [ ledger ] → [ disk + signature ]
-                          │                                 │
-                          └─→ verdict ─→ [ harness ]        │
-                                                            ▼
-                                                  [ /v1/ledger/* + dashboard ]
+```mermaid
+flowchart LR
+    H[Harness] -->|pre-tool hook| CP[Control plane]
+    CP -->|append leaf| L[(Ledger)]
+    L -->|persisted + signed| Disk[(Disk)]
+    CP -->|verdict| H
+    L -.->|/v1/ledger/* + dashboard| Out((Audit))
 ```
 
 A pre-tool hook lands at the control plane. The plane:

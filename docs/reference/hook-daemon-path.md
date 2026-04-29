@@ -2,28 +2,26 @@
 
 End-to-end view of what happens when a harness fires a pre-tool hook.
 
-```
-[harness]            [agentlock CLI]            [control plane]            [ledger]
-   │                       │                          │                       │
-   │  pre-tool hook (HTTP) │                          │                       │
-   │ ────────────────────────────────────────────────▶                        │
-   │                       │                          │  resolve session,     │
-   │                       │                          │  walk policy          │
-   │                       │                          │ ─────────────▶ append │
-   │                       │                          │                       │
-   │                       │                          │ ◀───────────── proof  │
-   │                       │                          │                       │
-   │ ◀────────────────────────────────────────────── verdict                  │
-   │                       │                          │                       │
-   │  (executes or skips)  │                          │                       │
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as Harness
+    participant CP as Control plane
+    participant L as Ledger
+
+    H->>+CP: pre-tool hook (HTTP)
+    CP->>CP: resolve session, walk policy
+    CP->>+L: append leaf
+    L-->>-CP: sequence + proof
+    CP-->>-H: verdict (allow / deny)
+    Note over H: harness executes or skips
 ```
 
-For Codex, the path goes:
+For Codex, the path goes through the `agentlock hook codex` shim:
 
-```
-[codex] ──▶ [agentlock hook codex pre-tool] ──HTTP──▶ [control plane] ──▶ [ledger]
-                  │
-                  └─ thin shim — no logic, just forwards
+```mermaid
+flowchart LR
+    C["codex"] --> S["agentlock hook codex pre-tool<br/><i>thin shim — forwards over HTTP</i>"] --> CP["control plane"] --> L[("ledger")]
 ```
 
 ## Sequence guarantees

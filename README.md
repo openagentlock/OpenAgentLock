@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="assets/logo-mark.svg" alt="OpenAgentLock" width="128" height="128" />
-
-# OpenAgentLock
+<img src="assets/banner.svg" alt="OpenAgentLock — A firewall for AI coding agents" width="100%" />
 
 **A locally-hosted, open-source firewall for AI coding agents.**
 
@@ -62,19 +60,22 @@ The complete shipped/not-yet matrix lives at <https://openagentlock.github.io/op
 
 ## How it works
 
-```
-┌─────────────────┐    hook    ┌──────────────────┐    FFI    ┌────────────┐
-│  Agent harness  │  ─────────▶│   Control plane  │ ────────▶ │   Ledger   │
-│  (Claude Code,  │            │  (Go, Docker,    │           │  (Rust,    │
-│   Codex, …)     │◀─ verdict ─│   :7878)         │           │   Merkle)  │
-└─────────────────┘            └──────────────────┘           └────────────┘
-                                       │
-                                       ▼
-                              ┌──────────────────┐
-                              │   Local web      │
-                              │   dashboard      │
-                              │   (:7879)        │
-                              └──────────────────┘
+```mermaid
+flowchart LR
+    subgraph host["Your host"]
+      H["Agent harness<br/><i>Claude Code · Codex CLI · Cursor</i>"]
+      CLI["agentlock CLI<br/><i>owns long-lived signing key</i>"]
+    end
+    subgraph docker["Docker (127.0.0.1)"]
+      CP[":7878 control plane<br/><i>policy · install · ledger appender</i>"]
+      DB[":7879 web dashboard"]
+      L[("Merkle ledger<br/>Rust crate via FFI")]
+    end
+    H -->|"pre-tool hook"| CP
+    CP -->|"verdict<br/>allow / deny"| H
+    CLI -->|"signed session"| CP
+    CP --> L
+    CP --- DB
 ```
 
 Three languages, one repo:

@@ -46,9 +46,13 @@
   border-bottom: 1px solid var(--md-default-fg-color--lightest);
   margin-bottom: 2rem;
 }
-.oal-hero img {
-  width: 96px;
-  height: 96px;
+.oal-hero .oal-banner {
+  width: 100%;
+  max-width: 960px;
+  height: auto;
+  margin: 0 auto 1rem;
+  display: block;
+  border-radius: 12px;
 }
 .oal-hero h1 {
   font-size: 2.4rem;

@@ -25,23 +25,24 @@ What OpenAgentLock defends, what it does not, and where the trust boundaries are
 
 ## Trust boundaries
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  HOST  (you, your shell, your filesystem, your keychain)             │
-│                                                                      │
-│  ┌─────────────────────┐         ┌────────────────────────────────┐  │
-│  │  agent harness      │  hook   │  agentlock CLI                 │  │
-│  │  (Claude Code, …)   │ ──────▶ │  (owns long-lived signing key) │  │
-│  └─────────────────────┘         └────────────────────────────────┘  │
-│                                              │                       │
-└──────────────────────────────────────────────┼───────────────────────┘
-                                               │ session-scoped key
-                                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  CONTROL PLANE  (Docker container, 127.0.0.1:7878 / :7879)           │
-│                                                                      │
-│  policy ──▶ ledger ──▶ dashboard                                     │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph host["HOST — your shell, filesystem, keychain"]
+      direction LR
+      H["agent harness<br/>(Claude Code, Codex, Cursor, …)"]
+      CLI["agentlock CLI<br/><b>owns long-lived signing key</b>"]
+      H -->|hook| CLI
+    end
+
+    subgraph cp["CONTROL PLANE — Docker, 127.0.0.1:7878 / :7879"]
+      direction LR
+      P["policy"] --> LED["ledger"] --> DB["dashboard"]
+    end
+
+    CLI -->|"signed session-scoped key"| cp
+
+    style host fill:#fafafa,stroke:#bbb,stroke-dasharray:4 3
+    style cp   fill:#f0f0f0,stroke:#666
 ```
 
 The CLI on the host owns the long-lived key (TOTP-unlocked or hardware key). It signs a short-lived **session key** at startup and posts the signed bundle to the daemon. The daemon signs ledger leaves with the session key in memory. The long-lived key never crosses into the container.
