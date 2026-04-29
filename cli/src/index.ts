@@ -47,7 +47,7 @@ program
 program
   .command("install")
   .description(
-    "Interactive selector. Detects harnesses, mints an unattested session, fetches the install plan, confirms with you, then POSTs /v1/install/apply.",
+    "Interactive selector. Detects harnesses, mints a session (default: unattested), fetches the install plan, confirms with you, then POSTs /v1/install/apply.",
   )
   .option("-y, --yes", "Skip the apply confirmation prompt.")
   .option(
@@ -58,13 +58,34 @@ program
     "--config-dir <path>",
     "Override the per-harness config directory (e.g. ./dev/.claude for dev runs). Default: the harness's real user home path.",
   )
-  .action(async (opts: { yes?: boolean; daemon?: string; configDir?: string }) => {
-    const argv: string[] = [];
-    if (opts.yes) argv.push("--yes");
-    if (opts.daemon) argv.push("--daemon", opts.daemon);
-    if (opts.configDir) argv.push("--config-dir", opts.configDir);
-    await runInstall(argv);
-  });
+  .option(
+    "--tier <tier>",
+    "Session signer tier: unattested (default; daemon must allow it), software (dev/CI), or totp (prod, requires prior `agentlock signer enroll --tier totp`).",
+  )
+  .option("--code <code>", "TOTP 6-digit code (required when --tier totp).")
+  .option(
+    "--passphrase <pp>",
+    "Passphrase used at enrollment (required when --tier totp).",
+  )
+  .action(
+    async (opts: {
+      yes?: boolean;
+      daemon?: string;
+      configDir?: string;
+      tier?: string;
+      code?: string;
+      passphrase?: string;
+    }) => {
+      const argv: string[] = [];
+      if (opts.yes) argv.push("--yes");
+      if (opts.daemon) argv.push("--daemon", opts.daemon);
+      if (opts.configDir) argv.push("--config-dir", opts.configDir);
+      if (opts.tier) argv.push("--tier", opts.tier);
+      if (opts.code) argv.push("--code", opts.code);
+      if (opts.passphrase) argv.push("--passphrase", opts.passphrase);
+      await runInstall(argv);
+    },
+  );
 
 program
   .command("dashboard")

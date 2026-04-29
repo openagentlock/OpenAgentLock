@@ -32,6 +32,7 @@ import { detectAll } from "../detect/index.ts";
 import type { HarnessId } from "../detect/types.ts";
 import { multiselect } from "../tui/multiselect.tsx";
 import { apiClient, type InstallFileOp } from "../util/api.ts";
+import { mintAttestedSession, type AttestedTier } from "../util/session-mint.ts";
 
 // Source-tree default: cli/agentlock is a bash wrapper that does
 // `exec bun run cli/src/index.ts "$@"`, so harnesses can spawn
@@ -44,19 +45,33 @@ function defaultAgentlockBinary(): string {
   return process.execPath;
 }
 
+type InstallTier = "unattested" | AttestedTier;
+
 interface InstallFlags {
   yes: boolean;
   daemonUrl?: string;
   configDirOverride?: string;
+  tier: InstallTier;
+  totpCode?: string;
+  totpPassphrase?: string;
 }
 
 function parseFlags(argv: string[]): InstallFlags {
-  const flags: InstallFlags = { yes: false };
+  const flags: InstallFlags = { yes: false, tier: "unattested" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--yes" || a === "-y") flags.yes = true;
     else if (a === "--daemon" || a === "--daemon-url") flags.daemonUrl = argv[++i];
     else if (a === "--config-dir") flags.configDirOverride = argv[++i];
+    else if (a === "--tier") {
+      const v = argv[++i];
+      if (v === "unattested" || v === "software" || v === "totp") {
+        flags.tier = v;
+      } else {
+        throw new Error(`unknown --tier: ${v} (want unattested|software|totp)`);
+      }
+    } else if (a === "--code") flags.totpCode = argv[++i];
+    else if (a === "--passphrase") flags.totpPassphrase = argv[++i];
   }
   // Resolve --config-dir to an absolute path against the CLI's CWD. The
   // daemon may be running with a different working directory (e.g. via
@@ -165,25 +180,61 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     return;
   }
 
-  // 3. Unattested session mint (signer=none) ----------------------------
-  process.stdout.write(`\nminting unattested session on ${api.baseUrl}...\n`);
+  // 3. Session mint -----------------------------------------------------
+  // Default is unattested (matches the "monitor mode default" posture
+  // of the daemon). For prod use, callers pass --tier software|totp;
+  // the daemon then accepts the install/uninstall flow under a real
+  // signed session and ledger entries carry the strong signer banner.
   let sessionId: string;
-  try {
-    const sess = await api.createUnattestedSession();
-    sessionId = sess.id;
-    process.stdout.write(`  session: ${sess.id} (${sess.banner ?? sess.signer})\n`);
-  } catch (err) {
-    const msg = (err as Error).message;
-    if (msg.includes("unattested_disabled")) {
-      process.stderr.write(
-        "\nunattested sessions are disabled on this daemon.\n" +
-          "set AGENTLOCK_ALLOW_UNATTESTED=1 on the daemon to enable them for dev.\n",
-      );
-    } else {
-      process.stderr.write(`\nsession mint failed: ${msg}\n`);
+  if (flags.tier === "unattested") {
+    process.stdout.write(`\nminting unattested session on ${api.baseUrl}...\n`);
+    try {
+      const sess = await api.createUnattestedSession();
+      sessionId = sess.id;
+      process.stdout.write(`  session: ${sess.id} (${sess.banner ?? sess.signer})\n`);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("unattested_disabled")) {
+        process.stderr.write(
+          "\nunattested sessions are disabled on this daemon.\n" +
+            "  - re-run with --tier totp (recommended for prod), or\n" +
+            "  - re-run with --tier software (dev only), or\n" +
+            "  - set AGENTLOCK_ALLOW_UNATTESTED=1 on the daemon (dev only).\n" +
+            "see https://openagentlock.github.io/OpenAgentLock/guide/signers/ for the signer ladder.\n",
+        );
+      } else {
+        process.stderr.write(`\nsession mint failed: ${msg}\n`);
+      }
+      process.exitCode = 2;
+      return;
     }
-    process.exitCode = 2;
-    return;
+  } else {
+    if (flags.tier === "totp" && (!flags.totpCode || !flags.totpPassphrase)) {
+      process.stderr.write(
+        "\n--tier totp requires --code <6-digit> and --passphrase <pp>.\n" +
+          "enroll first with: agentlock signer enroll --tier totp --passphrase <pp>\n",
+      );
+      process.exitCode = 2;
+      return;
+    }
+    process.stdout.write(
+      `\nminting attested session (tier=${flags.tier}) on ${api.baseUrl}...\n`,
+    );
+    try {
+      const sess = await mintAttestedSession({
+        tier: flags.tier,
+        url: flags.daemonUrl,
+        code: flags.totpCode,
+        passphrase: flags.totpPassphrase,
+      });
+      sessionId = sess.id;
+      process.stdout.write(`  session: ${sess.id} (signer=${sess.signer})\n`);
+    } catch (err) {
+      const msg = (err as Error).message;
+      process.stderr.write(`\nsession mint failed: ${msg}\n`);
+      process.exitCode = 2;
+      return;
+    }
   }
 
   const daemonUrl = flags.daemonUrl ?? api.baseUrl;
