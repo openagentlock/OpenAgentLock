@@ -1,9 +1,13 @@
 name: pages
 
 on:
-  # Pages requires the GitHub Pages site to be enabled on the repo. On
-  # private repos with the free plan, that needs a paid plan or a
-  # public-visibility flip. Until then this workflow is manual-only.
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/pages.yml"
+      - "assets/**"
   workflow_dispatch:
 
 permissions:
