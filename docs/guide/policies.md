@@ -74,7 +74,7 @@ Changes are validated against the policy schema before being written, and a snap
 
 ## Policy schema
 
-The full schema lives in [`api/openapi.yaml`](https://github.com/openagentlock/openagentlock/blob/main/control-plane/api/openapi.yaml) under `components.schemas.Policy`. Minimal example:
+The full schema lives in [`api/openapi.yaml`](https://github.com/openagentlock/OpenAgentLock/blob/main/control-plane/api/openapi.yaml) under `components.schemas.Policy`. Minimal example:
 
 ```yaml
 mode: monitor

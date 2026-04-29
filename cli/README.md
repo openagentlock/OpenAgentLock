@@ -23,8 +23,8 @@ agentlock install           # plan + apply hooks for selected harnesses
 agentlock status            # control-plane health
 ```
 
-Full documentation: <https://openagentlock.github.io/openagentlock/>
+Full documentation: <https://openagentlock.github.io/OpenAgentLock/>
 
-Source: <https://github.com/openagentlock/openagentlock>
+Source: <https://github.com/openagentlock/OpenAgentLock>
 
 License: FSL-1.1-Apache-2.0 (see repo `LICENSE`).

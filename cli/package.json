@@ -18,14 +18,14 @@
     "merkle",
     "supply-chain"
   ],
-  "homepage": "https://openagentlock.github.io/openagentlock",
+  "homepage": "https://openagentlock.github.io/OpenAgentLock",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openagentlock/openagentlock.git",
+    "url": "git+https://github.com/openagentlock/OpenAgentLock.git",
     "directory": "cli"
   },
   "bugs": {
-    "url": "https://github.com/openagentlock/openagentlock/issues"
+    "url": "https://github.com/openagentlock/OpenAgentLock/issues"
   },
   "author": "OpenAgentLock contributors",
   "bin": {

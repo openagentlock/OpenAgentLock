@@ -26,7 +26,7 @@ You'll need:
 
 ## Reporting issues
 
-- **Bugs / feature requests:** open a GitHub issue at <https://github.com/openagentlock/openagentlock/issues>.
+- **Bugs / feature requests:** open a GitHub issue at <https://github.com/openagentlock/OpenAgentLock/issues>.
 - **Security vulnerabilities:** see [`SECURITY.md`](SECURITY.md). Please do **not** open a public issue for security reports.
 
 ## License of contributions

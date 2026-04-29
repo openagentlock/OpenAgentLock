@@ -31,7 +31,7 @@ The package ships TypeScript source; Bun runs it directly via the `agentlock` sh
 ### From source
 
 ```bash
-git clone https://github.com/openagentlock/openagentlock
+git clone https://github.com/openagentlock/OpenAgentLock
 cd openagentlock/cli
 bun install
 bun link        # makes `agentlock` available on your PATH

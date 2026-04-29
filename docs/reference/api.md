@@ -1,6 +1,6 @@
 # HTTP API
 
-The control plane exposes a versioned HTTP API on `127.0.0.1:7878`. The contract source is [`api/openapi.yaml`](https://github.com/openagentlock/openagentlock/blob/main/control-plane/api/openapi.yaml). What follows is a quick reference; refer to the OpenAPI for full schemas.
+The control plane exposes a versioned HTTP API on `127.0.0.1:7878`. The contract source is [`api/openapi.yaml`](https://github.com/openagentlock/OpenAgentLock/blob/main/control-plane/api/openapi.yaml). What follows is a quick reference; refer to the OpenAPI for full schemas.
 
 ## Health
 

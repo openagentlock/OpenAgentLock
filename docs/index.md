@@ -13,7 +13,7 @@ Detect local agent harnesses, gate risky tool calls with a deterministic YAML po
 </p>
 
 [Get started](guide/getting-started.md){ .oal-cta .primary }
-[GitHub](https://github.com/openagentlock/openagentlock){ .oal-cta }
+[GitHub](https://github.com/openagentlock/OpenAgentLock){ .oal-cta }
 
 </div>
 

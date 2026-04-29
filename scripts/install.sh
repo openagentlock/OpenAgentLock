@@ -2,7 +2,7 @@
 # OpenAgentLock — one-shot installer.
 #
 # Usage:
-#   curl -fsSL https://openagentlock.github.io/openagentlock/install.sh | bash
+#   curl -fsSL https://openagentlock.github.io/OpenAgentLock/install.sh | bash
 #
 # What it does:
 #   1. Pulls the ghcr.io/openagentlock/agentlockd image.
@@ -77,5 +77,5 @@ Next steps:
   agentlock install           # plan + apply hooks (interactive)
   open http://127.0.0.1:7879  # local web dashboard
 
-Documentation: https://openagentlock.github.io/openagentlock/
+Documentation: https://openagentlock.github.io/OpenAgentLock/
 EOF

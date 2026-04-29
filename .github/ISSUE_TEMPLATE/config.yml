@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security disclosure
-    url: https://github.com/openagentlock/openagentlock/security/policy
+    url: https://github.com/openagentlock/OpenAgentLock/security/policy
     about: Report a vulnerability privately. See SECURITY.md.
   - name: Documentation
-    url: https://openagentlock.github.io/openagentlock/
+    url: https://openagentlock.github.io/OpenAgentLock/
     about: Browse the docs before opening an issue.

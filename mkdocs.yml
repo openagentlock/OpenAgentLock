@@ -1,11 +1,11 @@
 site_name: OpenAgentLock
-site_url: https://openagentlock.github.io/openagentlock/
+site_url: https://openagentlock.github.io/OpenAgentLock/
 site_description: A locally-hosted, open-source firewall for AI coding agents.
 site_author: OpenAgentLock contributors
 copyright: Copyright &copy; 2026 OpenAgentLock contributors — FSL-1.1-Apache-2.0
 
-repo_url: https://github.com/openagentlock/openagentlock
-repo_name: openagentlock/openagentlock
+repo_url: https://github.com/openagentlock/OpenAgentLock
+repo_name: openagentlock/OpenAgentLock
 edit_uri: edit/main/docs/
 
 docs_dir: docs
@@ -59,7 +59,7 @@ extra:
   generator: false
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/openagentlock/openagentlock
+      link: https://github.com/openagentlock/OpenAgentLock
   status:
     shipped: Shipped
     not-yet: Not yet implemented

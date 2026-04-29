@@ -56,7 +56,7 @@ curl -s http://127.0.0.1:7878/v1/health
 === "From source"
 
     ```bash
-    git clone https://github.com/openagentlock/openagentlock
+    git clone https://github.com/openagentlock/OpenAgentLock
     cd openagentlock/cli
     bun install
     bun link

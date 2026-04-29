@@ -1,6 +1,6 @@
 # control-plane
 
-OpenAgentLock daemon (agentlockd). Local HTTP service that evaluates policy, drives the install/uninstall plan-apply flow, and appends every decision to the Merkle ledger. Listens on `127.0.0.1:7878`. Go module path: `github.com/openagentlock/openagentlock/control-plane`.
+OpenAgentLock daemon (agentlockd). Local HTTP service that evaluates policy, drives the install/uninstall plan-apply flow, and appends every decision to the Merkle ledger. Listens on `127.0.0.1:7878`. Go module path: `github.com/openagentlock/OpenAgentLock/control-plane`.
 
 ## Run with Docker
 
