@@ -119,7 +119,7 @@ scripts/install.sh          one-shot installer
 
 ## Status
 
-Pre-1.0. Targets [DEFCON 34 Demo Labs](https://defcon.org/) (August 2026).
+Pre-1.0.
 
 We try not to break anything that already works. Surfaces marked "shipped" have tests; surfaces marked "not yet" exist as scaffolding or stubs and are explicitly disabled in the user-facing path.
 

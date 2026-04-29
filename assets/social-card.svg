@@ -35,7 +35,7 @@
 
   <!-- footer pill -->
   <g transform="translate(80 540)">
-    <rect width="320" height="44" rx="22" fill="#000"/>
-    <text x="20" y="29" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" fill="#fff" font-weight="600">DEFCON 34 Demo Labs · Aug 2026</text>
+    <rect width="380" height="44" rx="22" fill="#000"/>
+    <text x="20" y="29" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" fill="#fff" font-weight="600">github.com/openagentlock/openagentlock</text>
   </g>
 </svg>

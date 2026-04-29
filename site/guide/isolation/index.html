@@ -12,7 +12,7 @@
         <meta name="author" content="OpenAgentLock contributors">
       
       
-        <link rel="canonical" href="https://openagentlock.dev/guide/isolation/">
+        <link rel="canonical" href="https://openagentlock.github.io/openagentlock/guide/isolation/">
       
       
         <link rel="prev" href="../dashboard/">
@@ -1127,9 +1127,10 @@
 <h2 id="where-state-goes">Where state goes<a class="headerlink" href="#where-state-goes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>${AGENTLOCK_HOME:-$HOME/.agentlock}</code> — control-plane SQLite ledger, pinned MCP public keys, session keys.</li>
-<li><code>${CLAUDE_CONFIG_DIR:-$HOME/.claude}</code> — Claude Code's own settings file. The installer adds hook entries here on <code>agentlock install</code>, removes them on <code>agentlock uninstall</code>. This is the only path we modify in the harness's territory.</li>
+<li><code>${CLAUDE_CONFIG_DIR:-$HOME/.claude}</code> — Claude Code's own settings file. The installer adds hook entries here on <code>agentlock install</code>, removes them on <code>agentlock uninstall</code>.</li>
 <li><code>~/.codex/config.toml</code> — Codex CLI's own settings file. Same plan-apply-uninstall contract.</li>
 </ul>
+<p>These two files are the only paths we modify inside the harnesses' territory. The installer never touches anything else under <code>~/.claude</code> or <code>~/.codex</code> — only the hook entries it added.</p>
 <p>The control-plane Docker volume mounts <code>agentlock-state</code> into <code>/var/lib/agentlock</code>. Your host's <code>~/.agentlock</code> is the natural mount target if you prefer a bind mount over a named volume.</p>
 <h2 id="what-we-do-not-touch">What we do not touch<a class="headerlink" href="#what-we-do-not-touch" title="Permanent link">&para;</a></h2>
 <ul>

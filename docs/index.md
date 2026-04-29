@@ -114,4 +114,4 @@ See [Installation](guide/installation.md) for npm, source builds, and platform n
 
 ## Status
 
-This project is pre-1.0 and targets the [DEFCON 34 Demo Labs](https://defcon.org/) showcase in August 2026. See the [status page](status.md) for the live shipped/not-yet matrix.
+This project is pre-1.0. See the [status page](status.md) for the live shipped/not-yet matrix.

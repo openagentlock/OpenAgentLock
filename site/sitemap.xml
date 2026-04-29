@@ -1,79 +1,79 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
-         <loc>https://openagentlock.dev/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/faq/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/faq/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/status/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/status/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/architecture/overview/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/architecture/overview/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/auth/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/auth/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/dashboard/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/dashboard/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/getting-started/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/getting-started/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/installation/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/installation/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/isolation/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/isolation/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/ledger/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/ledger/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/mcp/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/mcp/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/policies/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/policies/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/signers/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/signers/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/threat-model/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/threat-model/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/guide/windows/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/guide/windows/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/reference/api/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/reference/api/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/reference/detection/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/reference/detection/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/reference/hook-daemon-path/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/reference/hook-daemon-path/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
     <url>
-         <loc>https://openagentlock.dev/reference/hooks/</loc>
+         <loc>https://openagentlock.github.io/openagentlock/reference/hooks/</loc>
          <lastmod>2026-04-29</lastmod>
     </url>
 </urlset>
