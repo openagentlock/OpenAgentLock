@@ -194,18 +194,34 @@ export async function multiselect<T extends string>(
   const root = createRoot(renderer);
 
   return await new Promise<T[] | null>((resolve) => {
+    let finished = false;
     const finish = (result: T[] | null): void => {
-      try {
-        root.unmount();
-      } catch {
-        // best-effort
-      }
-      try {
-        renderer.destroy();
-      } catch {
-        // best-effort
-      }
+      // Guard against the keypress handler firing finish twice (Enter
+      // can produce both `return` and `enter` on some terminals; q/esc
+      // similarly). React's reconciler does not tolerate a second
+      // unmount commit on a torn-down container — symptom is
+      // BindingError "Expected null or instance of Node" inside
+      // commitBeforeMutationEffects → clearContainer.
+      if (finished) return;
+      finished = true;
+      // Resolve first so the caller's `await` settles before teardown.
+      // Defer unmount + destroy to the next microtask so React's
+      // current commit cycle (the keypress that triggered finish)
+      // finishes before the reconciler tries to mutate a container we
+      // are about to clear.
       resolve(result);
+      queueMicrotask(() => {
+        try {
+          root.unmount();
+        } catch {
+          // best-effort
+        }
+        try {
+          renderer.destroy();
+        } catch {
+          // best-effort
+        }
+      });
     };
 
     root.render(
