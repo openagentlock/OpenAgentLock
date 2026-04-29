@@ -8,6 +8,10 @@
 // See docs/api/openapi.yaml for the control-plane API that will execute
 // install once it's signed off.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { Command } from "commander";
 import { runDashboard } from "./commands/dashboard.ts";
 import { runDetect } from "./commands/detect.ts";
@@ -20,12 +24,17 @@ import { runHookCodex } from "./commands/hook-codex.ts";
 import { runLedgerRoot, runLedgerVerify } from "./commands/ledger.ts";
 import { runSignerEnroll } from "./commands/signer-enroll.ts";
 
+// Read version from the published package.json so `agentlock --version`
+// always matches the installed npm version, no hand-bumping required.
+const PKG_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+const PKG_VERSION = (JSON.parse(readFileSync(PKG_PATH, "utf8")) as { version: string }).version;
+
 const program = new Command();
 
 program
   .name("agentlock")
   .description("Local-first hardening for AI coding agents.")
-  .version("0.0.1");
+  .version(PKG_VERSION);
 
 program
   .command("detect")
