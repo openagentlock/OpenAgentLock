@@ -49,7 +49,10 @@ export async function mintAttestedSession(
     signerKind = "software";
   } else {
     if (!opts.code || !opts.passphrase) {
-      throw new Error("tier=totp requires --code and --passphrase");
+      throw new Error(
+        "--tier totp requires --code <6-digit> and --passphrase <pp>. " +
+          "Run `agentlock signer enroll --tier totp --passphrase <pp>` first.",
+      );
     }
     signer = await loadTOTPSigner(home, { code: opts.code, passphrase: opts.passphrase });
     signerKind = "totp_backed_software";

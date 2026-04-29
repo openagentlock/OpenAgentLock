@@ -9,11 +9,16 @@ Live status of every component shipped to the public repo. <span class="md-statu
 | `agentlock detect` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock install` (Claude Code, Codex CLI) | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock install` (Cursor, OpenCode, Cline, Gemini CLI, Continue, VS Code Copilot) | <span class="md-status-pill not-yet">Not yet implemented</span> — detected but disabled in selector |
+| `agentlock install --tier {unattested,software,totp}` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock status` | <span class="md-status-pill shipped">Shipped</span> |
-| `agentlock signer enroll` (TOTP) | <span class="md-status-pill shipped">Shipped</span> |
-| `agentlock signer enroll` (OS keychain) | <span class="md-status-pill not-yet">Not yet implemented</span> |
-| `agentlock signer enroll` (hardware key — YubiKey) | <span class="md-status-pill not-yet">Not yet implemented</span> |
+| `agentlock signer enroll --tier totp` | <span class="md-status-pill shipped">Shipped</span> |
+| `agentlock signer enroll --tier os_keychain` | <span class="md-status-pill not-yet">Not yet implemented</span> |
+| `agentlock signer enroll --tier yubikey` (PIV / FIDO2) | <span class="md-status-pill not-yet">Not yet implemented</span> |
+| `agentlock session create / rotate / end` (software, totp) | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock hook codex <event>` shim | <span class="md-status-pill shipped">Shipped</span> |
+| `agentlock ledger root / verify` | <span class="md-status-pill shipped">Shipped</span> |
+| `agentlock fake-hook` (eval / scenario harness) | <span class="md-status-pill shipped">Shipped</span> |
+| `agentlock dashboard` (open local web dashboard) | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock login` | <span class="md-status-pill shipped">Shipped</span> (password mode only) |
 
 ## Control plane

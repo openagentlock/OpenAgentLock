@@ -164,11 +164,20 @@ session
       json: boolean;
     }) => {
       if (opts.tier !== "software" && opts.tier !== "totp") {
-        process.stderr.write(`tier ${opts.tier} not wired yet (MVP supports software | totp)\n`);
+        process.stderr.write(
+          `--tier ${opts.tier} is not supported.\n` +
+            `available tiers: software (dev/CI), totp (recommended for prod).\n` +
+            `OS-keychain and hardware-key (YubiKey) tiers are on the roadmap; see\n` +
+            `https://openagentlock.github.io/OpenAgentLock/guide/signers/\n`,
+        );
         process.exit(2);
       }
       if (opts.tier === "totp" && (!opts.code || !opts.passphrase)) {
-        process.stderr.write(`--tier totp requires --code and --passphrase\n`);
+        process.stderr.write(
+          `--tier totp requires --code <6-digit> and --passphrase <pp>.\n` +
+            `enroll first with: agentlock signer enroll --tier totp --passphrase <pp>\n` +
+            `then read the current 6-digit code from your authenticator app.\n`,
+        );
         process.exit(2);
       }
       await runSessionCreate({
@@ -213,11 +222,16 @@ session
       json: boolean;
     }) => {
       if (opts.tier !== "software" && opts.tier !== "totp") {
-        process.stderr.write(`tier ${opts.tier} not wired yet\n`);
+        process.stderr.write(
+          `--tier ${opts.tier} is not supported.\n` +
+            `available tiers: software (dev/CI), totp (recommended for prod).\n`,
+        );
         process.exit(2);
       }
       if (opts.tier === "totp" && (!opts.code || !opts.passphrase)) {
-        process.stderr.write(`--tier totp requires --code and --passphrase\n`);
+        process.stderr.write(
+          `--tier totp requires --code <6-digit> and --passphrase <pp>.\n`,
+        );
         process.exit(2);
       }
       await runSessionRotate({
@@ -238,7 +252,7 @@ const signer = program
 
 signer
   .command("enroll")
-  .description("Enroll a signer tier. MVP supports totp.")
+  .description("Enroll a long-lived signer. Currently supports: totp. OS-keychain and hardware-key (YubiKey) are on the roadmap.")
   .requiredOption("--tier <tier>", "Signer tier (totp).")
   .option("--passphrase <pp>", "Passphrase used to seal the signing key (required for totp).")
   .option("--label <label>", "otpauth label (default: agentlock).")
@@ -253,11 +267,18 @@ signer
       json: boolean;
     }) => {
       if (opts.tier !== "totp") {
-        process.stderr.write(`tier ${opts.tier} not wired yet (MVP supports totp)\n`);
+        process.stderr.write(
+          `--tier ${opts.tier} is not supported by 'agentlock signer enroll'.\n` +
+            `currently supported: totp.\n` +
+            `OS-keychain and hardware-key (YubiKey) tiers are on the roadmap; see\n` +
+            `https://openagentlock.github.io/OpenAgentLock/guide/signers/\n`,
+        );
         process.exit(2);
       }
       if (!opts.passphrase) {
-        process.stderr.write(`--passphrase is required for --tier totp\n`);
+        process.stderr.write(
+          `--passphrase <pp> is required for --tier totp (it seals the signing key on disk).\n`,
+        );
         process.exit(2);
       }
       await runSignerEnroll({

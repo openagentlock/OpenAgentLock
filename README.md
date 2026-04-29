@@ -23,8 +23,8 @@ OpenAgentLock detects local AI coding agent harnesses (Claude Code, Codex CLI, C
 ## Quick start
 
 ```bash
-# 1. Pull and start the control plane
-curl -O https://raw.githubusercontent.com/openagentlock/openagentlock/main/docker-compose.yml
+# 1. Pull and start the daemon
+curl -O https://raw.githubusercontent.com/openagentlock/OpenAgentLock/main/docker-compose.yml
 docker compose up -d
 
 # 2. Install the CLI
@@ -32,12 +32,18 @@ brew install openagentlock/tap/agentlock
 # or: bun add -g @openagentlock/cli
 # or: npm i -g @openagentlock/cli
 
-# 3. Wire it up
+# 3. Enroll a signer (TOTP — recommended for prod)
+agentlock signer enroll --tier totp --passphrase 'your-passphrase-here'
+# scan the otpauth:// QR with Google Authenticator / 1Password / Authy.
+
+# 4. Wire your harnesses with a TOTP-attested session
 agentlock detect
-agentlock install
+agentlock install --tier totp --code 123456 --passphrase 'your-passphrase-here'
 ```
 
-Then open the local web dashboard at <http://127.0.0.1:7879/>.
+For a quick eval without a signer (dev only): start the daemon with `-e AGENTLOCK_ALLOW_UNATTESTED=1`, then `agentlock install` (defaults to unattested).
+
+Open the local web dashboard at <http://127.0.0.1:7879/>.
 
 Full walkthrough at <https://openagentlock.github.io/OpenAgentLock/guide/getting-started/>.
 
@@ -47,12 +53,13 @@ Full walkthrough at <https://openagentlock.github.io/OpenAgentLock/guide/getting
 |---|---|
 | `agentlock detect` | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | `agentlock install` (Claude Code, Codex CLI) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
+| `agentlock install --tier {unattested,software,totp}` | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | `agentlock install` (Cursor, OpenCode, Cline, Gemini CLI, Continue, VS Code Copilot) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | Five baseline gates in monitor mode | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Tamper-evident Merkle ledger | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Local web dashboard | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| Software + TOTP signers | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| OS keychain signer, hardware-key (YubiKey) signer | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
+| Software + TOTP signers (with `signer enroll` + session mint) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
+| OS keychain signer, hardware-key (YubiKey PIV / FIDO2) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | OIDC SSO + RBAC + LDAP | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | Signed PDF audit report | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 

@@ -76,13 +76,51 @@ agentlock detect
 
 This prints a table of every agent harness it found on your machine. Today, end-to-end hooks are wired for **Claude Code** and **Codex CLI**; other harnesses are detected but the installer flags them as not yet implemented. See [Status](../status.md).
 
-Then:
+Then pick a signer tier and run `install`. Two recommended paths:
 
-```bash
-agentlock install
-```
+=== "Production: TOTP-attested (recommended)"
 
-Pick the harnesses you want to harden, review the diff, confirm. The installer writes harness-specific configuration (e.g. `~/.claude/settings.json` hook entries, `~/.codex/config.toml` `codex_hooks`) and registers a clean rollback path you can invoke later with `agentlock uninstall`.
+    The daemon refuses unattested sessions by default. Enroll a TOTP signer once, then use it for `install`:
+
+    ```bash
+    # 1. one-time enrollment — pick a passphrase, scan the QR with your authenticator
+    agentlock signer enroll --tier totp --passphrase 'your-passphrase-here'
+    # the CLI prints an otpauth:// URI; scan it with Google Authenticator,
+    # 1Password, Authy, Bitwarden, etc.
+
+    # 2. install with a TOTP-attested session
+    agentlock install --tier totp --code 123456 --passphrase 'your-passphrase-here'
+    # 123456 is the current 6-digit code from your authenticator app.
+    ```
+
+    Ledger entries get the yellow `TOTP-BACKED — MEDIUM ASSURANCE` banner.
+
+=== "Dev / quick eval: unattested"
+
+    Useful for getting a feel for the install/uninstall flow without setting up a signer. Allow unattested sessions on the daemon:
+
+    ```bash
+    docker rm -f agentlock
+    docker run -d --name agentlock \
+      -p 127.0.0.1:7878:7878 -p 127.0.0.1:7879:7879 \
+      -v "$HOME/.agentlock:/var/lib/agentlock" \
+      -e AGENTLOCK_ALLOW_UNATTESTED=1 \
+      ghcr.io/openagentlock/agentlockd:latest
+
+    agentlock install        # default tier is unattested
+    ```
+
+    Ledger entries get the red `UNATTESTED — LEDGER NOT SIGNED` banner. Don't use in prod.
+
+=== "Dev / CI: software signer"
+
+    Software signer reads/writes a keypair on disk; the daemon refuses it unless `AGENTLOCK_ALLOW_SOFTWARE_SIGNER=1`. Intended for dev/CI only.
+
+    ```bash
+    agentlock install --tier software
+    ```
+
+Pick the harnesses to harden, review the diff, confirm. The installer writes harness-specific configuration (e.g. `~/.claude/settings.json` hook entries, `~/.codex/config.toml` `codex_hooks`) and registers a clean rollback path you can invoke later with `agentlock uninstall`.
 
 Open the dashboard at <http://127.0.0.1:7879/> to watch live activity.
 
@@ -90,4 +128,4 @@ Open the dashboard at <http://127.0.0.1:7879/> to watch live activity.
 
 Out of the box, the control plane runs in **monitor mode**: every tool call is logged but nothing is blocked. Use the dashboard to review activity, then flip rules to enforce when you're confident. See [Policies and the five gates](policies.md).
 
-Optionally enroll a stronger signer (TOTP today, OS keychain and YubiKey on the way) so ledger entries are signed with something other than a software key. See [Signers](signers.md).
+OS-keychain and hardware-key (YubiKey) signers are stronger than TOTP and are on the roadmap; today TOTP is the strongest signer that ships. See [Signers](signers.md).

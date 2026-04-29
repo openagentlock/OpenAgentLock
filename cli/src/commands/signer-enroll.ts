@@ -15,7 +15,10 @@ export async function runSignerEnroll(opts: EnrollOptions): Promise<void> {
   mkdirSync(home, { recursive: true });
 
   if (opts.tier !== "totp") {
-    throw new Error(`tier ${opts.tier} not wired yet (MVP supports totp)`);
+    throw new Error(
+      `tier ${opts.tier} is not supported by signer enroll. Currently supported: totp. ` +
+        `OS-keychain and hardware-key (YubiKey) tiers are on the roadmap.`,
+    );
   }
 
   const e = await enrollTOTPSigner(home, opts.passphrase, {
@@ -39,11 +42,17 @@ export async function runSignerEnroll(opts: EnrollOptions): Promise<void> {
     return;
   }
   process.stdout.write(
-    `TOTP signer enrolled .\n` +
-      `  scan:      ${e.otpauthUri}\n` +
-      `  secret:    ${e.secretBase32}\n` +
-      `  pubkey:    ed25519:${toHex(e.publicKey)}\n\n` +
-      `Next: agentlock session create --tier totp --passphrase <pp> --code <6-digit>\n`,
+    `TOTP signer enrolled.\n\n` +
+      `  scan with your authenticator app (Google Authenticator / 1Password / Authy):\n` +
+      `    ${e.otpauthUri}\n` +
+      `  manual secret (if you can't scan):\n` +
+      `    ${e.secretBase32}\n` +
+      `  signing public key:\n` +
+      `    ed25519:${toHex(e.publicKey)}\n\n` +
+      `Next steps:\n` +
+      `  agentlock install --tier totp --code <6-digit> --passphrase <pp>\n` +
+      `or, for an explicit session:\n` +
+      `  agentlock session create --tier totp --code <6-digit> --passphrase <pp>\n`,
   );
 }
 

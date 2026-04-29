@@ -173,8 +173,12 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     await api.health();
   } catch (err) {
     process.stderr.write(
-      `\ncannot reach control-plane at ${api.baseUrl}: ${(err as Error).message}\n` +
-        `start the daemon with \`just cp-serve\` and try again.\n`,
+      `\ncannot reach the OpenAgentLock daemon at ${api.baseUrl}.\n` +
+        `  underlying error: ${(err as Error).message}\n\n` +
+        `start the daemon and try again:\n` +
+        `  curl -O https://raw.githubusercontent.com/openagentlock/OpenAgentLock/main/docker-compose.yml\n` +
+        `  docker compose up -d\n` +
+        `or override the URL with --daemon <url>.\n`,
     );
     process.exitCode = 2;
     return;

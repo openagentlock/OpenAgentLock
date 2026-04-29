@@ -14,31 +14,55 @@ Every ledger entry is signed. The strength of that signature is **opt-in**, orde
 
 Every ledger entry records its `signer` kind so verifiers can downgrade trust appropriately. Banners are intentionally alarming for weak modes — do not suppress them.
 
-## How to enroll
+## How to enroll and use
 
-=== "TOTP"
+=== "TOTP (recommended for prod)"
 
-    ```bash
-    agentlock signer enroll --tier totp
-    ```
-
-    The CLI prints a `otpauth://` URI and a QR code; scan it with any RFC 6238 authenticator (Google Authenticator, Authy, 1Password, Bitwarden, etc.). A 6-digit code is requested at daemon startup.
-
-=== "Software (dev only)"
+    One-time enrollment:
 
     ```bash
-    AGENTLOCK_ALLOW_SOFTWARE_SIGNER=1 agentlock signer enroll --tier software
+    agentlock signer enroll --tier totp --passphrase 'your-passphrase-here'
     ```
 
-    The CLI refuses without the explicit `AGENTLOCK_ALLOW_SOFTWARE_SIGNER=1` opt-in. Release builds drop the env var entirely.
+    The CLI prints an `otpauth://` URI; scan it with any RFC 6238 authenticator (Google Authenticator, Authy, 1Password, Bitwarden, etc.).
 
-=== "Unattested"
+    From then on, mint sessions with the current 6-digit code from your authenticator:
 
     ```bash
-    agentlock signer enroll --tier unattested
+    # used by `install`, `uninstall`, `session create`, `session rotate`
+    agentlock install --tier totp --code 123456 --passphrase 'your-passphrase-here'
+    agentlock session create --tier totp --code 123456 --passphrase 'your-passphrase-here'
     ```
 
-    Not recommended outside investigative / read-only deployments.
+    Ledger entries get the yellow `TOTP-BACKED — MEDIUM ASSURANCE` banner.
+
+=== "Software (dev / CI only)"
+
+    No enrollment step — the keypair is created lazily on first session mint, sealed with file permissions.
+
+    ```bash
+    agentlock install --tier software
+    agentlock session create --tier software
+    ```
+
+    The CLI **and the daemon** both refuse the software signer unless `AGENTLOCK_ALLOW_SOFTWARE_SIGNER=1` is set on whichever side is rejecting it. Release builds intentionally drop that env knob from the user-facing surface.
+
+=== "Unattested (no signature)"
+
+    Useful for getting a feel for the install/uninstall flow during evaluation. The daemon refuses unattested sessions unless explicitly allowed:
+
+    ```bash
+    docker rm -f agentlock
+    docker run -d --name agentlock \
+      -p 127.0.0.1:7878:7878 -p 127.0.0.1:7879:7879 \
+      -v "$HOME/.agentlock:/var/lib/agentlock" \
+      -e AGENTLOCK_ALLOW_UNATTESTED=1 \
+      ghcr.io/openagentlock/agentlockd:latest
+
+    agentlock install        # default tier is unattested
+    ```
+
+    Ledger entries get the red `UNATTESTED — LEDGER NOT SIGNED` banner. Not recommended outside investigative / read-only deployments.
 
 ## How signatures are produced
 
