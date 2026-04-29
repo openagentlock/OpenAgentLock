@@ -197,31 +197,23 @@ export async function multiselect<T extends string>(
     let finished = false;
     const finish = (result: T[] | null): void => {
       // Guard against the keypress handler firing finish twice (Enter
-      // can produce both `return` and `enter` on some terminals; q/esc
-      // similarly). React's reconciler does not tolerate a second
-      // unmount commit on a torn-down container — symptom is
-      // BindingError "Expected null or instance of Node" inside
-      // commitBeforeMutationEffects → clearContainer.
+      // can produce both `return` and `enter` on some terminals).
       if (finished) return;
       finished = true;
-      // Resolve first so the caller's `await` settles before teardown.
-      // Defer unmount + destroy to the next microtask so React's
-      // current commit cycle (the keypress that triggered finish)
-      // finishes before the reconciler tries to mutate a container we
-      // are about to clear.
+
+      // opentui-react's reconciler crashes inside clearContainer when
+      // we try to formally unmount the React root — the WASM/Embind
+      // binding does a strict instanceof check that fails across the
+      // unmount→destroy boundary ("Expected null or instance of Node,
+      // got an instance of Node"). The reliable workaround is to skip
+      // root.unmount() entirely and let renderer.destroy() reclaim the
+      // container in one step. Process exit handles the React leak.
+      try {
+        renderer.destroy();
+      } catch {
+        // best-effort
+      }
       resolve(result);
-      queueMicrotask(() => {
-        try {
-          root.unmount();
-        } catch {
-          // best-effort
-        }
-        try {
-          renderer.destroy();
-        } catch {
-          // best-effort
-        }
-      });
     };
 
     root.render(
