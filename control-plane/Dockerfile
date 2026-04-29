@@ -30,7 +30,7 @@ RUN bun install --frozen-lockfile || bun install
 RUN bun run build
 
 # ---------- 3. go-builder ----------
-FROM golang:1.23-bookworm AS go-builder
+FROM golang:1.26-bookworm AS go-builder
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY control-plane/go.mod control-plane/go.sum ./control-plane/
