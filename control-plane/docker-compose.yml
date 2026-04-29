@@ -9,7 +9,7 @@ services:
     volumes:
       - ../dev/agentlock:/var/lib/agentlock
     healthcheck:
-      test: ["CMD", "/usr/local/bin/control-plane", "--health"]
+      test: ["CMD", "/usr/local/bin/agentlockd", "--health"]
       interval: 10s
       timeout: 2s
       retries: 3

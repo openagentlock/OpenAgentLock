@@ -28,7 +28,7 @@ services:
       - agentlock-state:/var/lib/agentlock
       - ./policies:/etc/agentlock/policies:ro
     healthcheck:
-      test: ["CMD", "/usr/local/bin/control-plane", "--health"]
+      test: ["CMD", "/usr/local/bin/agentlockd", "--health"]
       interval: 10s
       timeout: 2s
       retries: 3

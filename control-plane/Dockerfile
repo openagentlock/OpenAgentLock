@@ -52,9 +52,10 @@ RUN go build -o /out/control-plane ./cmd/control-plane
 
 # ---------- 4. runtime ----------
 FROM gcr.io/distroless/cc-debian12 AS runtime
-COPY --from=go-builder /out/control-plane /usr/local/bin/control-plane
+COPY --from=go-builder /out/control-plane /usr/local/bin/agentlockd
 ENV AGENTLOCK_LISTEN=0.0.0.0:7878
 ENV AGENTLOCK_DASHBOARD_LISTEN=0.0.0.0:7879
+ENV AGENTLOCK_HOME=/var/lib/agentlock
 EXPOSE 7878 7879
 USER 65532:65532
-ENTRYPOINT ["/usr/local/bin/control-plane"]
+ENTRYPOINT ["/usr/local/bin/agentlockd"]
