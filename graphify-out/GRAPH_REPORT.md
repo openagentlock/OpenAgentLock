@@ -1,7 +1,7 @@
 # Graph Report - OpenAgentLock  (2026-04-28)
 
 ## Corpus Check
-- 157 files · ~180,060 words
+- 157 files · ~180,039 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -60,10 +60,10 @@
   cli/tests/e2e.test.ts → site/assets/javascripts/lunr/wordcut.js
 - `createSession()` --calls--> `parse()`  [INFERRED]
   cli/tests/e2e.test.ts → site/assets/javascripts/lunr/wordcut.js
-- `TestMCPPin_BadBody400()` --calls--> `run()`  [INFERRED]
-  control-plane/internal/api/mcp_test.go → cli/tests/e2e.test.ts
-- `TestEveryNonHealthRouteIs501UntilSignoff()` --calls--> `run()`  [INFERRED]
-  control-plane/internal/api/router_test.go → cli/tests/e2e.test.ts
+- `run()` --calls--> `TestMCPPin_BadBody400()`  [INFERRED]
+  cli/tests/e2e.test.ts → control-plane/internal/api/mcp_test.go
+- `run()` --calls--> `TestEveryNonHealthRouteIs501UntilSignoff()`  [INFERRED]
+  cli/tests/e2e.test.ts → control-plane/internal/api/router_test.go
 
 ## Communities
 
