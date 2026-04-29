@@ -14,7 +14,7 @@ You'll need:
 
 - [Bun](https://bun.sh) >= 1.1
 - Go >= 1.21
-- Rust >= 1.78
+- Rust >= 1.85
 - Docker (for control-plane)
 
 ## Workflow

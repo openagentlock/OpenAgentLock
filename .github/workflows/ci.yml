@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.78
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: ledger }
       - working-directory: ledger
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: control-plane/go.mod
-      - uses: dtolnay/rust-toolchain@1.78
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: ledger }
       - uses: oven-sh/setup-bun@v2

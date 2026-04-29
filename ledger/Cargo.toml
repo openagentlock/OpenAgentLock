@@ -2,7 +2,7 @@
 name = "openagentlock-ledger"
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.85"
 publish = false
 description = "Append-only Merkle ledger for OpenAgentLock. Used by the Go control-plane via FFI / sidecar."
 license = "LicenseRef-FSL-1.1-Apache-2.0"

@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" role="img" aria-label="OpenAgentLock — A firewall for AI coding agents">
+  <title>OpenAgentLock — A firewall for AI coding agents</title>
+
+  <defs>
+    <linearGradient id="bgFade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"  stop-color="#000"/>
+      <stop offset="60%" stop-color="#000"/>
+      <stop offset="100%" stop-color="#1a1a1a"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#222" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="orbA" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#fff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect width="1280" height="320" fill="url(#bgFade)"/>
+  <rect width="1280" height="320" fill="url(#grid)" opacity="0.4"/>
+
+  <!-- glow on left -->
+  <ellipse cx="220" cy="160" rx="320" ry="220" fill="url(#orbA)"/>
+
+  <!-- mark -->
+  <g transform="translate(80 80) scale(2.5)">
+    <!-- outer shield -->
+    <path d="M32 4 L56 12 V30 C56 44 46 54 32 60 C18 54 8 44 8 30 V12 Z"
+          fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+    <!-- padlock -->
+    <rect x="22" y="30" width="20" height="16" rx="2" fill="#fff"/>
+    <path d="M26 30 V25 a6 6 0 0 1 12 0 V30"
+          fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+    <!-- keyhole -->
+    <circle cx="32" cy="36" r="2.4" fill="#000"/>
+    <rect x="31" y="36" width="2" height="6" fill="#000"/>
+    <!-- agent nodes -->
+    <circle cx="14" cy="20" r="2" fill="#fff"/>
+    <circle cx="50" cy="20" r="2" fill="#fff"/>
+    <circle cx="32" cy="14" r="2" fill="#fff"/>
+    <line x1="14" y1="20" x2="32" y2="14" stroke="#fff" stroke-width="1.2"/>
+    <line x1="50" y1="20" x2="32" y2="14" stroke="#fff" stroke-width="1.2"/>
+    <line x1="14" y1="20" x2="50" y2="20" stroke="#fff" stroke-width="1.2" stroke-dasharray="2 2"/>
+  </g>
+
+  <!-- divider -->
+  <line x1="295" y1="60" x2="295" y2="260" stroke="#333" stroke-width="1"/>
+
+  <!-- wordmark + tagline -->
+  <g transform="translate(330 0)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" fill="#fff">
+    <text x="0" y="120" font-size="64" font-weight="700" letter-spacing="-1.5">
+      <tspan>Open</tspan><tspan font-weight="400" fill="#bbb">Agent</tspan><tspan>Lock</tspan>
+    </text>
+    <text x="0" y="170" font-size="26" font-weight="500" fill="#fff">A firewall for AI coding agents.</text>
+    <text x="0" y="208" font-size="16" font-weight="400" fill="#888">Detect harnesses · Gate risky tool calls · Sign every decision.</text>
+
+    <!-- chips -->
+    <g transform="translate(0 240)" font-size="13" font-weight="600">
+      <g transform="translate(0 0)">
+        <rect width="100" height="28" rx="14" fill="none" stroke="#666"/>
+        <text x="14" y="19" fill="#fff">Claude Code</text>
+      </g>
+      <g transform="translate(112 0)">
+        <rect width="92" height="28" rx="14" fill="none" stroke="#666"/>
+        <text x="14" y="19" fill="#fff">Codex CLI</text>
+      </g>
+      <g transform="translate(216 0)">
+        <rect width="80" height="28" rx="14" fill="none" stroke="#666"/>
+        <text x="14" y="19" fill="#fff">Cursor</text>
+      </g>
+      <g transform="translate(308 0)">
+        <rect width="92" height="28" rx="14" fill="none" stroke="#666"/>
+        <text x="14" y="19" fill="#fff">OpenCode</text>
+      </g>
+      <g transform="translate(412 0)">
+        <rect width="76" height="28" rx="14" fill="none" stroke="#666"/>
+        <text x="14" y="19" fill="#fff">Cline</text>
+      </g>
+      <g transform="translate(500 0)">
+        <rect width="106" height="28" rx="14" fill="none" stroke="#666"/>
+        <text x="14" y="19" fill="#fff">Gemini CLI</text>
+      </g>
+      <g transform="translate(618 0)">
+        <rect width="116" height="28" rx="14" fill="none" stroke="#666"/>
+        <text x="14" y="19" fill="#fff">Continue.dev</text>
+      </g>
+    </g>
+  </g>
+</svg>

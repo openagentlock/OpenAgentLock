@@ -58,11 +58,26 @@ function randomPort(): number {
   return 30000 + Math.floor(Math.random() * 30000);
 }
 
+function hasLedgerStaticlib(): boolean {
+  // Skip e2e when the Rust staticlib isn't built — the Go daemon links
+  // it via CGO, so without it `go run ./cmd/control-plane` fails to
+  // start and the whole suite times out in beforeEach.
+  const target = rustTargetForGo();
+  const libDir = join(LEDGER_DIR, "target", target, "release");
+  // libopenagentlock_ledger.a is the staticlib, .so/.dylib the cdylib.
+  return (
+    existsSync(join(libDir, "libopenagentlock_ledger.a")) ||
+    existsSync(join(libDir, "libopenagentlock_ledger.so")) ||
+    existsSync(join(libDir, "libopenagentlock_ledger.dylib"))
+  );
+}
+
 // Whole-suite gate.
 const SKIP =
   !hasGo() ||
   !existsSync(join(CONTROL_PLANE_DIR, "go.mod")) ||
-  !existsSync(CLI_ENTRY);
+  !existsSync(CLI_ENTRY) ||
+  !hasLedgerStaticlib();
 
 let daemon: Subprocess | null = null;
 let port = 0;
