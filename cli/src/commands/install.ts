@@ -26,12 +26,13 @@
 //     re-roots every detector AND the daemon's apply paths.
 
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { detectAll } from "../detect/index.ts";
 import type { HarnessId } from "../detect/types.ts";
 import { multiselect } from "../tui/multiselect.tsx";
 import { apiClient, type InstallFileOp } from "../util/api.ts";
+import { home } from "../util/paths.ts";
 import { mintAttestedSession, type AttestedTier } from "../util/session-mint.ts";
 
 // Source-tree default: cli/agentlock is a bash wrapper that does
@@ -105,6 +106,19 @@ function summarizeOp(op: InstallFileOp): string {
 export async function runInstall(argv: string[] = []): Promise<void> {
   const flags = parseFlags(argv);
   const api = apiClient(flags.daemonUrl);
+
+  // Pre-resolve per-harness config dirs on the host side. The CLI knows
+  // the user's real $HOME; the daemon (especially in Docker, where it
+  // runs as uid 65532 with $HOME=/home/nonroot) does not. Sending these
+  // explicitly avoids the host-vs-container path mismatch. When --config-
+  // dir is set, mirror it for every harness so the legacy flag's "single
+  // dir wins" behavior is preserved on both sides.
+  const hostConfigDirs: Record<string, string> = flags.configDirOverride
+    ? { "claude-code": flags.configDirOverride, codex: flags.configDirOverride }
+    : {
+        "claude-code": resolve(join(home(), ".claude")),
+        codex: resolve(join(home(), ".codex")),
+      };
 
   // 1. Detection ---------------------------------------------------------
   const devMode = !!process.env.AGENTLOCK_DEV_HOME;
@@ -201,10 +215,9 @@ export async function runInstall(argv: string[] = []): Promise<void> {
       if (msg.includes("unattested_disabled")) {
         process.stderr.write(
           "\nunattested sessions are disabled on this daemon.\n" +
-            "  - re-run with --tier totp (recommended for prod), or\n" +
-            "  - re-run with --tier software (dev only), or\n" +
-            "  - set AGENTLOCK_ALLOW_UNATTESTED=1 on the daemon (dev only).\n" +
-            "see https://openagentlock.github.io/OpenAgentLock/guide/signers/ for the signer ladder.\n",
+            "re-run with --tier totp (recommended) or --tier software, " +
+            "or restart the daemon with -e AGENTLOCK_ALLOW_UNATTESTED=1.\n" +
+            "see https://openagentlock.github.io/OpenAgentLock/guide/signers/\n",
         );
       } else {
         process.stderr.write(`\nsession mint failed: ${msg}\n`);
@@ -243,6 +256,38 @@ export async function runInstall(argv: string[] = []): Promise<void> {
 
   const daemonUrl = flags.daemonUrl ?? api.baseUrl;
 
+  // 3.5. Capabilities probe -------------------------------------------
+  // Read-only check against the daemon so we fail fast — before fetching
+  // the plan, before showing y/N — when apply is disabled or when the
+  // daemon's view of the host filesystem won't match the user's. Older
+  // daemons (pre-0.1.10) don't expose this endpoint; treat 404/network
+  // errors as "unknown" and fall through to the existing post-action
+  // error handling.
+  try {
+    const caps = await api.installCapabilities();
+    if (!caps.apply_enabled) {
+      process.stderr.write(
+        "\ninstall apply is disabled on this daemon.\n" +
+          "restart the daemon with -e AGENTLOCK_ALLOW_APPLY=1 added.\n" +
+          "see https://openagentlock.github.io/OpenAgentLock/guide/daemon-flags/\n",
+      );
+      process.exitCode = 2;
+      return;
+    }
+    if (caps.container && !flags.configDirOverride) {
+      process.stdout.write(
+        "\nwarning: daemon is running in a container.\n" +
+          "  install will reference your host paths (e.g. ~/.claude). For\n" +
+          "  writes to actually land on the host, the daemon must have\n" +
+          "  same-path bind mounts (e.g. -v $HOME/.claude:$HOME/.claude).\n" +
+          "  see https://openagentlock.github.io/OpenAgentLock/guide/installation/\n",
+      );
+    }
+  } catch {
+    // Probe failed — older daemon or transient. Continue; downstream
+    // calls will surface specific errors with the same hints.
+  }
+
   // 3a. Per-harness uninstall for rows the user just deselected. Runs
   // before install/apply so the ledger entries land in a sensible
   // chronological order (uninstall, then install).
@@ -255,6 +300,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
         session_id: sessionId,
         harnesses: toUninstall,
         config_dir_override: flags.configDirOverride,
+        harness_config_dirs: hostConfigDirs,
       });
       for (const op of u.operations) {
         const note = op.error ? `  ERROR: ${op.error}` : "";
@@ -272,7 +318,8 @@ export async function runInstall(argv: string[] = []): Promise<void> {
       if (msg.includes("apply_disabled")) {
         process.stderr.write(
           "\nuninstall is disabled on this daemon.\n" +
-            "set AGENTLOCK_ALLOW_APPLY=1 on the daemon to enable it.\n",
+            "restart the daemon with -e AGENTLOCK_ALLOW_APPLY=1 added.\n" +
+            "see https://openagentlock.github.io/OpenAgentLock/guide/daemon-flags/\n",
         );
         process.exitCode = 2;
         return;
@@ -298,6 +345,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     // `cli/agentlock` wrapper; AGENTLOCK_BINARY lets release builds
     // override (e.g. point at the compiled single-file binary).
     agentlock_binary: process.env.AGENTLOCK_BINARY ?? defaultAgentlockBinary(),
+    harness_config_dirs: hostConfigDirs,
   };
 
   // 4. Plan dry-run ------------------------------------------------------
@@ -366,7 +414,8 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     if (msg.includes("apply_disabled")) {
       process.stderr.write(
         "\ninstall apply is disabled on this daemon.\n" +
-          "set AGENTLOCK_ALLOW_APPLY=1 on the daemon to enable it.\n",
+          "restart the daemon with -e AGENTLOCK_ALLOW_APPLY=1 added.\n" +
+          "see https://openagentlock.github.io/OpenAgentLock/guide/daemon-flags/\n",
       );
     } else if (msg.includes("unsafe_target")) {
       process.stderr.write(
