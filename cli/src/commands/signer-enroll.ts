@@ -1,4 +1,7 @@
 import { mkdirSync } from "node:fs";
+// qrcode-terminal ships no types; this is the entire surface we use.
+// @ts-expect-error — no @types/qrcode-terminal package
+import qrcode from "qrcode-terminal";
 import { agentlockHome } from "../util/paths";
 import { enrollTOTPSigner } from "../signer/totp";
 
@@ -43,10 +46,16 @@ export async function runSignerEnroll(opts: EnrollOptions): Promise<void> {
   }
   process.stdout.write(
     `TOTP signer enrolled.\n\n` +
-      `  scan with your authenticator app (Google Authenticator / 1Password / Authy):\n` +
-      `    ${e.otpauthUri}\n` +
-      `  manual secret (if you can't scan):\n` +
-      `    ${e.secretBase32}\n` +
+      `  scan with your authenticator app (Google Authenticator / 1Password / Authy):\n\n`,
+  );
+  // qrcode.generate writes the QR directly to stdout. small=true uses
+  // half-block characters so the code fits in a typical terminal.
+  qrcode.generate(e.otpauthUri, { small: true });
+  process.stdout.write(
+    `\n  manual setup (if your terminal mangles the QR):\n` +
+      `    secret: ${e.secretBase32}\n` +
+      `    type:   TOTP, SHA1, 6 digits, 30s\n` +
+      `    raw uri: ${e.otpauthUri}\n` +
       `  signing public key:\n` +
       `    ed25519:${toHex(e.publicKey)}\n\n` +
       `Next steps:\n` +
