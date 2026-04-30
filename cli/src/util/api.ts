@@ -18,6 +18,7 @@ export interface ApiClient {
   checkGate(req: GateCheckRequest): Promise<GateCheckResponse>;
   ledgerRoot(): Promise<LedgerRootResponse>;
   ledgerVerify(): Promise<LedgerVerifyResponse>;
+  installCapabilities(): Promise<InstallCapabilitiesResponse>;
   installPlan(req: InstallPlanRequest): Promise<InstallPlanResponse>;
   installApply(req: InstallPlanRequest): Promise<InstallApplyResponse>;
   installUninstall(sessionId: string): Promise<InstallUninstallResponse>;
@@ -25,6 +26,7 @@ export interface ApiClient {
     session_id: string;
     harnesses: string[];
     config_dir_override?: string;
+    harness_config_dirs?: Record<string, string>;
   }): Promise<InstallUninstallResponse>;
   listSessions(): Promise<SessionsListResponse>;
   getMode(): Promise<ModeResponse>;
@@ -105,6 +107,18 @@ export interface InstallPlanRequest {
   // Defaults to "agentlock" (PATH lookup at hook time). Pass an absolute
   // path for dev / CI runs where PATH may not include the build output.
   agentlock_binary?: string;
+  // Pre-resolved host paths for each harness's config dir. When set, the
+  // daemon uses these instead of probing its own $HOME — this is what
+  // makes the install flow honest under Docker, where the daemon's HOME
+  // is /home/nonroot but the user expects writes under their real home.
+  harness_config_dirs?: Record<string, string>;
+}
+
+export interface InstallCapabilitiesResponse {
+  apply_enabled: boolean;
+  real_home_allowed: boolean;
+  unattested_allowed: boolean;
+  container: boolean;
 }
 
 export interface InstallFileOp {
@@ -208,6 +222,8 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
     "http://127.0.0.1:7878";
 
   const tok = initialToken ?? process.env.AGENTLOCK_TOKEN ?? null;
+
+  let cachedCapabilities: InstallCapabilitiesResponse | null = null;
 
   // authHeaders returns { Authorization: Bearer <tok> } when the client
   // has a token, otherwise {}. Used internally by every gated request.
@@ -363,6 +379,21 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
       return (await res.json()) as UnattestedSessionResponse;
     },
 
+    async installCapabilities(): Promise<InstallCapabilitiesResponse> {
+      // Cache on the client so plan + apply don't re-fetch. Capabilities
+      // can only change with a daemon restart — caching for the lifetime
+      // of a CLI invocation is safe.
+      if (cachedCapabilities) return cachedCapabilities;
+      const res = await fetch(`${url}/v1/install/capabilities`);
+      if (!res.ok) {
+        throw new Error(
+          `install.capabilities: ${res.status} ${res.statusText}`,
+        );
+      }
+      cachedCapabilities = (await res.json()) as InstallCapabilitiesResponse;
+      return cachedCapabilities;
+    },
+
     async installPlan(req: InstallPlanRequest): Promise<InstallPlanResponse> {
       const res = await fetch(`${url}/v1/install/plan`, {
         method: "POST",
@@ -408,6 +439,7 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
       session_id: string;
       harnesses: string[];
       config_dir_override?: string;
+      harness_config_dirs?: Record<string, string>;
     }): Promise<InstallUninstallResponse> {
       const res = await fetch(`${url}/v1/install/uninstall-harnesses`, {
         method: "POST",

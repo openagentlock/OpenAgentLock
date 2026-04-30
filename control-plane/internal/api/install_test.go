@@ -93,6 +93,103 @@ func TestInstallPlan_ClaudeCodeProducesWriteOp(t *testing.T) {
 	}
 }
 
+func TestInstallPlan_HarnessConfigDirs_Honored(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+
+	// Send harness_config_dirs WITHOUT a config_dir_override flag — the
+	// CLI's normal Docker-mode behavior. Plan must echo back paths under
+	// the host dir, not the daemon's $HOME.
+	hostHome := t.TempDir()
+	planBody := fmt.Sprintf(`{
+		"session_id": %q,
+		"harnesses": ["claude-code","codex"],
+		"daemon_url": "http://127.0.0.1:7878",
+		"harness_config_dirs": {
+			"claude-code": %q,
+			"codex": %q
+		}
+	}`, fx.sessionID,
+		filepath.Join(hostHome, ".claude"),
+		filepath.Join(hostHome, ".codex"))
+	res, err := http.Post(fx.srv.URL+"/v1/install/plan", "application/json", strings.NewReader(planBody))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(res.Body)
+		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
+	}
+	var plan map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&plan)
+	ops, _ := plan["operations"].([]any)
+	if len(ops) != 2 {
+		t.Fatalf("want 2 ops, got %d: %+v", len(ops), plan)
+	}
+	for _, anyOp := range ops {
+		op, _ := anyOp.(map[string]any)
+		path, _ := op["path"].(string)
+		if !strings.HasPrefix(path, hostHome) {
+			t.Fatalf("plan path %q must start with host dir %q (daemon is leaking its own $HOME)", path, hostHome)
+		}
+	}
+}
+
+func TestInstallPlan_HarnessConfigDirs_RejectsRelativePath(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	body := fmt.Sprintf(`{
+		"session_id": %q,
+		"harnesses": ["claude-code"],
+		"daemon_url": "http://127.0.0.1:7878",
+		"harness_config_dirs": {"claude-code": "relative/path"}
+	}`, fx.sessionID)
+	res, err := http.Post(fx.srv.URL+"/v1/install/plan", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: want 400, got %d", res.StatusCode)
+	}
+	var out map[string]string
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	if out["error"] != "invalid_config_dir" {
+		t.Fatalf("error: want invalid_config_dir, got %q", out["error"])
+	}
+}
+
+func TestInstallPlan_HarnessConfigDirs_LegacyFlagWins(t *testing.T) {
+	// When --config-dir is set the legacy flag wins so existing CLI
+	// behavior is preserved (e.g. dev runs that point at ./dev/.claude).
+	fx := newGateFixture(t, enforcePolicyYAML)
+	hostHome := t.TempDir()
+	overrideDir := "/tmp/legacy-override"
+	planBody := fmt.Sprintf(`{
+		"session_id": %q,
+		"harnesses": ["claude-code"],
+		"daemon_url": "http://127.0.0.1:7878",
+		"config_dir_override": %q,
+		"harness_config_dirs": {"claude-code": %q}
+	}`, fx.sessionID, overrideDir, filepath.Join(hostHome, ".claude"))
+	res, err := http.Post(fx.srv.URL+"/v1/install/plan", "application/json", strings.NewReader(planBody))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var plan map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&plan)
+	ops, _ := plan["operations"].([]any)
+	op, _ := ops[0].(map[string]any)
+	path, _ := op["path"].(string)
+	if !strings.HasPrefix(path, overrideDir) {
+		t.Fatalf("legacy --config-dir must win; got %q (override=%q, host=%q)", path, overrideDir, hostHome)
+	}
+}
+
 func TestInstallPlan_UnknownHarness_Skipped(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 

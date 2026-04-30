@@ -33,25 +33,29 @@ var (
 // write. Mirrors claudeCodeSettingsPath: returning an error rather than
 // a synthesized "/.codex/hooks.json" prevents apply from writing into
 // an attacker-friendly absolute path when HOME is unset.
-func codexHooksPath(configDirOverride string) (string, error) {
-	dir, err := codexConfigDir(configDirOverride)
+func codexHooksPath(configDirOverride string, overrides map[string]string) (string, error) {
+	dir, err := codexConfigDir(configDirOverride, overrides)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "hooks.json"), nil
 }
 
-func codexConfigTomlPath(configDirOverride string) (string, error) {
-	dir, err := codexConfigDir(configDirOverride)
+func codexConfigTomlPath(configDirOverride string, overrides map[string]string) (string, error) {
+	dir, err := codexConfigDir(configDirOverride, overrides)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "config.toml"), nil
 }
 
-func codexConfigDir(configDirOverride string) (string, error) {
+// Precedence: --config-dir flag > harness_config_dirs[codex] > daemon's $HOME.
+func codexConfigDir(configDirOverride string, overrides map[string]string) (string, error) {
 	if configDirOverride != "" {
 		return configDirOverride, nil
+	}
+	if d := overrides["codex"]; d != "" {
+		return d, nil
 	}
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" {
@@ -136,8 +140,8 @@ func codexHookConfig(daemonURL, agentlockBinary string) map[string]any {
 	}
 }
 
-func codexPlan(daemonURL, configDirOverride, agentlockBinary string) (fileOp, []string) {
-	hooksPath, err := codexHooksPath(configDirOverride)
+func codexPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string) (fileOp, []string) {
+	hooksPath, err := codexHooksPath(configDirOverride, overrides)
 	if err != nil {
 		hooksPath = "<unresolved: " + err.Error() + ">"
 	}
@@ -151,8 +155,8 @@ func codexPlan(daemonURL, configDirOverride, agentlockBinary string) (fileOp, []
 	}, []string{codexMCPGapWarning}
 }
 
-func applyCodex(daemonURL, configDirOverride, agentlockBinary string) (installManifestE, fileOp, []string, error) {
-	tomlPath, err := codexConfigTomlPath(configDirOverride)
+func applyCodex(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string) (installManifestE, fileOp, []string, error) {
+	tomlPath, err := codexConfigTomlPath(configDirOverride, overrides)
 	if err != nil {
 		return installManifestE{}, fileOp{}, nil, err
 	}
@@ -164,7 +168,7 @@ func applyCodex(daemonURL, configDirOverride, agentlockBinary string) (installMa
 		return installManifestE{}, fileOp{}, nil, fmt.Errorf("%w (path: %s)", errCodexFlagDisabled, tomlPath)
 	}
 
-	hooksPath, err := codexHooksPath(configDirOverride)
+	hooksPath, err := codexHooksPath(configDirOverride, overrides)
 	if err != nil {
 		return installManifestE{}, fileOp{}, nil, err
 	}
