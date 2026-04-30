@@ -23,7 +23,9 @@ export async function runDashboard(opts: DashboardOpts = {}): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(
       `daemon unreachable at ${api.baseUrl}: ${msg}\n` +
-        "hint: run `just cp-serve` in another terminal first.\n",
+        "hint: start the daemon first:\n" +
+        "  docker run -d --name agentlock -p 127.0.0.1:7878:7878 ghcr.io/openagentlock/agentlockd:latest\n" +
+        "(source checkout: `just cp-serve`)\n",
     );
     process.exitCode = 2;
     return;

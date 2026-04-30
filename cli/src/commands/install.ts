@@ -314,7 +314,9 @@ export async function runInstall(argv: string[] = []): Promise<void> {
       );
     } else if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
       process.stderr.write(
-        "hint: daemon not reachable. Is `just cp-serve` running on 127.0.0.1:7878?\n",
+        "hint: daemon not reachable on 127.0.0.1:7878. Start it with:\n" +
+          "  docker run -d --name agentlock -p 127.0.0.1:7878:7878 ghcr.io/openagentlock/agentlockd:latest\n" +
+          "Already running? Check `docker logs agentlock` (or `just cp-serve` for a source checkout).\n",
       );
     }
     process.exitCode = 2;

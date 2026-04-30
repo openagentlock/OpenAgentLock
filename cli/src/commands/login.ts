@@ -29,7 +29,9 @@ export async function runLogin(opts: LoginOpts = {}): Promise<void> {
   } catch (err) {
     process.stderr.write(
       `daemon unreachable at ${api.baseUrl}: ${err instanceof Error ? err.message : err}\n` +
-        "hint: run `just cp-serve` in another terminal first.\n",
+        "hint: start the daemon first:\n" +
+        "  docker run -d --name agentlock -p 127.0.0.1:7878:7878 ghcr.io/openagentlock/agentlockd:latest\n" +
+        "(source checkout: `just cp-serve`)\n",
     );
     process.exitCode = 2;
     return;
