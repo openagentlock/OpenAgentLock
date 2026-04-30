@@ -22,11 +22,17 @@ The control plane is a small Go HTTP service that lives in a Docker container. I
     ```bash
     docker pull ghcr.io/openagentlock/agentlockd:latest
     docker run -d --name agentlock \
+      -e AGENTLOCK_ALLOW_APPLY=1 \
+      -e AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 \
+      -v agentlock-state:/var/lib/agentlock \
+      -v "$HOME/.claude:$HOME/.claude" \
+      -v "$HOME/.codex:$HOME/.codex" \
       -p 127.0.0.1:7878:7878 \
       -p 127.0.0.1:7879:7879 \
-      -v "$HOME/.agentlock:/var/lib/agentlock" \
       ghcr.io/openagentlock/agentlockd:latest
     ```
+
+    The `$HOME/.claude` and `$HOME/.codex` mounts use the **same path inside and outside** the container so `agentlock install` writes through to your real harness configs. State lives in the `agentlock-state` named volume.
 
 The service binds to `127.0.0.1:7878` (CLI / hook traffic) and `127.0.0.1:7879` (local web dashboard). Neither port should ever be exposed to a non-loopback interface.
 
@@ -102,9 +108,13 @@ Then pick a signer tier and run `install`. Two recommended paths:
     ```bash
     docker rm -f agentlock
     docker run -d --name agentlock \
-      -p 127.0.0.1:7878:7878 -p 127.0.0.1:7879:7879 \
-      -v "$HOME/.agentlock:/var/lib/agentlock" \
+      -e AGENTLOCK_ALLOW_APPLY=1 \
+      -e AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 \
       -e AGENTLOCK_ALLOW_UNATTESTED=1 \
+      -v agentlock-state:/var/lib/agentlock \
+      -v "$HOME/.claude:$HOME/.claude" \
+      -v "$HOME/.codex:$HOME/.codex" \
+      -p 127.0.0.1:7878:7878 -p 127.0.0.1:7879:7879 \
       ghcr.io/openagentlock/agentlockd:latest
 
     agentlock install        # default tier is unattested
