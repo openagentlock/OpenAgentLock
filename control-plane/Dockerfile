@@ -50,9 +50,15 @@ ENV CGO_LDFLAGS="-L/src/ledger/target/release -lopenagentlock_ledger"
 
 RUN go build -o /out/control-plane ./cmd/control-plane
 
+# Stage an empty AGENTLOCK_HOME owned by the distroless nonroot uid (65532).
+# Distroless has no shell/mkdir/chown, so we prepare the dir here and
+# COPY --chown it into the runtime image.
+RUN install -d -m 0700 -o 65532 -g 65532 /out/agentlock-home
+
 # ---------- 4. runtime ----------
 FROM gcr.io/distroless/cc-debian12 AS runtime
 COPY --from=go-builder /out/control-plane /usr/local/bin/agentlockd
+COPY --from=go-builder --chown=65532:65532 /out/agentlock-home /var/lib/agentlock
 ENV AGENTLOCK_LISTEN=0.0.0.0:7878
 ENV AGENTLOCK_DASHBOARD_LISTEN=0.0.0.0:7879
 ENV AGENTLOCK_HOME=/var/lib/agentlock

@@ -1,6 +1,6 @@
 {
   "name": "@openagentlock/cli",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "description": "OpenAgentLock CLI — a firewall for AI coding agents. Detects local agent harnesses (Claude Code, Codex CLI, Cursor, OpenCode, Cline, Gemini CLI, Continue, Copilot), gates risky tool calls via a Go control plane, anchors decisions in a Rust Merkle ledger.",
