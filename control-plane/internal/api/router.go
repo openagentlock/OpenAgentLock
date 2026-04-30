@@ -98,6 +98,7 @@ func NewRouter(deps ...Deps) http.Handler {
 
 		// Detection / install plumbing.
 		{"POST", "/v1/detect/report", detectReportHandler(d)},
+		{"GET", "/v1/install/capabilities", installCapabilitiesHandler()},
 		{"POST", "/v1/install/plan", installPlanHandler(d)},
 		{"POST", "/v1/install/apply", installApplyHandler(d)},
 		{"POST", "/v1/install/uninstall", installUninstallHandler(d)},

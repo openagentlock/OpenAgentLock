@@ -53,6 +53,11 @@ type installPlanRequest struct {
 	// CLI callers should pass an absolute path so the dev loop and CI
 	// don't depend on PATH lookups inside Codex's spawn environment.
 	AgentlockBinary string `json:"agentlock_binary,omitempty"`
+	// HarnessConfigDirs lets the CLI pre-resolve per-harness config dirs
+	// on the host, so the daemon doesn't probe its own os.UserHomeDir()
+	// (which is /home/nonroot inside a container). Keys are harness ids
+	// ("claude-code", "codex"). ConfigDirOverride still wins when set.
+	HarnessConfigDirs map[string]string `json:"harness_config_dirs,omitempty"`
 }
 
 type fileOp struct {
@@ -80,6 +85,11 @@ func installPlanHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid_request", "daemon_url required")
 			return
 		}
+		if k, err := validateHarnessConfigDirs(req.HarnessConfigDirs, d.AgentlockHome); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_config_dir",
+				fmt.Sprintf("%s (key=%s)", err.Error(), k))
+			return
+		}
 		if _, err := d.Store.GetSession(r.Context(), req.SessionID); err != nil {
 			if errors.Is(err, storage.ErrSessionNotFound) {
 				writeError(w, http.StatusNotFound, "session_not_found", req.SessionID)
@@ -96,9 +106,9 @@ func installPlanHandler(d Deps) http.HandlerFunc {
 		for _, h := range req.Harnesses {
 			switch h {
 			case "claude-code":
-				ops = append(ops, claudeCodePlan(req.DaemonURL, req.ConfigDirOverride))
+				ops = append(ops, claudeCodePlan(req.DaemonURL, req.ConfigDirOverride, req.HarnessConfigDirs))
 			case "codex":
-				op, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary)
+				op, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs)
 				ops = append(ops, op)
 				warnings = append(warnings, ws...)
 			default:
@@ -246,13 +256,17 @@ func claudeCodeHookConfig(daemonURL string) map[string]any {
 // override was supplied. Returning an error — rather than silently
 // producing "/.claude/settings.json" — prevents the apply handler from
 // writing into an attacker-friendly absolute path when HOME is unset.
-func claudeCodeSettingsPath(configDirOverride string) (string, error) {
+//
+// Precedence: --config-dir flag > harness_config_dirs[claude-code] (the
+// CLI's host-resolved path) > AGENTLOCK_DEV_HOME > daemon's $HOME.
+func claudeCodeSettingsPath(configDirOverride string, overrides map[string]string) (string, error) {
 	dir := configDirOverride
 	if dir == "" {
-		// AGENTLOCK_DEV_HOME wins so a dev daemon paired with
-		// `AGENTLOCK_DEV_HOME=$(pwd)/dev` writes hooks into ./dev/.claude
-		// without the CLI having to pass --config-dir on every call.
-		if devHome := os.Getenv("AGENTLOCK_DEV_HOME"); devHome != "" {
+		if d := overrides["claude-code"]; d != "" {
+			dir = d
+		} else if devHome := os.Getenv("AGENTLOCK_DEV_HOME"); devHome != "" {
+			// AGENTLOCK_DEV_HOME wins for source-build callers
+			// (just cp-serve) that don't send harness_config_dirs.
 			dir = filepath.Join(devHome, ".claude")
 		} else if home, err := os.UserHomeDir(); err == nil && home != "" {
 			dir = filepath.Join(home, ".claude")
@@ -265,8 +279,8 @@ func claudeCodeSettingsPath(configDirOverride string) (string, error) {
 	return filepath.Join(dir, "settings.json"), nil
 }
 
-func claudeCodePlan(daemonURL, configDirOverride string) fileOp {
-	settingsPath, err := claudeCodeSettingsPath(configDirOverride)
+func claudeCodePlan(daemonURL, configDirOverride string, overrides map[string]string) fileOp {
+	settingsPath, err := claudeCodeSettingsPath(configDirOverride, overrides)
 	if err != nil {
 		// Plan is informational — keep going with a placeholder so the
 		// caller can still read the hook shape. Apply will refuse to
@@ -316,6 +330,11 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid_request", "daemon_url required")
 			return
 		}
+		if k, err := validateHarnessConfigDirs(req.HarnessConfigDirs, d.AgentlockHome); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_config_dir",
+				fmt.Sprintf("%s (key=%s)", err.Error(), k))
+			return
+		}
 		// Validate session_id shape up-front — same rule manifestPath
 		// enforces — so we fail fast before any filesystem work.
 		if !sessionIDPattern.MatchString(req.SessionID) {
@@ -342,7 +361,7 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 		for _, h := range req.Harnesses {
 			switch h {
 			case "claude-code":
-				entry, op, err := applyClaudeCode(req.DaemonURL, req.ConfigDirOverride)
+				entry, op, err := applyClaudeCode(req.DaemonURL, req.ConfigDirOverride, req.HarnessConfigDirs)
 				if err != nil {
 					if errors.Is(err, errUnsafeTarget) {
 						writeError(w, http.StatusForbidden, "unsafe_target", err.Error())
@@ -355,7 +374,7 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 				entries = append(entries, entry)
 				ops = append(ops, op)
 			case "codex":
-				entry, op, ws, err := applyCodex(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary)
+				entry, op, ws, err := applyCodex(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs)
 				if err != nil {
 					if errors.Is(err, errUnsafeTarget) {
 						writeError(w, http.StatusForbidden, "unsafe_target", err.Error())
@@ -448,8 +467,8 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 
 var errUnsafeTarget = errors.New("target path resolves under real home .claude; set AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 to override")
 
-func applyClaudeCode(daemonURL, configDirOverride string) (installManifestE, fileOp, error) {
-	settingsPath, err := claudeCodeSettingsPath(configDirOverride)
+func applyClaudeCode(daemonURL, configDirOverride string, overrides map[string]string) (installManifestE, fileOp, error) {
+	settingsPath, err := claudeCodeSettingsPath(configDirOverride, overrides)
 	if err != nil {
 		return installManifestE{}, fileOp{}, err
 	}
@@ -777,9 +796,10 @@ func installUninstallHandler(d Deps) http.HandlerFunc {
 // without forcing the user to call a separate uninstall command.
 
 type installUninstallHarnessesRequest struct {
-	SessionID         string   `json:"session_id"`
-	Harnesses         []string `json:"harnesses"`
-	ConfigDirOverride string   `json:"config_dir_override,omitempty"`
+	SessionID         string            `json:"session_id"`
+	Harnesses         []string          `json:"harnesses"`
+	ConfigDirOverride string            `json:"config_dir_override,omitempty"`
+	HarnessConfigDirs map[string]string `json:"harness_config_dirs,omitempty"`
 }
 
 func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
@@ -802,6 +822,11 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 				"session_id must match [A-Za-z0-9_-]{1,128}")
 			return
 		}
+		if k, err := validateHarnessConfigDirs(req.HarnessConfigDirs, d.AgentlockHome); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_config_dir",
+				fmt.Sprintf("%s (key=%s)", err.Error(), k))
+			return
+		}
 		sess, err := d.Store.GetSession(r.Context(), req.SessionID)
 		if err != nil {
 			if errors.Is(err, storage.ErrSessionNotFound) {
@@ -819,7 +844,7 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 		for _, h := range req.Harnesses {
 			switch h {
 			case "claude-code":
-				p, err := claudeCodeSettingsPath(req.ConfigDirOverride)
+				p, err := claudeCodeSettingsPath(req.ConfigDirOverride, req.HarnessConfigDirs)
 				if err != nil {
 					failures++
 					ops = append(ops, uninstallOp{Op: "strip", Path: "<unresolved>", Error: err.Error()})
@@ -836,7 +861,7 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 				}
 				ops = append(ops, op)
 			case "codex":
-				p, err := codexHooksPath(req.ConfigDirOverride)
+				p, err := codexHooksPath(req.ConfigDirOverride, req.HarnessConfigDirs)
 				if err != nil {
 					failures++
 					ops = append(ops, uninstallOp{Op: "strip", Path: "<unresolved>", Error: err.Error()})
