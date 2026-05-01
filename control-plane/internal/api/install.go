@@ -380,10 +380,6 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 						writeError(w, http.StatusForbidden, "unsafe_target", err.Error())
 						return
 					}
-					if errors.Is(err, errCodexFlagDisabled) {
-						writeError(w, http.StatusFailedDependency, "codex_hooks_disabled", err.Error())
-						return
-					}
 					log.Printf("install.apply: applyCodex: %v", err)
 					writeError(w, http.StatusInternalServerError, "apply_error", "codex install failed")
 					return

@@ -29,7 +29,7 @@ event = "pre_tool"
 command = ["agentlock", "hook", "codex", "pre-tool"]
 ```
 
-The installer refuses to wire Codex without `codex_hooks = true` in your config; the flag is opt-in upstream.
+`agentlock install` auto-enables the flag for you: it creates `~/.codex/config.toml` if missing, flips `codex_hooks = false` to `true`, or appends the line to an existing TOML — backing the original up first. The flag stays user-removable; we never enable it without an install run.
 
 Codex command hooks are bash-only today; MCP coverage at the hook layer is a tracked upstream gap, not something we can paper over.
 

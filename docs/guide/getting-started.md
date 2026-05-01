@@ -130,7 +130,7 @@ Then pick a signer tier and run `install`. Two recommended paths:
     agentlock install --tier software
     ```
 
-Pick the harnesses to harden, review the diff, confirm. The installer writes harness-specific configuration (e.g. `~/.claude/settings.json` hook entries, `~/.codex/config.toml` `codex_hooks`) and registers a clean rollback path you can invoke later with `agentlock uninstall`.
+Pick the harnesses to harden, review the diff, confirm. The installer writes harness-specific configuration (e.g. `~/.claude/settings.json` hook entries, `~/.codex/hooks.json`, plus `codex_hooks = true` in `~/.codex/config.toml` — auto-set on first install, with a backup of the original) and registers a clean rollback path you can invoke later with `agentlock uninstall`.
 
 Open the dashboard at <http://127.0.0.1:7879/> to watch live activity.
 

@@ -91,33 +91,76 @@ func TestInstallPlan_CodexProducesWriteOpAndWarning(t *testing.T) {
 	}
 }
 
-func TestInstallApply_CodexRefusedWhenFlagDisabled(t *testing.T) {
+func TestInstallApply_CodexAutoEnablesFlagWhenMissing(t *testing.T) {
 	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
-	// config.toml exists but the flag isn't set to true.
+	// config.toml exists but the flag isn't set: auto-append.
 	writeCodexConfigToml(t, dir, "# nothing relevant\n")
 
 	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock")
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusFailedDependency {
-		t.Fatalf("status = %d, want 424", res.StatusCode)
+	if res.StatusCode != http.StatusOK {
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(res.Body)
+		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	var body map[string]string
-	_ = json.NewDecoder(res.Body).Decode(&body)
-	if body["error"] != "codex_hooks_disabled" {
-		t.Fatalf("error = %v", body["error"])
+	got, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if err != nil {
+		t.Fatalf("read config.toml: %v", err)
+	}
+	if !strings.Contains(string(got), "codex_hooks = true") {
+		t.Fatalf("expected codex_hooks = true appended, got:\n%s", got)
 	}
 }
 
-func TestInstallApply_CodexRefusedWhenConfigMissing(t *testing.T) {
+func TestInstallApply_CodexFlipsFalseToTrue(t *testing.T) {
+	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
+	fx := newGateFixture(t, enforcePolicyYAML)
+	dir := t.TempDir()
+	writeCodexConfigToml(t, dir, "codex_hooks = false\n")
+
+	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock")
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(res.Body)
+		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if err != nil {
+		t.Fatalf("read config.toml: %v", err)
+	}
+	if !strings.Contains(string(got), "codex_hooks = true") {
+		t.Fatalf("expected flipped to true, got:\n%s", got)
+	}
+	if strings.Contains(string(got), "codex_hooks = false") {
+		t.Fatalf("expected old false line replaced, got:\n%s", got)
+	}
+	// Backup of the original false-state should exist alongside.
+	matches, _ := filepath.Glob(filepath.Join(dir, "config.toml.agentlock-backup-*"))
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 backup, got %v", matches)
+	}
+}
+
+func TestInstallApply_CodexCreatesConfigWhenMissing(t *testing.T) {
 	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir() // no config.toml at all
 	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock")
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusFailedDependency {
-		t.Fatalf("status = %d, want 424", res.StatusCode)
+	if res.StatusCode != http.StatusOK {
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(res.Body)
+		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if err != nil {
+		t.Fatalf("expected config.toml created: %v", err)
+	}
+	if string(got) != "codex_hooks = true\n" {
+		t.Fatalf("expected fresh codex_hooks=true file, got:\n%s", got)
 	}
 }
 

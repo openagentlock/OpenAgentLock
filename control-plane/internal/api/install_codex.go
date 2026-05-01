@@ -4,8 +4,11 @@
 // daemon. See docs/reference/hook-daemon-path.md.
 //
 // Codex's lifecycle hooks are gated by `codex_hooks = true` in
-// ~/.codex/config.toml. Apply refuses if the flag is unset; we never
-// write into the user's TOML.
+// ~/.codex/config.toml. Apply auto-enables the flag (creating the file
+// if needed, backing it up if it existed) so users don't have to hand-
+// edit their TOML before installing. The same checkSafeCodexTarget
+// guard that protects hooks.json also protects config.toml — writes
+// into a real ~/.codex still require AGENTLOCK_ALLOW_APPLY_REAL_HOME=1.
 
 package api
 
@@ -25,8 +28,7 @@ import (
 const codexMCPGapWarning = "Codex CLI: PreToolUse only fires for shell tool calls today. MCP tool calls are NOT gated by OpenAgentLock until upstream expands hook coverage."
 
 var (
-	errCodexFlagDisabled = errors.New("codex_hooks = true is missing from config.toml; enable it before installing")
-	codexFlagLineRegex   = regexp.MustCompile(`(?m)^\s*codex_hooks\s*=\s*(true|false)\b`)
+	codexFlagLineRegex = regexp.MustCompile(`(?m)^\s*codex_hooks\s*=\s*(true|false)\b`)
 )
 
 // codexHooksPath returns the absolute path to the hooks.json file we'd
@@ -160,12 +162,13 @@ func applyCodex(daemonURL, configDirOverride, agentlockBinary string, overrides 
 	if err != nil {
 		return installManifestE{}, fileOp{}, nil, err
 	}
-	enabled, err := codexFlagEnabled(tomlPath)
+	tomlNote, err := ensureCodexFlagEnabled(tomlPath)
 	if err != nil {
 		return installManifestE{}, fileOp{}, nil, err
 	}
-	if !enabled {
-		return installManifestE{}, fileOp{}, nil, fmt.Errorf("%w (path: %s)", errCodexFlagDisabled, tomlPath)
+	warnings := []string{codexMCPGapWarning}
+	if tomlNote != "" {
+		warnings = append(warnings, tomlNote)
 	}
 
 	hooksPath, err := codexHooksPath(configDirOverride, overrides)
@@ -216,7 +219,123 @@ func applyCodex(daemonURL, configDirOverride, agentlockBinary string, overrides 
 			Path:       abs,
 			Reason:     fmt.Sprintf("wired Codex CLI hooks → %s (via shim)", daemonURL),
 			BackupPath: backupPath,
-		}, []string{codexMCPGapWarning}, nil
+		}, warnings, nil
+}
+
+// ensureCodexFlagEnabled idempotently makes sure
+// `codex_hooks = true` is a top-level key in the user's config.toml.
+// Cases:
+//  1. file missing → create with `codex_hooks = true\n`
+//  2. flag missing → append `codex_hooks = true\n`
+//  3. flag = false → rewrite to true (with backup)
+//  4. flag = true → no-op
+//
+// Returns a human-readable note when a write happened (empty string =
+// no change), so the caller can surface it as an install warning. The
+// real-home guard mirrors hooks.json: writes into a real ~/.codex
+// require AGENTLOCK_ALLOW_APPLY_REAL_HOME=1.
+func ensureCodexFlagEnabled(tomlPath string) (string, error) {
+	abs, err := filepath.Abs(tomlPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", tomlPath, err)
+	}
+	if err := checkSafeCodexTarget(abs); err != nil {
+		return "", err
+	}
+
+	existing, readErr := os.ReadFile(abs)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return "", fmt.Errorf("read %s: %w", abs, readErr)
+	}
+
+	// Case 1: file missing → create with the flag set.
+	if errors.Is(readErr, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+			return "", fmt.Errorf("mkdir %s: %w", filepath.Dir(abs), err)
+		}
+		if err := policy.AtomicWriteFile(abs, []byte("codex_hooks = true\n"), 0o644); err != nil {
+			return "", fmt.Errorf("write %s: %w", abs, err)
+		}
+		return fmt.Sprintf("created %s with codex_hooks = true", abs), nil
+	}
+
+	// Look only at top-level (pre-first-section) lines, mirroring
+	// codexFlagEnabled.
+	state, idx := topLevelCodexFlag(existing)
+	switch state {
+	case "true":
+		return "", nil // case 4: already set
+	case "false":
+		// case 3: rewrite the matching line.
+		updated := append([]byte(nil), existing[:idx.start]...)
+		updated = append(updated, []byte("codex_hooks = true")...)
+		updated = append(updated, existing[idx.end:]...)
+		backup := fmt.Sprintf("%s.agentlock-backup-%d", abs, time.Now().UnixNano())
+		if err := policy.AtomicWriteFile(backup, existing, 0o600); err != nil {
+			return "", fmt.Errorf("write backup: %w", err)
+		}
+		if err := policy.AtomicWriteFile(abs, updated, 0o644); err != nil {
+			return "", fmt.Errorf("write %s: %w", abs, err)
+		}
+		return fmt.Sprintf("flipped codex_hooks false→true in %s (backup: %s)", abs, backup), nil
+	default:
+		// case 2: append. Make sure we don't glue onto a partial line.
+		var buf []byte
+		buf = append(buf, existing...)
+		if len(buf) > 0 && buf[len(buf)-1] != '\n' {
+			buf = append(buf, '\n')
+		}
+		buf = append(buf, []byte("codex_hooks = true\n")...)
+		backup := fmt.Sprintf("%s.agentlock-backup-%d", abs, time.Now().UnixNano())
+		if err := policy.AtomicWriteFile(backup, existing, 0o600); err != nil {
+			return "", fmt.Errorf("write backup: %w", err)
+		}
+		if err := policy.AtomicWriteFile(abs, buf, 0o644); err != nil {
+			return "", fmt.Errorf("write %s: %w", abs, err)
+		}
+		return fmt.Sprintf("added codex_hooks = true to %s (backup: %s)", abs, backup), nil
+	}
+}
+
+type codexFlagSpan struct{ start, end int }
+
+// topLevelCodexFlag scans bytes for the first top-level (pre-section)
+// `codex_hooks = (true|false)` line. Returns "" if none found.
+func topLevelCodexFlag(b []byte) (string, codexFlagSpan) {
+	cursor := 0
+	for cursor < len(b) {
+		nl := indexByteFrom(b, '\n', cursor)
+		end := nl
+		if end < 0 {
+			end = len(b)
+		}
+		line := b[cursor:end]
+		trimmed := strings.TrimSpace(string(line))
+		if strings.HasPrefix(trimmed, "[") {
+			return "", codexFlagSpan{}
+		}
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			if m := codexFlagLineRegex.FindSubmatchIndex(line); m != nil {
+				return string(line[m[2]:m[3]]), codexFlagSpan{cursor + m[0], cursor + m[1]}
+			}
+		}
+		if nl < 0 {
+			break
+		}
+		cursor = nl + 1
+	}
+	return "", codexFlagSpan{}
+}
+
+func indexByteFrom(b []byte, c byte, from int) int {
+	if from >= len(b) {
+		return -1
+	}
+	idx := strings.IndexByte(string(b[from:]), c)
+	if idx < 0 {
+		return -1
+	}
+	return from + idx
 }
 
 // checkSafeCodexTarget refuses to let apply write into the developer's

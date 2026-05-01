@@ -423,11 +423,6 @@ export async function runInstall(argv: string[] = []): Promise<void> {
           "use --config-dir ./dev/.claude (or ./dev/.codex) for dev runs, or set\n" +
           "AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 on the daemon for real installs.\n",
       );
-    } else if (msg.includes("codex_hooks_disabled")) {
-      process.stderr.write(
-        "\ncodex install refused: codex_hooks must be enabled first.\n" +
-          "add `codex_hooks = true` to your ~/.codex/config.toml and retry.\n",
-      );
     } else {
       process.stderr.write(`\napply failed: ${msg}\n`);
     }
