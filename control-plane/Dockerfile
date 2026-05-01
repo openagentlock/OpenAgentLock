@@ -63,6 +63,10 @@ ENV AGENTLOCK_LISTEN=0.0.0.0:7878
 ENV AGENTLOCK_DASHBOARD_LISTEN=0.0.0.0:7879
 ENV AGENTLOCK_HOME=/var/lib/agentlock
 ENV AGENTLOCK_IN_CONTAINER=1
+# Default to unattested so `docker run` works zero-conf. TUI + dashboard
+# show the red "UNATTESTED — LEDGER NOT SIGNED" banner. Override with
+# `-e AGENTLOCK_ALLOW_UNATTESTED=0` and supply a TOTP/software signer.
+ENV AGENTLOCK_ALLOW_UNATTESTED=1
 EXPOSE 7878 7879
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/agentlockd"]
