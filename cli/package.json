@@ -33,6 +33,7 @@
   },
   "files": [
     "src/",
+    "agentlock",
     "tsconfig.json",
     "README.md",
     "LICENSE"

@@ -5,6 +5,8 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 interface MockExpect {
@@ -54,6 +56,7 @@ function runShim(
   args: string[],
   payload: string,
   daemonUrl: string,
+  extraEnv: Record<string, string> = {},
 ): Promise<ShimResult> {
   return new Promise((resolve, reject) => {
     const entry = join(import.meta.dir, "..", "src", "index.ts");
@@ -61,6 +64,7 @@ function runShim(
       env: {
         ...process.env,
         AGENTLOCK_DAEMON_URL: daemonUrl,
+        ...extraEnv,
       },
     });
     let stdout = "";
@@ -155,7 +159,7 @@ describe("hook codex shim", () => {
     expect(r.stdout).toContain('"permissionDecision":"deny"');
   });
 
-  test("daemon unreachable → fail-open exit 0", async () => {
+  test("daemon unreachable → fail-open exit 0 with one-shot nudge", async () => {
     const payload = JSON.stringify({
       session_id: "sess_z",
       hook_event_name: "PreToolUse",
@@ -163,10 +167,22 @@ describe("hook codex shim", () => {
       tool_use_id: "t_03",
       tool_input: { command: "ls" },
     });
+    // Fresh AGENTLOCK_HOME per test so the nudge marker doesn't leak
+    // between runs (and we get a clean assertion on the first-run text).
+    const home = mkdtempSync(join(tmpdir(), "agentlock-test-"));
     // Use a port we know nothing's listening on.
-    const r = await runShim(["pre-tool-use"], payload, "http://127.0.0.1:1");
+    const r = await runShim(["pre-tool-use"], payload, "http://127.0.0.1:1", {
+      AGENTLOCK_HOME: home,
+    });
     expect(r.code).toBe(0);
-    expect(r.stderr).toContain("daemon unreachable");
+    expect(r.stderr).toContain("OpenAgentLock daemon isn't running");
+    // Second invocation under the same AGENTLOCK_HOME → marker exists →
+    // nudge stays silent. Confirms the dedupe behavior end-to-end.
+    const r2 = await runShim(["pre-tool-use"], payload, "http://127.0.0.1:1", {
+      AGENTLOCK_HOME: home,
+    });
+    expect(r2.code).toBe(0);
+    expect(r2.stderr).toBe("");
   });
 
   test("unknown event → exit 2 with usage", async () => {

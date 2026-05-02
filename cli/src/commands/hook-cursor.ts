@@ -21,6 +21,8 @@
 // `failClosed: true` in the wired hook entries — Cursor will then treat
 // any exit-code error as a deny regardless of what we write to stdout.
 
+import { clearDaemonDownMarker, warnDaemonDownOnce } from "../util/daemon-warn.ts";
+
 const ALLOWED_EVENTS = new Set([
   "session-start",
   "pre-tool-use",
@@ -109,11 +111,12 @@ export async function runHookCursor(argv: string[]): Promise<void> {
       body: raw,
     });
   } catch (e) {
-    process.stderr.write(
-      `agentlock hook cursor ${event}: daemon unreachable at ${url}: ${(e as Error).message}\n`,
-    );
+    warnDaemonDownOnce("cursor", url, e as Error);
     process.exit(0); // fail-open
   }
+
+  // Successful round-trip — re-arm the nudge for the next outage.
+  clearDaemonDownMarker();
 
   if (!res.ok) {
     process.stderr.write(
