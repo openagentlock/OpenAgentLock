@@ -165,11 +165,11 @@ session
       passphrase?: string;
       json: boolean;
     }) => {
-      if (opts.tier !== "software" && opts.tier !== "totp") {
+      if (opts.tier !== "software" && opts.tier !== "totp" && opts.tier !== "os-keychain") {
         process.stderr.write(
           `--tier ${opts.tier} is not supported.\n` +
-            `available tiers: software (dev/CI), totp (recommended for prod).\n` +
-            `OS-keychain and hardware-key (YubiKey) tiers are on the roadmap; see\n` +
+            `available tiers: software (dev/CI), totp (recommended for prod), os-keychain (macOS).\n` +
+            `Hardware-key (YubiKey) tiers are on the roadmap; see\n` +
             `https://openagentlock.github.io/OpenAgentLock/guide/signers/\n`,
         );
         process.exit(2);
@@ -183,7 +183,7 @@ session
         process.exit(2);
       }
       await runSessionCreate({
-        tier: opts.tier as "software" | "totp",
+        tier: opts.tier as "software" | "totp" | "os-keychain",
         url: opts.url,
         json: opts.json,
         policyHash: opts.policyHash,
@@ -223,10 +223,10 @@ session
       passphrase?: string;
       json: boolean;
     }) => {
-      if (opts.tier !== "software" && opts.tier !== "totp") {
+      if (opts.tier !== "software" && opts.tier !== "totp" && opts.tier !== "os-keychain") {
         process.stderr.write(
           `--tier ${opts.tier} is not supported.\n` +
-            `available tiers: software (dev/CI), totp (recommended for prod).\n`,
+            `available tiers: software (dev/CI), totp (recommended for prod), os-keychain (macOS).\n`,
         );
         process.exit(2);
       }
@@ -238,7 +238,7 @@ session
       }
       await runSessionRotate({
         id: opts.id,
-        tier: opts.tier as "software" | "totp",
+        tier: opts.tier as "software" | "totp" | "os-keychain",
         url: opts.url,
         json: opts.json,
         policyHash: opts.policyHash,
@@ -254,11 +254,15 @@ const signer = program
 
 signer
   .command("enroll")
-  .description("Enroll a long-lived signer. Currently supports: totp. OS-keychain and hardware-key (YubiKey) are on the roadmap.")
-  .requiredOption("--tier <tier>", "Signer tier (totp).")
+  .description("Enroll a long-lived signer. Supported tiers: totp, os-keychain (macOS). Hardware-key (YubiKey) is on the roadmap.")
+  .requiredOption("--tier <tier>", "Signer tier (totp | os-keychain).")
   .option("--passphrase <pp>", "Passphrase used to seal the signing key (required for totp).")
   .option("--label <label>", "otpauth label (default: agentlock).")
   .option("--issuer <issuer>", "otpauth issuer (default: OpenAgentLock).")
+  .option(
+    "--ttl <duration>",
+    "Reject the os-keychain signer after this duration. Examples: 30m, 4h, 7d. Omit for no expiry.",
+  )
   .option("--json", "Emit JSON instead of human output.", false)
   .action(
     async (opts: {
@@ -266,32 +270,77 @@ signer
       passphrase?: string;
       label?: string;
       issuer?: string;
+      ttl?: string;
       json: boolean;
     }) => {
-      if (opts.tier !== "totp") {
+      if (opts.tier !== "totp" && opts.tier !== "os-keychain") {
         process.stderr.write(
           `--tier ${opts.tier} is not supported by 'agentlock signer enroll'.\n` +
-            `currently supported: totp.\n` +
-            `OS-keychain and hardware-key (YubiKey) tiers are on the roadmap; see\n` +
+            `currently supported: totp, os-keychain (macOS).\n` +
+            `Hardware-key (YubiKey) tiers are on the roadmap; see\n` +
             `https://openagentlock.github.io/OpenAgentLock/guide/signers/\n`,
         );
         process.exit(2);
       }
-      if (!opts.passphrase) {
+      if (opts.tier === "totp" && !opts.passphrase) {
         process.stderr.write(
           `--passphrase <pp> is required for --tier totp (it seals the signing key on disk).\n`,
         );
         process.exit(2);
       }
+      let ttlSeconds: number | undefined;
+      if (opts.ttl) {
+        if (opts.tier !== "os-keychain") {
+          process.stderr.write(`--ttl is only valid with --tier os-keychain.\n`);
+          process.exit(2);
+        }
+        try {
+          ttlSeconds = parseDurationSeconds(opts.ttl);
+        } catch (err) {
+          process.stderr.write(`invalid --ttl: ${(err as Error).message}\n`);
+          process.exit(2);
+        }
+      }
       await runSignerEnroll({
-        tier: "totp",
+        tier: opts.tier as "totp" | "os-keychain",
         passphrase: opts.passphrase,
         label: opts.label,
         issuer: opts.issuer,
+        ttlSeconds,
         json: opts.json,
       });
     },
   );
+
+// Parse Go-style durations like "30m", "4h", "7d", "1h30m", "90s".
+function parseDurationSeconds(input: string): number {
+  const trimmed = input.replace(/\s+/g, "");
+  const matches = [...trimmed.matchAll(/(\d+)(s|m|h|d)/g)];
+  let total = 0;
+  let consumed = 0;
+  for (const m of matches) {
+    consumed += m[0].length;
+    const n = parseInt(m[1]!, 10);
+    switch (m[2]) {
+      case "s":
+        total += n;
+        break;
+      case "m":
+        total += n * 60;
+        break;
+      case "h":
+        total += n * 3600;
+        break;
+      case "d":
+        total += n * 86400;
+        break;
+    }
+  }
+  if (total === 0 || consumed !== trimmed.length) {
+    throw new Error(`unrecognized duration "${input}" (try "30m", "4h", "7d")`);
+  }
+  return total;
+}
 
 program
   .command("fake-hook")

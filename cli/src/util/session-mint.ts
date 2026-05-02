@@ -22,10 +22,11 @@ import { apiClient, type SessionResponse, type SessionStartRequest } from "./api
 import { agentlockHome } from "./paths";
 import { loadOrCreateSoftwareSigner } from "../signer/software";
 import { loadTOTPSigner } from "../signer/totp";
+import { loadOSKeychainSigner } from "../signer/keychain";
 import { canonicalAttestation } from "../signer/canonical";
 import type { Signer, SignerKind } from "../signer/types";
 
-export type AttestedTier = "software" | "totp";
+export type AttestedTier = "software" | "totp" | "os-keychain";
 
 export interface MintAttestedOptions {
   tier: AttestedTier;
@@ -47,6 +48,9 @@ export async function mintAttestedSession(
   if (opts.tier === "software") {
     signer = await loadOrCreateSoftwareSigner(home);
     signerKind = "software";
+  } else if (opts.tier === "os-keychain") {
+    signer = await loadOSKeychainSigner(home);
+    signerKind = "os_keychain";
   } else {
     if (!opts.code || !opts.passphrase) {
       throw new Error(

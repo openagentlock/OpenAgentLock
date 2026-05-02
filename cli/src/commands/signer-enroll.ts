@@ -4,24 +4,59 @@ import { mkdirSync } from "node:fs";
 import qrcode from "qrcode-terminal";
 import { agentlockHome } from "../util/paths";
 import { enrollTOTPSigner } from "../signer/totp";
+import { enrollOSKeychainSigner } from "../signer/keychain";
 
 export interface EnrollOptions {
-  tier: "totp";
-  passphrase: string;
+  tier: "totp" | "os-keychain";
+  passphrase?: string;
   json: boolean;
   label?: string;
   issuer?: string;
+  ttlSeconds?: number;
 }
 
 export async function runSignerEnroll(opts: EnrollOptions): Promise<void> {
   const home = agentlockHome();
   mkdirSync(home, { recursive: true });
 
+  if (opts.tier === "os-keychain") {
+    const e = await enrollOSKeychainSigner(home, { ttlSeconds: opts.ttlSeconds });
+    if (opts.json) {
+      process.stdout.write(
+        JSON.stringify(
+          {
+            kind: "os_keychain",
+            account: e.account,
+            public_key: `ed25519:${toHex(e.publicKey)}`,
+            expires_at: e.expiresAt,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+      return;
+    }
+    process.stdout.write(
+      `OS-keychain signer enrolled.\n\n` +
+        `  service: openagentlock-signer\n` +
+        `  account: ${e.account}\n` +
+        `  public key: ed25519:${toHex(e.publicKey)}\n` +
+        `  expires:    ${e.expiresAt ?? "never (no --ttl set)"}\n\n` +
+        `Next steps:\n` +
+        `  agentlock session create --tier os-keychain\n`,
+    );
+    return;
+  }
+
   if (opts.tier !== "totp") {
     throw new Error(
-      `tier ${opts.tier} is not supported by signer enroll. Currently supported: totp. ` +
-        `OS-keychain and hardware-key (YubiKey) tiers are on the roadmap.`,
+      `tier ${opts.tier} is not supported by signer enroll. Currently supported: totp, os-keychain. ` +
+        `Hardware-key (YubiKey) tiers are on the roadmap.`,
     );
+  }
+
+  if (!opts.passphrase) {
+    throw new Error("--passphrase <pp> is required for --tier totp");
   }
 
   const e = await enrollTOTPSigner(home, opts.passphrase, {
