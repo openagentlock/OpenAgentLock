@@ -20,6 +20,7 @@ import { runLogin } from "./commands/login.ts";
 import { runStatus } from "./commands/status.ts";
 import { runSessionCreate, runSessionEnd, runSessionRotate } from "./commands/session.ts";
 import { runFakeHook } from "./commands/fake-hook.ts";
+import { runHookClaudeCode } from "./commands/hook-claude-code.ts";
 import { runHookCodex } from "./commands/hook-codex.ts";
 import { runHookCursor } from "./commands/hook-cursor.ts";
 import { runLedgerRoot, runLedgerVerify } from "./commands/ledger.ts";
@@ -377,5 +378,16 @@ const hookCursor = hook
     await runHookCursor([event]);
   });
 void hookCursor;
+
+const hookClaudeCode = hook
+  .command("claude-code <event>")
+  .description(
+    "Claude Code shim. Reads stdin hook payload, forwards to /v1/hooks/claude-code/<event>, maps allow/deny → exit 0/2.",
+  )
+  .allowUnknownOption()
+  .action(async (event: string) => {
+    await runHookClaudeCode([event]);
+  });
+void hookClaudeCode;
 
 await program.parseAsync(process.argv);

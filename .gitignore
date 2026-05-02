@@ -39,7 +39,6 @@ dev/
 
 # CLI build
 cli/dist/
-cli/agentlock
 
 # OS
 Thumbs.db

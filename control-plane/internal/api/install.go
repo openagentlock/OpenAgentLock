@@ -106,7 +106,7 @@ func installPlanHandler(d Deps) http.HandlerFunc {
 		for _, h := range req.Harnesses {
 			switch h {
 			case "claude-code":
-				ops = append(ops, claudeCodePlan(req.DaemonURL, req.ConfigDirOverride, req.HarnessConfigDirs))
+				ops = append(ops, claudeCodePlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs))
 			case "codex":
 				op, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs)
 				ops = append(ops, op)
@@ -186,72 +186,64 @@ func devStubPlan(devHome, harness, daemonURL string) fileOp {
 	}
 }
 
+// claudeCodeBinaryDefault is the command Claude Code spawns when no
+// override is supplied. Relies on PATH; the CLI normally passes an
+// absolute path so hook fire doesn't depend on PATH lookups inside the
+// harness's spawn environment.
+const claudeCodeBinaryDefault = "agentlock"
+
+func claudeCodeBinary(override string) string {
+	if override != "" {
+		return override
+	}
+	return claudeCodeBinaryDefault
+}
+
 // claudeCodeHookConfig returns the hook config map we want merged into a
 // Claude Code settings.json. Every outer entry carries "_agentlock": true
 // so uninstall can identify our entries without relying on daemon_url.
-// URLs target the harness-shaped endpoints under /v1/hooks/claude-code/*
-// which consume Claude's native hook body and emit Claude's expected
-// hookSpecificOutput shape.
-func claudeCodeHookConfig(daemonURL string) map[string]any {
+//
+// Transport is "command" (the shim binary), not "http" — keeping it
+// uniform with codex/cursor lets daemon outages fail-open silently
+// instead of surfacing as a red "PreToolUse:Bash hook error" banner on
+// every tool call. The shim translates the daemon's claudeHookOutput
+// response into Claude Code's exit-code / JSON contract.
+func claudeCodeHookConfig(daemonURL, agentlockBinary string) map[string]any {
+	bin := claudeCodeBinary(agentlockBinary)
 	daemonURL = strings.TrimRight(daemonURL, "/")
+	mk := func(event string, timeout int, withMatcher bool) map[string]any {
+		entry := map[string]any{
+			"_agentlock": true,
+			"hooks": []any{
+				map[string]any{
+					"type":    "command",
+					"command": fmt.Sprintf("%s hook claude-code %s", bin, event),
+					"env": map[string]any{
+						"AGENTLOCK_DAEMON_URL": daemonURL,
+					},
+					"timeout": timeout,
+				},
+			},
+		}
+		// Claude Code rejects `matcher` on SessionStart/Stop schema
+		// validation; only the tool-scoped events accept it.
+		if withMatcher {
+			entry["matcher"] = "*"
+		}
+		return entry
+	}
 	return map[string]any{
 		// SessionStart fires before any tool call when Claude Code boots
 		// (or resumes, or clears). Wiring it is how the dashboard sees a
 		// session appear at launch instead of waiting for the first tool.
-		"SessionStart": []any{
-			map[string]any{
-				"_agentlock": true,
-				"hooks": []any{
-					map[string]any{
-						"type":    "http",
-						"url":     daemonURL + "/v1/hooks/claude-code/session-start",
-						"timeout": 10,
-					},
-				},
-			},
-		},
-		"PreToolUse": []any{
-			map[string]any{
-				"_agentlock": true,
-				"matcher":    "*",
-				"hooks": []any{
-					map[string]any{
-						"type":    "http",
-						"url":     daemonURL + "/v1/hooks/claude-code/pre-tool-use",
-						"timeout": 60,
-					},
-				},
-			},
-		},
+		"SessionStart": []any{mk("session-start", 10, false)},
+		"PreToolUse":   []any{mk("pre-tool-use", 60, true)},
 		// PostToolUse isn't a gate — it's ledger completeness. Each
 		// tool call gets a matching "ran to completion" entry so the
 		// dashboard can distinguish a successful allow from a tool
 		// that silently failed.
-		"PostToolUse": []any{
-			map[string]any{
-				"_agentlock": true,
-				"matcher":    "*",
-				"hooks": []any{
-					map[string]any{
-						"type":    "http",
-						"url":     daemonURL + "/v1/hooks/claude-code/post-tool-use",
-						"timeout": 10,
-					},
-				},
-			},
-		},
-		"Stop": []any{
-			map[string]any{
-				"_agentlock": true,
-				"hooks": []any{
-					map[string]any{
-						"type":    "http",
-						"url":     daemonURL + "/v1/hooks/claude-code/stop",
-						"timeout": 10,
-					},
-				},
-			},
-		},
+		"PostToolUse": []any{mk("post-tool-use", 10, true)},
+		"Stop":        []any{mk("stop", 10, false)},
 	}
 }
 
@@ -283,7 +275,7 @@ func claudeCodeSettingsPath(configDirOverride string, overrides map[string]strin
 	return filepath.Join(dir, "settings.json"), nil
 }
 
-func claudeCodePlan(daemonURL, configDirOverride string, overrides map[string]string) fileOp {
+func claudeCodePlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string) fileOp {
 	settingsPath, err := claudeCodeSettingsPath(configDirOverride, overrides)
 	if err != nil {
 		// Plan is informational — keep going with a placeholder so the
@@ -291,13 +283,13 @@ func claudeCodePlan(daemonURL, configDirOverride string, overrides map[string]st
 		// write this path.
 		settingsPath = "<unresolved: " + err.Error() + ">"
 	}
-	hook := map[string]any{"hooks": claudeCodeHookConfig(daemonURL)}
+	hook := map[string]any{"hooks": claudeCodeHookConfig(daemonURL, agentlockBinary)}
 	b, _ := json.MarshalIndent(hook, "", "  ")
 	return fileOp{
 		Op:      "write",
 		Path:    settingsPath,
 		Content: string(b),
-		Reason:  fmt.Sprintf("wire Claude Code hooks → %s", daemonURL),
+		Reason:  fmt.Sprintf("wire Claude Code hooks → %s (via shim)", daemonURL),
 	}
 }
 
@@ -365,7 +357,7 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 		for _, h := range req.Harnesses {
 			switch h {
 			case "claude-code":
-				entry, op, err := applyClaudeCode(req.DaemonURL, req.ConfigDirOverride, req.HarnessConfigDirs)
+				entry, op, err := applyClaudeCode(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs)
 				if err != nil {
 					if errors.Is(err, errUnsafeTarget) {
 						writeError(w, http.StatusForbidden, "unsafe_target", err.Error())
@@ -480,7 +472,7 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 
 var errUnsafeTarget = errors.New("target path resolves under real home .claude; set AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 to override")
 
-func applyClaudeCode(daemonURL, configDirOverride string, overrides map[string]string) (installManifestE, fileOp, error) {
+func applyClaudeCode(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string) (installManifestE, fileOp, error) {
 	settingsPath, err := claudeCodeSettingsPath(configDirOverride, overrides)
 	if err != nil {
 		return installManifestE{}, fileOp{}, err
@@ -511,7 +503,7 @@ func applyClaudeCode(daemonURL, configDirOverride string, overrides map[string]s
 		}
 	}
 
-	merged, err := mergeClaudeSettings(existing, daemonURL)
+	merged, err := mergeClaudeSettings(existing, daemonURL, agentlockBinary)
 	if err != nil {
 		return installManifestE{}, fileOp{}, err
 	}
@@ -527,7 +519,7 @@ func applyClaudeCode(daemonURL, configDirOverride string, overrides map[string]s
 		}, fileOp{
 			Op:         "write",
 			Path:       abs,
-			Reason:     fmt.Sprintf("wired Claude Code hooks → %s", daemonURL),
+			Reason:     fmt.Sprintf("wired Claude Code hooks → %s (via shim)", daemonURL),
 			BackupPath: backupPath,
 		}, nil
 }
@@ -618,7 +610,7 @@ func checkSafeClaudeTarget(absPath string) error {
 // bytes. Existing non-agentlock entries under hooks.PreToolUse / hooks.Stop
 // are preserved. Our own (tagged with _agentlock:true) are replaced, so the
 // operation is idempotent.
-func mergeClaudeSettings(existing []byte, daemonURL string) ([]byte, error) {
+func mergeClaudeSettings(existing []byte, daemonURL, agentlockBinary string) ([]byte, error) {
 	settings := map[string]any{}
 	if len(existing) > 0 {
 		if err := json.Unmarshal(existing, &settings); err != nil {
@@ -631,7 +623,7 @@ func mergeClaudeSettings(existing []byte, daemonURL string) ([]byte, error) {
 		hooks = map[string]any{}
 	}
 
-	ours := claudeCodeHookConfig(daemonURL)
+	ours := claudeCodeHookConfig(daemonURL, agentlockBinary)
 	for cat, oursArrAny := range ours {
 		oursArr, _ := oursArrAny.([]any)
 		existingArr, _ := hooks[cat].([]any)
