@@ -4,18 +4,26 @@ Each agent harness exposes a different shape of hook. OpenAgentLock targets each
 
 ## Claude Code
 
-Claude Code uses HTTP hooks. The installer adds entries to `~/.claude/settings.json` pointing at the control plane:
+Claude Code uses **command hooks**. The installer adds entries to `~/.claude/settings.json` that spawn the `agentlock hook claude-code <event>` shim:
 
 ```json
 {
   "hooks": {
-    "preTool": [{ "type": "http", "url": "http://127.0.0.1:7878/v1/hooks/claude-code/pre-tool" }],
-    "postTool": [{ "type": "http", "url": "http://127.0.0.1:7878/v1/hooks/claude-code/post-tool" }]
+    "PreToolUse": [{
+      "_agentlock": true,
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "agentlock hook claude-code pre-tool-use",
+        "env": { "AGENTLOCK_DAEMON_URL": "http://127.0.0.1:7878" },
+        "timeout": 60
+      }]
+    }]
   }
 }
 ```
 
-Cross-platform identical. No shell needed.
+The shim POSTs to `/v1/hooks/claude-code/<event>` and translates the response into Claude's exit-code / JSON contract. Routing through a shim — instead of Claude's native HTTP hooks — lets the harness fail-open silently on a daemon outage instead of surfacing a red "PreToolUse hook error / ECONNREFUSED" banner on every tool call. The first failed round-trip per outage emits a one-line stderr nudge ("daemon isn't running — running unprotected"), then stays silent until the daemon is back.
 
 ## Codex CLI
 
