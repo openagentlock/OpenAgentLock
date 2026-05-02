@@ -21,6 +21,7 @@ import { runStatus } from "./commands/status.ts";
 import { runSessionCreate, runSessionEnd, runSessionRotate } from "./commands/session.ts";
 import { runFakeHook } from "./commands/fake-hook.ts";
 import { runHookCodex } from "./commands/hook-codex.ts";
+import { runHookCursor } from "./commands/hook-cursor.ts";
 import { runLedgerRoot, runLedgerVerify } from "./commands/ledger.ts";
 import { runSignerEnroll } from "./commands/signer-enroll.ts";
 
@@ -350,8 +351,9 @@ ledger
     await runLedgerVerify(opts);
   });
 
-// `agentlock hook codex <event>` — shim spawned by Codex CLI's
-// command-hooks. Reads stdin JSON, POSTs to the daemon, exits 0/2.
+// `agentlock hook <harness> <event>` — shim spawned by command-hook
+// harnesses (Codex, Cursor). Reads stdin JSON, POSTs to the daemon,
+// translates the response into the harness-specific output shape.
 const hook = program.command("hook").description("Harness-shim subcommands.");
 const hookCodex = hook
   .command("codex <event>")
@@ -364,5 +366,16 @@ const hookCodex = hook
   });
 // commander binds the positional event above; nothing else to wire.
 void hookCodex;
+
+const hookCursor = hook
+  .command("cursor <event>")
+  .description(
+    "Cursor IDE shim. Reads stdin hook payload, forwards to /v1/hooks/cursor/<event>, emits {permission, agent_message?} on stdout + exit 0/2.",
+  )
+  .allowUnknownOption()
+  .action(async (event: string) => {
+    await runHookCursor([event]);
+  });
+void hookCursor;
 
 await program.parseAsync(process.argv);
