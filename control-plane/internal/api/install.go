@@ -111,6 +111,10 @@ func installPlanHandler(d Deps) http.HandlerFunc {
 				op, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs)
 				ops = append(ops, op)
 				warnings = append(warnings, ws...)
+			case "cursor":
+				op, ws := cursorPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs)
+				ops = append(ops, op)
+				warnings = append(warnings, ws...)
 			default:
 				if devHome == "" || !knownHarnessID(h) {
 					skipped = append(skipped, h)
@@ -387,6 +391,19 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 				entries = append(entries, entry)
 				ops = append(ops, op)
 				warnings = append(warnings, ws...)
+			case "cursor":
+				entry, op, err := applyCursor(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs)
+				if err != nil {
+					if errors.Is(err, errUnsafeTarget) {
+						writeError(w, http.StatusForbidden, "unsafe_target", err.Error())
+						return
+					}
+					log.Printf("install.apply: applyCursor: %v", err)
+					writeError(w, http.StatusInternalServerError, "apply_error", "cursor install failed")
+					return
+				}
+				entries = append(entries, entry)
+				ops = append(ops, op)
 			default:
 				if devHome == "" || !knownHarnessID(h) {
 					skipped = append(skipped, h)
@@ -719,6 +736,8 @@ func installUninstallHandler(d Deps) http.HandlerFunc {
 			switch e.Harness {
 			case "codex":
 				removed, err = stripCodexHooks(e.SettingsPath)
+			case "cursor":
+				removed, err = stripCursorHooks(e.SettingsPath)
 			default:
 				// Default to Claude's settings.json shape. Older manifests
 				// without a Harness field land here, which is the right
@@ -869,6 +888,23 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 					failures++
 					op.Error = err.Error()
 					log.Printf("install.uninstall_harnesses: strip codex %s: %v", p, err)
+				} else {
+					op.EntriesRemoved = removed
+				}
+				ops = append(ops, op)
+			case "cursor":
+				p, err := cursorHooksPath(req.ConfigDirOverride, req.HarnessConfigDirs)
+				if err != nil {
+					failures++
+					ops = append(ops, uninstallOp{Op: "strip", Path: "<unresolved>", Error: err.Error()})
+					continue
+				}
+				removed, err := stripCursorHooks(p)
+				op := uninstallOp{Op: "strip", Path: p}
+				if err != nil {
+					failures++
+					op.Error = err.Error()
+					log.Printf("install.uninstall_harnesses: strip cursor %s: %v", p, err)
 				} else {
 					op.EntriesRemoved = removed
 				}
