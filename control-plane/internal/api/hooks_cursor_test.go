@@ -383,3 +383,103 @@ func TestCursorSessionStart_CreatesSession(t *testing.T) {
 		t.Fatalf("missing cursor.session-start ledger entry: %+v", entries)
 	}
 }
+
+// shellMonitorPolicyYAML mirrors monitorPolicyYAML but matches on
+// `tool: Shell`, which is what cursor's BeforeShellExecution handler
+// keys on (it synthesises Tool=Shell since the payload has no tool_name).
+const shellMonitorPolicyYAML = `
+version: 1
+mode: monitor
+defaults:
+  bash: allow
+gates:
+  - id: rogue.destructive-bash
+    match:
+      tool: Shell
+      any_command_regex:
+        - 'rm\s+-rf\b'
+        - 'git\s+push\s+.*--force'
+    evaluate:
+      - kind: always
+        action: deny
+`
+
+// Mirror of TestClaudePreToolUse_FirewallEscalatesPolicyMonitorMatch
+// for Cursor's PreToolUse path.
+func TestCursorPreToolUse_FirewallEscalatesPolicyMonitorMatch(t *testing.T) {
+	cursorResetDedupe()
+	t.Setenv("AGENTLOCK_MODE", "")
+	runtimeMode.Store("firewall")
+	t.Cleanup(func() { runtimeMode.Store("") })
+
+	fx := newGateFixture(t, monitorPolicyYAML)
+	body := `{
+		"conversation_id": "cursor-sess-escalate",
+		"generation_id": "gen-escalate",
+		"hook_event_name": "preToolUse",
+		"cursor_version": "1.7.0",
+		"tool_name": "Bash",
+		"tool_use_id": "cursor_escalate",
+		"tool_input": {"command": "rm -rf /tmp/x"}
+	}`
+	res, out := postCursorPre(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["continue"] != false {
+		t.Fatalf("daemon firewall must deny: continue=%v out=%v", out["continue"], out)
+	}
+	spec, _ := out["hookSpecificOutput"].(map[string]any)
+	if spec["permissionDecision"] != "deny" {
+		t.Fatalf("permissionDecision = %v, want deny", spec["permissionDecision"])
+	}
+
+	entries, _ := fx.store.ListLedger(context.Background())
+	hit := false
+	for _, e := range entries {
+		if e.ToolUseID == "cursor_escalate" && e.Verdict == "deny" && e.RuleID == "rogue.destructive-bash" {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		t.Fatalf("expected cursor deny ledger entry for escalated match: %+v", entries)
+	}
+}
+
+// BeforeShellExecution doesn't append to the ledger (PreToolUse owns
+// that), so we only assert on the response envelope.
+func TestCursorBeforeShellExecution_FirewallEscalatesPolicyMonitorMatch(t *testing.T) {
+	cursorResetDedupe()
+	t.Setenv("AGENTLOCK_MODE", "")
+	runtimeMode.Store("firewall")
+	t.Cleanup(func() { runtimeMode.Store("") })
+
+	fx := newGateFixture(t, shellMonitorPolicyYAML)
+	body := `{
+		"conversation_id": "` + fx.sessionID + `",
+		"generation_id": "gen-shell-escalate",
+		"hook_event_name": "beforeShellExecution",
+		"command": "rm -rf /tmp/x",
+		"cwd": "/tmp",
+		"sandbox": false,
+		"cursor_version": "1.7.0"
+	}`
+	res, err := http.Post(fx.srv.URL+"/v1/hooks/cursor/before-shell-execution", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var out map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	if out["continue"] != false {
+		t.Fatalf("daemon firewall must deny: continue=%v out=%v", out["continue"], out)
+	}
+	spec, _ := out["hookSpecificOutput"].(map[string]any)
+	if spec["permissionDecision"] != "deny" {
+		t.Fatalf("permissionDecision = %v, want deny", spec["permissionDecision"])
+	}
+}

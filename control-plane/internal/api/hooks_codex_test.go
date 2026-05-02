@@ -266,3 +266,45 @@ func TestCodexSessionStart_CreatesSession(t *testing.T) {
 		t.Fatalf("missing codex.session-start ledger entry: %+v", entries)
 	}
 }
+
+// Mirror of TestClaudePreToolUse_FirewallEscalatesPolicyMonitorMatch
+// (hooks_claude_test.go) — daemon=firewall must re-escalate a
+// policy-monitor match back to deny on the codex hook path too.
+func TestCodexPreToolUse_FirewallEscalatesPolicyMonitorMatch(t *testing.T) {
+	t.Setenv("AGENTLOCK_MODE", "")
+	runtimeMode.Store("firewall")
+	t.Cleanup(func() { runtimeMode.Store("") })
+
+	fx := newGateFixture(t, monitorPolicyYAML)
+	body := `{
+		"session_id": "codex-sess-escalate",
+		"hook_event_name": "PreToolUse",
+		"tool_name": "Bash",
+		"tool_use_id": "codex_escalate",
+		"turn_id": "turn_escalate",
+		"tool_input": {"command": "rm -rf /tmp/x"}
+	}`
+	res, out := postCodexPre(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["continue"] != false {
+		t.Fatalf("daemon firewall must deny: continue=%v out=%v", out["continue"], out)
+	}
+	spec, _ := out["hookSpecificOutput"].(map[string]any)
+	if spec["permissionDecision"] != "deny" {
+		t.Fatalf("permissionDecision = %v, want deny", spec["permissionDecision"])
+	}
+
+	entries, _ := fx.store.ListLedger(context.Background())
+	hit := false
+	for _, e := range entries {
+		if e.ToolUseID == "codex_escalate" && e.Verdict == "deny" && e.RuleID == "rogue.destructive-bash" {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		t.Fatalf("expected codex deny ledger entry for escalated match: %+v", entries)
+	}
+}
