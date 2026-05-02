@@ -1,7 +1,9 @@
-// E2E test for the `agentlock hook codex <event>` shim. Spawns a mock
-// daemon over Bun.serve, runs the shim binary with stdin piped JSON,
+// E2E test for the `agentlock hook claude-code <event>` shim. Spawns a
+// mock daemon over Bun.serve, runs the shim binary with stdin piped JSON,
 // and asserts the shim exits 0 (allow) or 2 (deny) and forwards the
-// payload verbatim to /v1/hooks/codex/<event>.
+// payload verbatim to /v1/hooks/claude-code/<event>. Mirrors hook-codex's
+// shape — both shims share daemon-warn helper, deny path, fail-open
+// posture; this test is what catches regressions if those drift.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
@@ -60,7 +62,7 @@ function runShim(
 ): Promise<ShimResult> {
   return new Promise((resolve, reject) => {
     const entry = join(import.meta.dir, "..", "src", "index.ts");
-    const proc = spawn("bun", ["run", entry, "hook", "codex", ...args], {
+    const proc = spawn("bun", ["run", entry, "hook", "claude-code", ...args], {
       env: {
         ...process.env,
         AGENTLOCK_DAEMON_URL: daemonUrl,
@@ -84,7 +86,7 @@ function runShim(
   });
 }
 
-describe("hook codex shim", () => {
+describe("hook claude-code shim", () => {
   let server: ReturnType<typeof Bun.serve> | null = null;
   afterEach(() => {
     server?.stop(true);
@@ -95,7 +97,7 @@ describe("hook codex shim", () => {
     const recorded: RecordedRequest[] = [];
     const m = startMockDaemon(
       {
-        "/v1/hooks/codex/pre-tool-use": {
+        "/v1/hooks/claude-code/pre-tool-use": {
           status: 200,
           body: {
             continue: true,
@@ -120,7 +122,7 @@ describe("hook codex shim", () => {
     const r = await runShim(["pre-tool-use"], payload, m.url);
     expect(r.code).toBe(0);
     expect(recorded).toHaveLength(1);
-    expect(recorded[0].path).toBe("/v1/hooks/codex/pre-tool-use");
+    expect(recorded[0].path).toBe("/v1/hooks/claude-code/pre-tool-use");
     expect(recorded[0].body).toMatchObject({ tool_name: "Bash" });
   });
 
@@ -128,7 +130,7 @@ describe("hook codex shim", () => {
     const recorded: RecordedRequest[] = [];
     const m = startMockDaemon(
       {
-        "/v1/hooks/codex/pre-tool-use": {
+        "/v1/hooks/claude-code/pre-tool-use": {
           status: 200,
           body: {
             continue: false,
@@ -155,7 +157,6 @@ describe("hook codex shim", () => {
     const r = await runShim(["pre-tool-use"], payload, m.url);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("rogue.destructive-bash");
-    // stdout carries the JSON for harnesses that prefer it.
     expect(r.stdout).toContain('"permissionDecision":"deny"');
   });
 
@@ -167,17 +168,13 @@ describe("hook codex shim", () => {
       tool_use_id: "t_03",
       tool_input: { command: "ls" },
     });
-    // Fresh AGENTLOCK_HOME per test so the nudge marker doesn't leak
-    // between runs (and we get a clean assertion on the first-run text).
     const home = mkdtempSync(join(tmpdir(), "agentlock-test-"));
-    // Use a port we know nothing's listening on.
     const r = await runShim(["pre-tool-use"], payload, "http://127.0.0.1:1", {
       AGENTLOCK_HOME: home,
     });
     expect(r.code).toBe(0);
     expect(r.stderr).toContain("OpenAgentLock daemon isn't running");
-    // Second invocation under the same AGENTLOCK_HOME → marker exists →
-    // nudge stays silent. Confirms the dedupe behavior end-to-end.
+    // Second run reuses the marker → stays silent.
     const r2 = await runShim(["pre-tool-use"], payload, "http://127.0.0.1:1", {
       AGENTLOCK_HOME: home,
     });

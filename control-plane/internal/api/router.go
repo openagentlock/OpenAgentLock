@@ -76,6 +76,13 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"POST", "/v1/hooks/codex/pre-tool-use", codexPreToolUseHandler(d)},
 		{"POST", "/v1/hooks/codex/post-tool-use", codexPostToolUseHandler(d)},
 		{"POST", "/v1/hooks/codex/stop", codexStopHandler(d)},
+		{"POST", "/v1/hooks/cursor/session-start", cursorSessionStartHandler(d)},
+		{"POST", "/v1/hooks/cursor/pre-tool-use", cursorPreToolUseHandler(d)},
+		{"POST", "/v1/hooks/cursor/before-shell-execution", cursorBeforeShellHandler(d)},
+		{"POST", "/v1/hooks/cursor/before-mcp-execution", cursorBeforeMCPHandler(d)},
+		{"POST", "/v1/hooks/cursor/after-mcp-execution", cursorAfterMCPHandler(d)},
+		{"POST", "/v1/hooks/cursor/post-tool-use", cursorPostToolUseHandler(d)},
+		{"POST", "/v1/hooks/cursor/stop", cursorStopHandler(d)},
 
 		// MCP TOFU pinning.
 		{"POST", "/v1/mcp/pin/check", mcpPinCheckHandler(d)},

@@ -9,7 +9,7 @@ Two things determine whether a tool call is blocked:
 1. **Top-level `mode`** at the root of your policy file: `monitor` or `enforce`. Without `mode: enforce`, every matched rule is downgraded to `allow` regardless of evaluator output.
 2. **Per-rule action** (`on_hit`, `on_miss`).
 
-`PATCH /v1/mode` toggles a separate daemon-level switch and does **not** override the policy's own `mode`.
+`PATCH /v1/mode` toggles the daemon-level switch, which is the **outer** override. In `firewall` mode it escalates any policy-monitor match back to `deny`; in `monitor` mode it suppresses any policy `deny` to `allow`. Use it as the global kill switch — per-rule `mode: monitor` remains the right tool for staging individual rules during rollout.
 
 ## The five baseline gates
 

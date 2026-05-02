@@ -66,14 +66,9 @@ func codexPreToolUseHandler(d Deps) http.HandlerFunc {
 			Input: in.ToolInput,
 		})
 
-		origVerdict := result.Verdict
-		mode := daemonMode()
+		var origVerdict, mode string
+		result, mode, origVerdict = applyDaemonModeOverride(result)
 		monitorMatch := result.MonitorMatch
-		if result.Verdict == "deny" && mode == daemonModeMonitor {
-			monitorMatch = true
-			result.Verdict = "allow"
-			result.Reason = "deny suppressed by daemon monitor mode"
-		}
 
 		toolUseID := in.ToolUseID
 		if toolUseID == "" {
@@ -98,13 +93,14 @@ func codexPreToolUseHandler(d Deps) http.HandlerFunc {
 		}
 		payloadHash := sha256.Sum256(payloadBytes)
 		if _, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
-			TS:          time.Now().UTC(),
-			Source:      "codex",
-			ToolUseID:   toolUseID,
-			Signer:      sess.Signer,
-			RuleID:      result.RuleID,
-			Verdict:     origVerdict,
-			PayloadHash: payloadHash[:],
+			TS:           time.Now().UTC(),
+			Source:       "codex",
+			ToolUseID:    toolUseID,
+			Signer:       sess.Signer,
+			RuleID:       result.RuleID,
+			Verdict:      origVerdict,
+			MonitorMatch: monitorMatch,
+			PayloadHash:  payloadHash[:],
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "ledger_error", err.Error())
 			return

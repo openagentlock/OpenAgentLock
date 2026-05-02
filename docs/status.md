@@ -7,8 +7,8 @@ Live status of every component shipped to the public repo. <span class="md-statu
 | Surface | Status |
 |---|---|
 | `agentlock detect` | <span class="md-status-pill shipped">Shipped</span> |
-| `agentlock install` (Claude Code, Codex CLI) | <span class="md-status-pill shipped">Shipped</span> |
-| `agentlock install` (Cursor, OpenCode, Cline, Gemini CLI, Continue, VS Code Copilot) | <span class="md-status-pill not-yet">Not yet implemented</span> — detected but disabled in selector |
+| `agentlock install` (Claude Code, Codex CLI, Cursor) | <span class="md-status-pill shipped">Shipped</span> |
+| `agentlock install` (OpenCode, Cline, Gemini CLI, Continue, VS Code Copilot) | <span class="md-status-pill not-yet">Not yet implemented</span> — detected but disabled in selector |
 | `agentlock install --tier {unattested,software,totp}` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock status` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock signer enroll --tier totp` | <span class="md-status-pill shipped">Shipped</span> |

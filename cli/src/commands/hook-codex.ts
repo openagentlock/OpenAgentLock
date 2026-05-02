@@ -16,6 +16,8 @@
 // daemon-side ledger is the source of truth; if it can't be reached,
 // monitor mode is the safer default than blocking everything.
 
+import { clearDaemonDownMarker, warnDaemonDownOnce } from "../util/daemon-warn.ts";
+
 const ALLOWED_EVENTS = new Set([
   "session-start",
   "pre-tool-use",
@@ -87,11 +89,12 @@ export async function runHookCodex(argv: string[]): Promise<void> {
       body: raw,
     });
   } catch (e) {
-    process.stderr.write(
-      `agentlock hook codex ${event}: daemon unreachable at ${url}: ${(e as Error).message}\n`,
-    );
+    warnDaemonDownOnce("codex", url, e as Error);
     process.exit(0); // fail-open
   }
+
+  // Successful round-trip — re-arm the nudge for the next outage.
+  clearDaemonDownMarker();
 
   if (!res.ok) {
     process.stderr.write(

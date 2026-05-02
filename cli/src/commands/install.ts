@@ -114,17 +114,22 @@ export async function runInstall(argv: string[] = []): Promise<void> {
   // dir is set, mirror it for every harness so the legacy flag's "single
   // dir wins" behavior is preserved on both sides.
   const hostConfigDirs: Record<string, string> = flags.configDirOverride
-    ? { "claude-code": flags.configDirOverride, codex: flags.configDirOverride }
+    ? {
+        "claude-code": flags.configDirOverride,
+        codex: flags.configDirOverride,
+        cursor: flags.configDirOverride,
+      }
     : {
         "claude-code": resolve(join(home(), ".claude")),
         codex: resolve(join(home(), ".codex")),
+        cursor: resolve(join(home(), ".cursor")),
       };
 
   // 1. Detection ---------------------------------------------------------
   const devMode = !!process.env.AGENTLOCK_DEV_HOME;
   const results = await detectAll();
   const isMvpEnabled = (id: HarnessId): boolean =>
-    id === "claude-code" || id === "codex";
+    id === "claude-code" || id === "codex" || id === "cursor";
   const options = results.map((r) => {
     const enabled = devMode || isMvpEnabled(r.id);
     let sub: string;
@@ -149,7 +154,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
       // is idempotent for claude and re-stamps the dev marker).
       checked: enabled && !!r.agentlockInstalled,
       disabled: !enabled,
-      disabledReason: enabled ? undefined : "MVP: claude-code + codex only",
+      disabledReason: enabled ? undefined : "MVP: claude-code + codex + cursor only",
     };
   });
 
@@ -419,8 +424,8 @@ export async function runInstall(argv: string[] = []): Promise<void> {
       );
     } else if (msg.includes("unsafe_target")) {
       process.stderr.write(
-        "\ndaemon refused to write to a path under real ~/.claude or ~/.codex.\n" +
-          "use --config-dir ./dev/.claude (or ./dev/.codex) for dev runs, or set\n" +
+        "\ndaemon refused to write to a path under real ~/.claude, ~/.codex, or ~/.cursor.\n" +
+          "use --config-dir ./dev/.claude (or ./dev/.codex, ./dev/.cursor) for dev runs, or set\n" +
           "AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 on the daemon for real installs.\n",
       );
     } else {

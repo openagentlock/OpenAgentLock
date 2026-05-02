@@ -14,7 +14,7 @@ The control plane exposes a versioned HTTP API on `127.0.0.1:7878`. The contract
 
 `GET /v1/mode` · `PATCH /v1/mode`
 
-Toggles the daemon-level `monitor` ↔ `enforce` switch. Independent from the policy file's own `mode` field — see [Policies](../guide/policies.md#two-switches-mode-and-rule-actions).
+Toggles the daemon-level `monitor` ↔ `firewall` switch. This is the outer override and beats the policy file's own `mode` in both directions: `firewall` re-escalates any policy-monitor match back to `deny`; `monitor` suppresses every `deny`. See [Policies](../guide/policies.md#two-switches-mode-and-rule-actions).
 
 ## Gates
 

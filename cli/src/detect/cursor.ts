@@ -16,6 +16,7 @@ export const cursor: Detector = {
   async detect(): Promise<Detection> {
     const cursorDir = join(home(), ".cursor");
     const globalMcp = join(cursorDir, "mcp.json");
+    const globalHooks = join(cursorDir, "hooks.json");
     const userDir = editorUserDir();
 
     const evidence: string[] = [];
@@ -24,6 +25,7 @@ export const cursor: Detector = {
     if (dotDir) evidence.push(`found ${cursorDir}`);
     if (userExists) evidence.push(`found ${userDir}`);
     if (existsSync(globalMcp)) evidence.push(`found ${globalMcp}`);
+    if (existsSync(globalHooks)) evidence.push(`found ${globalHooks}`);
 
     const scopes: DetectedScope[] = [
       { kind: "global", path: globalMcp, exists: existsSync(globalMcp) },
@@ -37,8 +39,13 @@ export const cursor: Detector = {
       installed: dotDir || userExists,
       evidence,
       scopes,
-      surfaces: ["mcp-stdio", "extension-only"],
-      notes: ["Cursor must be relaunched after MCP config changes."],
+      // lifecycle-hooks must be index 0 so the picker's `none-known`
+      // gate (which reads surfaces[0]) doesn't disable the row.
+      surfaces: ["lifecycle-hooks", "mcp-stdio", "extension-only"],
+      notes: [
+        "Cursor ≥1.7 hooks live at ~/.cursor/hooks.json (camelCase event keys).",
+        "Cursor must be relaunched after hook config changes.",
+      ],
       agentlockInstalled: al.installed,
       agentlockDaemonURL: al.daemonURL,
     };

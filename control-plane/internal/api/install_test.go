@@ -195,7 +195,7 @@ func TestInstallPlan_UnknownHarness_Skipped(t *testing.T) {
 
 	body := fmt.Sprintf(`{
 		"session_id": %q,
-		"harnesses": ["cursor","cline"],
+		"harnesses": ["cline","gemini"],
 		"daemon_url": "http://127.0.0.1:7878"
 	}`, fx.sessionID)
 	res, err := http.Post(fx.srv.URL+"/v1/install/plan", "application/json", strings.NewReader(body))
@@ -289,8 +289,11 @@ func TestInstallApply_WritesSettingsJson(t *testing.T) {
 	if !strings.Contains(string(b), "_agentlock") {
 		t.Fatalf("missing _agentlock marker: %s", b)
 	}
-	if !strings.Contains(string(b), "/v1/hooks/claude-code/pre-tool-use") {
-		t.Fatalf("missing claude-code pre-tool-use URL: %s", b)
+	if !strings.Contains(string(b), "hook claude-code pre-tool-use") {
+		t.Fatalf("missing claude-code pre-tool-use shim invocation: %s", b)
+	}
+	if !strings.Contains(string(b), `"type": "command"`) {
+		t.Fatalf("expected command-typed hook entries: %s", b)
 	}
 
 	// Ledger grew with install.apply entry (in addition to session.create).
