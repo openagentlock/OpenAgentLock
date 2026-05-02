@@ -221,14 +221,9 @@ func cursorGateHandler(d Deps, eventName string, kind cursorDedupeKind) http.Han
 			Input: in.ToolInput,
 		})
 
-		origVerdict := result.Verdict
-		mode := daemonMode()
+		var origVerdict, mode string
+		result, mode, origVerdict = applyDaemonModeOverride(result)
 		monitorMatch := result.MonitorMatch
-		if result.Verdict == "deny" && mode == daemonModeMonitor {
-			monitorMatch = true
-			result.Verdict = "allow"
-			result.Reason = "deny suppressed by daemon monitor mode"
-		}
 
 		toolUseID := in.ToolUseID
 		if toolUseID == "" {
@@ -255,13 +250,14 @@ func cursorGateHandler(d Deps, eventName string, kind cursorDedupeKind) http.Han
 		}
 		payloadHash := sha256.Sum256(payloadBytes)
 		if _, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
-			TS:          time.Now().UTC(),
-			Source:      "cursor",
-			ToolUseID:   toolUseID,
-			Signer:      sess.Signer,
-			RuleID:      result.RuleID,
-			Verdict:     origVerdict,
-			PayloadHash: payloadHash[:],
+			TS:           time.Now().UTC(),
+			Source:       "cursor",
+			ToolUseID:    toolUseID,
+			Signer:       sess.Signer,
+			RuleID:       result.RuleID,
+			Verdict:      origVerdict,
+			MonitorMatch: monitorMatch,
+			PayloadHash:  payloadHash[:],
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "ledger_error", err.Error())
 			return
@@ -514,11 +510,7 @@ func cursorBeforeShellHandler(d Deps) http.HandlerFunc {
 			Input: map[string]any{"command": in.Command},
 		})
 
-		mode := daemonMode()
-		if result.Verdict == "deny" && mode == daemonModeMonitor {
-			result.Verdict = "allow"
-			result.Reason = "deny suppressed by daemon monitor mode"
-		}
+		result, _, _ = applyDaemonModeOverride(result)
 
 		// No ledger append — preToolUse owns the audit trail for this
 		// tool call. We're just echoing the verdict in Cursor's expected
