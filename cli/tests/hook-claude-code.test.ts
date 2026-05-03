@@ -1,9 +1,11 @@
 // E2E test for the `agentlock hook claude-code <event>` shim. Spawns a
 // mock daemon over Bun.serve, runs the shim binary with stdin piped JSON,
 // and asserts the shim exits 0 (allow) or 2 (deny) and forwards the
-// payload verbatim to /v1/hooks/claude-code/<event>. Mirrors hook-codex's
-// shape — both shims share daemon-warn helper, deny path, fail-open
-// posture; this test is what catches regressions if those drift.
+// payload verbatim to /v1/hooks/claude-code/<event>. The daemon-down
+// path must be silent on stdout AND stderr — any text would either land
+// in Claude's input stream or trigger a red harness banner. The visible
+// "daemon offline" signal is owned out-of-band by the statusLine config
+// the installer writes (see installStatusLineScript in commands/install).
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
@@ -160,26 +162,23 @@ describe("hook claude-code shim", () => {
     expect(r.stdout).toContain('"permissionDecision":"deny"');
   });
 
-  test("daemon unreachable → fail-open exit 0 with one-shot nudge", async () => {
-    const payload = JSON.stringify({
-      session_id: "sess_z",
-      hook_event_name: "PreToolUse",
-      tool_name: "Bash",
-      tool_use_id: "t_03",
-      tool_input: { command: "ls" },
-    });
+  test("daemon unreachable → silent fail-open on every event", async () => {
+    // Every event must produce empty stdout AND empty stderr with exit 0.
+    // Anything else either pollutes the model's input stream or triggers
+    // a red 'hook error' banner in Claude Code's UI.
     const home = mkdtempSync(join(tmpdir(), "agentlock-test-"));
-    const r = await runShim(["pre-tool-use"], payload, "http://127.0.0.1:1", {
-      AGENTLOCK_HOME: home,
-    });
-    expect(r.code).toBe(0);
-    expect(r.stderr).toContain("OpenAgentLock daemon isn't running");
-    // Second run reuses the marker → stays silent.
-    const r2 = await runShim(["pre-tool-use"], payload, "http://127.0.0.1:1", {
-      AGENTLOCK_HOME: home,
-    });
-    expect(r2.code).toBe(0);
-    expect(r2.stderr).toBe("");
+    for (const event of ["session-start", "pre-tool-use", "post-tool-use", "stop"]) {
+      const payload = JSON.stringify({
+        session_id: "sess_z",
+        hook_event_name: event,
+      });
+      const r = await runShim([event], payload, "http://127.0.0.1:1", {
+        AGENTLOCK_HOME: home,
+      });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toBe("");
+      expect(r.stderr).toBe("");
+    }
   });
 
   test("unknown event → exit 2 with usage", async () => {

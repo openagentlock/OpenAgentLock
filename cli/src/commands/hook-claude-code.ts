@@ -6,9 +6,12 @@
 // as `type: "http"` directly at the daemon, every hook fire became a
 // browser-style fetch from inside Claude. A daemon outage rendered as a
 // red "PreToolUse:Bash hook error / ECONNREFUSED" banner on every tool
-// call. Routing through this shim lets us fail-open on transport errors
-// (exit 0) and emit a one-time friendly nudge instead — matching the UX
-// codex and cursor already get.
+// call. Routing through this shim lets us fail-open silently on transport
+// errors (exit 0). The user-visible "daemon is down" signal is provided
+// out-of-band by Claude Code's `statusLine` config, which the installer
+// wires to <agentlockHome>/bin/agentlock-status — that surface lives
+// outside the model's input stream so it doesn't read as a prompt-
+// injection attempt the way `additionalContext` did in earlier designs.
 //
 // Wire shape (Claude Code → daemon → Claude Code):
 //   stdin:  Claude's native event JSON (session_id, hook_event_name,
@@ -19,9 +22,8 @@
 //           hook was HTTP-typed
 //   stdout: on deny, the JSON envelope (Claude Code accepts either an
 //           exit code OR JSON, we emit both for safety)
-//   exit:   0 on allow / observability, 2 on deny
+//   exit:   0 on allow / observability / fail-open, 2 on deny
 
-import { clearDaemonDownMarker, warnDaemonDownOnce } from "../util/daemon-warn.ts";
 
 const ALLOWED_EVENTS = new Set([
   "session-start",
@@ -73,8 +75,6 @@ export async function runHookClaudeCode(argv: string[]): Promise<void> {
     process.exit(0);
   }
 
-  // Validate JSON locally so a malformed body doesn't waste a daemon
-  // round trip. Pass through verbatim if it parses.
   try {
     JSON.parse(raw);
   } catch (e) {
@@ -94,13 +94,12 @@ export async function runHookClaudeCode(argv: string[]): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: raw,
     });
-  } catch (e) {
-    warnDaemonDownOnce("claude-code", url, e as Error);
-    process.exit(0); // fail-open
+  } catch {
+    // Daemon unreachable. Silent fail-open — never write to stdout
+    // (Claude would read it as model-input text). The statusLine UI
+    // element is the user-visible "daemon offline" signal.
+    process.exit(0);
   }
-
-  // Successful round-trip — re-arm the nudge for the next outage.
-  clearDaemonDownMarker();
 
   if (!res.ok) {
     process.stderr.write(
