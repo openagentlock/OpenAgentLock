@@ -24,7 +24,16 @@ Returns the list of currently active gates with their per-gate status (matched c
 
 `POST /v1/gates/check`
 
-Synchronous verdict for a single tool call. Response fields:
+Synchronous verdict for a single tool call. Request body:
+
+- `session_id` — required, string. From `POST /v1/sessions/create`.
+- `source` — required, string. Harness id (`claude-code`, `codex`, `cursor`, `mcp-proxy`).
+- `tool` — required, string. The tool name being checked (`Bash`, `Read`, `Write`, `mcp__<server>__<method>`).
+- `input` — required, object. The tool's input shape (e.g. `{ "command": "rm -rf foo" }` for Bash).
+- `cwd` — optional, string. Working directory if relevant to the rule.
+- `meta` — optional, object. Free-form context for evaluators that look beyond `input`.
+
+Response fields:
 
 - `verdict` — `allow` or `deny` (the daemon never returns `ask` on this path)
 - `rule_id` — id of the gate that matched, empty when no rule fired
