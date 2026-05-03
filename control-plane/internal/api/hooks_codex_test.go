@@ -267,6 +267,57 @@ func TestCodexSessionStart_CreatesSession(t *testing.T) {
 	}
 }
 
+// Mirror of TestClaudePreToolUse_DenyConcatenatesNudge for the Codex
+// hook path. The daemon must inject the `→ Suggested: <hint>` suffix
+// into the Codex reply's reason fields whenever the firing rule carries
+// a nudge.
+func TestCodexPreToolUse_DenyConcatenatesNudge(t *testing.T) {
+	fx := newGateFixture(t, nudgePolicyYAML)
+	body := `{
+		"session_id": "codex-sess-nudge",
+		"hook_event_name": "PreToolUse",
+		"tool_name": "Bash",
+		"tool_use_id": "codex_nudge",
+		"turn_id": "turn_nudge",
+		"tool_input": {"command": "rm -rf /tmp/x"}
+	}`
+	res, out := postCodexPre(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	spec, _ := out["hookSpecificOutput"].(map[string]any)
+	if spec["permissionDecision"] != "deny" {
+		t.Fatalf("decision = %v, want deny", spec)
+	}
+	reason, _ := spec["permissionDecisionReason"].(string)
+	if !strings.Contains(reason, "matched rule safety.rm-suggest-trash (deny)") {
+		t.Fatalf("permissionDecisionReason missing original reason: %q", reason)
+	}
+	if !strings.Contains(reason, "→ Suggested: use trash instead") {
+		t.Fatalf("permissionDecisionReason missing nudge suffix: %q", reason)
+	}
+	stop, _ := out["stopReason"].(string)
+	if !strings.Contains(stop, "→ Suggested: use trash instead") {
+		t.Fatalf("stopReason missing nudge suffix: %q", stop)
+	}
+
+	// Allow path stays untouched — no suggested-line on benign commands.
+	allowBody := `{
+		"session_id": "codex-sess-nudge-allow",
+		"hook_event_name": "PreToolUse",
+		"tool_name": "Bash",
+		"tool_use_id": "codex_nudge_allow",
+		"turn_id": "turn_nudge_allow",
+		"tool_input": {"command": "ls -la"}
+	}`
+	_, allowOut := postCodexPre(t, fx, allowBody)
+	allowSpec, _ := allowOut["hookSpecificOutput"].(map[string]any)
+	allowReason, _ := allowSpec["permissionDecisionReason"].(string)
+	if strings.Contains(allowReason, "→ Suggested:") {
+		t.Fatalf("allow reason must not carry nudge: %q", allowReason)
+	}
+}
+
 // Mirror of TestClaudePreToolUse_FirewallEscalatesPolicyMonitorMatch
 // (hooks_claude_test.go) — daemon=firewall must re-escalate a
 // policy-monitor match back to deny on the codex hook path too.

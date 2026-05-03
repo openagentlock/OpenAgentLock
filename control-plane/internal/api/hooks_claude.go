@@ -114,16 +114,20 @@ func claudePreToolUseHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
+		// On deny with a nudge attached, append the hint into the same
+		// channel — the harness's reason text — so the model sees both
+		// the verdict explanation and the suggested remediation.
+		reason := denyReasonWithNudge(result)
 		out := claudeHookOutput{
 			Continue: result.Verdict == "allow",
 			HookSpecificOutput: claudeHookSpecifics{
 				HookEventName:            "PreToolUse",
 				PermissionDecision:       result.Verdict,
-				PermissionDecisionReason: result.Reason,
+				PermissionDecisionReason: reason,
 			},
 		}
 		if result.Verdict == "deny" {
-			out.StopReason = result.Reason
+			out.StopReason = reason
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

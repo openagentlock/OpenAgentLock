@@ -109,16 +109,19 @@ func codexPreToolUseHandler(d Deps) http.HandlerFunc {
 		// Same response envelope as Claude — the shim binary maps it onto
 		// Codex's exit-code semantics (allow → exit 0; deny → exit 2 with
 		// the JSON also written to stdout for harnesses that read it).
+		// On deny + nudge, the hint is concatenated into the reason so
+		// the model sees it through Codex's stderr channel.
+		reason := denyReasonWithNudge(result)
 		out := claudeHookOutput{
 			Continue: result.Verdict == "allow",
 			HookSpecificOutput: claudeHookSpecifics{
 				HookEventName:            "PreToolUse",
 				PermissionDecision:       result.Verdict,
-				PermissionDecisionReason: result.Reason,
+				PermissionDecisionReason: reason,
 			},
 		}
 		if result.Verdict == "deny" {
-			out.StopReason = result.Reason
+			out.StopReason = reason
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

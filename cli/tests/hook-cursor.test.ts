@@ -157,6 +157,46 @@ describe("hook cursor shim", () => {
     expect(r.stdout).toContain("rogue.destructive-bash");
   });
 
+  test("deny with nudge → stderr and stdout carry the suggested-line", async () => {
+    // Cursor shim mirrors the daemon's reason into BOTH stderr and the
+    // stdout JSON's agent_message field, so the hint surfaces no matter
+    // which channel Cursor renders.
+    const recorded: RecordedRequest[] = [];
+    const concatenated =
+      "matched rule safety.rm-suggest-trash (deny)\n\n→ Suggested: use trash instead";
+    const m = startMockDaemon(
+      {
+        "/v1/hooks/cursor/pre-tool-use": {
+          status: 200,
+          body: {
+            continue: false,
+            stopReason: concatenated,
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: concatenated,
+            },
+          },
+        },
+      },
+      recorded,
+    );
+    server = m.server;
+
+    const payload = JSON.stringify({
+      conversation_id: "conv_nudge",
+      hook_event_name: "preToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "rm -rf /tmp/x" },
+    });
+    const r = await runShim(["pre-tool-use"], payload, m.url);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("→ Suggested: ");
+    expect(r.stderr).toContain("use trash instead");
+    expect(r.stdout).toContain("→ Suggested: ");
+    expect(r.stdout).toContain("use trash instead");
+  });
+
   test("daemon unreachable → silent fail-open with plain allow envelope on every event", async () => {
     // Cursor has no UI surface outside the model's input stream that we
     // can write to (no statusLine, no safe agent_message). On a transport

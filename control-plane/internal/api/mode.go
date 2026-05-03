@@ -50,6 +50,25 @@ func setRuntimeMode(m string) bool {
 	return false
 }
 
+// denyReasonWithNudge composes the user-facing deny reason that the
+// harness shims forward to the model. When the policy carried a nudge
+// hint with the matching rule, we append it after the original reason
+// using a stable, parseable shape:
+//
+//	"<reason>\n\n→ Suggested: <nudge>"
+//
+// The exact arrow + "Suggested" prefix is part of the contract — tests
+// across the daemon, CLI, and downstream tooling rely on the literal
+// substring "→ Suggested: " to spot the hint. Allow / monitor /
+// non-matching paths feed result.Nudge == "" here and pass through
+// unchanged.
+func denyReasonWithNudge(result policy.EvalResult) string {
+	if result.Verdict != "deny" || result.Nudge == "" {
+		return result.Reason
+	}
+	return result.Reason + "\n\n→ Suggested: " + result.Nudge
+}
+
 // applyDaemonModeOverride composes the daemon-level mode with a policy
 // EvalResult. The daemon mode is the *outer* switch — the dashboard's
 // big red button — and must trump the per-policy / per-gate monitor

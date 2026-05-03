@@ -162,6 +162,47 @@ describe("hook claude-code shim", () => {
     expect(r.stdout).toContain('"permissionDecision":"deny"');
   });
 
+  test("deny with nudge → stderr carries the suggested-line", async () => {
+    // The daemon concatenates the rule's nudge into the deny reason as
+    // "<reason>\n\n→ Suggested: <hint>". The CLI shim is a transparent
+    // forwarder: whatever permissionDecisionReason it gets MUST land on
+    // stderr verbatim so Claude Code surfaces the hint to the model.
+    const recorded: RecordedRequest[] = [];
+    const concatenated =
+      "matched rule safety.rm-suggest-trash (deny)\n\n→ Suggested: use trash instead";
+    const m = startMockDaemon(
+      {
+        "/v1/hooks/claude-code/pre-tool-use": {
+          status: 200,
+          body: {
+            continue: false,
+            stopReason: concatenated,
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: concatenated,
+            },
+          },
+        },
+      },
+      recorded,
+    );
+    server = m.server;
+
+    const payload = JSON.stringify({
+      session_id: "sess_nudge",
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_use_id: "t_nudge",
+      tool_input: { command: "rm -rf /tmp/x" },
+    });
+    const r = await runShim(["pre-tool-use"], payload, m.url);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("→ Suggested: ");
+    expect(r.stderr).toContain("use trash instead");
+    expect(r.stderr).toContain("safety.rm-suggest-trash");
+  });
+
   test("daemon unreachable → silent fail-open on every event", async () => {
     // Every event must produce empty stdout AND empty stderr with exit 0.
     // Anything else either pollutes the model's input stream or triggers
