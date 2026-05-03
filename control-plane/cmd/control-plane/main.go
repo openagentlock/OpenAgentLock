@@ -31,6 +31,10 @@ func main() {
 	if addr == "" {
 		addr = "127.0.0.1:7878"
 	}
+	if len(os.Args) > 1 && os.Args[1] == "--health" {
+		runHealthProbe(addr)
+		return
+	}
 	home := os.Getenv("AGENTLOCK_HOME")
 	if home == "" {
 		log.Fatalf("AGENTLOCK_HOME is required (ledger state lives there)")
@@ -114,6 +118,42 @@ func main() {
 	_ = srv.Shutdown(ctx)
 	_ = dashSrv.Shutdown(ctx)
 	log.Printf("control-plane stopped")
+}
+
+// runHealthProbe is invoked when the binary is run as `agentlockd --health`
+// (e.g. from the docker HEALTHCHECK). Distroless has no curl/wget, so we
+// reuse the binary itself as the probe. The listen addr may be 0.0.0.0:port;
+// rewrite to 127.0.0.1 for the probe.
+func runHealthProbe(listen string) {
+	probeAddr := listen
+	if h, p, ok := splitHostPort(listen); ok && (h == "" || h == "0.0.0.0" || h == "::") {
+		probeAddr = "127.0.0.1:" + p
+	}
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Get("http://" + probeAddr + "/v1/health")
+	if err != nil {
+		log.Printf("healthcheck: %v", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("healthcheck: status %d", resp.StatusCode)
+		os.Exit(1)
+	}
+}
+
+func splitHostPort(addr string) (host, port string, ok bool) {
+	i := -1
+	for j := len(addr) - 1; j >= 0; j-- {
+		if addr[j] == ':' {
+			i = j
+			break
+		}
+	}
+	if i < 0 {
+		return "", "", false
+	}
+	return addr[:i], addr[i+1:], true
 }
 
 // loadPolicy reads $AGENTLOCK_POLICY if set; otherwise returns a built-in

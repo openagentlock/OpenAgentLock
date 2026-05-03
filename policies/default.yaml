@@ -23,10 +23,10 @@ gates:
       command_regex: '^(pip|pip3|npm|pnpm|yarn|brew|cargo|gem) (install|add|-i)\b'
     evaluate:
       - kind: typosquat
-        reference: policies/lists/pkg-allowlist.txt
+        reference: __INLINE__:numpy,pandas,requests,flask,django,fastapi,pytest,pip,setuptools,wheel,react,vue,express,lodash,axios,typescript,eslint,prettier,jest,vite,git,node,python,go,rust,docker,kubectl
         action_on_near_miss: deny
       - kind: allowlist
-        list: policies/lists/pkg-allowlist.txt
+        list: __INLINE__:numpy,pandas,requests,flask,django,fastapi,pytest,pip,setuptools,wheel,react,vue,express,lodash,axios,typescript,eslint,prettier,jest,vite,git,node,python,go,rust,docker,kubectl
         on_hit: allow
         on_miss: deny
 
@@ -61,7 +61,7 @@ gates:
         - { tool: mcp.http.request }
     evaluate:
       - kind: host-allowlist
-        list: policies/lists/net-allowlist.txt
+        list: __INLINE__:github.com,raw.githubusercontent.com,api.github.com,registry.npmjs.org,pypi.org,files.pythonhosted.org,crates.io,static.crates.io,rubygems.org,pkg.go.dev,proxy.golang.org,sum.golang.org
         on_hit: allow
         on_miss: deny
 
