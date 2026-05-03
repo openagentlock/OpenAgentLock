@@ -106,7 +106,7 @@ nav:
   - Guide:
       - Getting started: guide/getting-started.md
       - Installation: guide/installation.md
-      - Policies and the five gates: guide/policies.md
+      - Policies and rules: guide/policies.md
       - Signers: guide/signers.md
       - The ledger: guide/ledger.md
       - Local web dashboard: guide/dashboard.md
