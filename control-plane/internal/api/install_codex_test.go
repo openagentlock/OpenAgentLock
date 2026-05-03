@@ -6,35 +6,32 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func writeCodexConfigToml(t *testing.T, dir string, body string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600); err != nil {
-		t.Fatalf("write config.toml: %v", err)
+func codexApplyBody(fx gateFixture, dir, binary string, existing map[string]string) string {
+	if existing == nil {
+		existing = map[string]string{}
 	}
-}
-
-func codexApplyBody(fx gateFixture, dir, binary string) string {
+	ex, _ := json.Marshal(existing)
 	return fmt.Sprintf(`{
 		"session_id": %q,
 		"harnesses": ["codex"],
 		"daemon_url": "http://127.0.0.1:7878",
 		"config_dir_override": %q,
-		"agentlock_binary": %q
-	}`, fx.sessionID, dir, binary)
+		"agentlock_binary": %q,
+		"existing_files": %s
+	}`, fx.sessionID, dir, binary, ex)
 }
 
-func postCodexApply(t *testing.T, fx gateFixture, dir, binary string) *http.Response {
+func postCodexApply(t *testing.T, fx gateFixture, dir, binary string, existing map[string]string) *http.Response {
 	t.Helper()
 	res, err := http.Post(
 		fx.srv.URL+"/v1/install/apply",
 		"application/json",
-		strings.NewReader(codexApplyBody(fx, dir, binary)),
+		strings.NewReader(codexApplyBody(fx, dir, binary, existing)),
 	)
 	if err != nil {
 		t.Fatalf("POST apply: %v", err)
@@ -42,18 +39,40 @@ func postCodexApply(t *testing.T, fx gateFixture, dir, binary string) *http.Resp
 	return res
 }
 
+// findCodexHooksOp returns the hooks.json op (not config.toml).
+func findCodexHooksOp(t *testing.T, ops []fileOp) fileOp {
+	t.Helper()
+	for _, op := range ops {
+		if strings.HasSuffix(op.Path, "hooks.json") {
+			return op
+		}
+	}
+	t.Fatalf("no hooks.json op in %+v", ops)
+	return fileOp{}
+}
+
+func findCodexTomlOp(ops []fileOp) (fileOp, bool) {
+	for _, op := range ops {
+		if strings.HasSuffix(op.Path, "config.toml") {
+			return op, true
+		}
+	}
+	return fileOp{}, false
+}
+
 func TestInstallPlan_CodexProducesWriteOpAndWarning(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
-	writeCodexConfigToml(t, dir, "codex_hooks = true\n")
+	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
 
 	body := fmt.Sprintf(`{
 		"session_id": %q,
 		"harnesses": ["codex"],
 		"daemon_url": "http://127.0.0.1:7878",
 		"config_dir_override": %q,
-		"agentlock_binary": "/usr/local/bin/agentlock"
-	}`, fx.sessionID, dir)
+		"agentlock_binary": "/usr/local/bin/agentlock",
+		"existing_files": {%q: "codex_hooks = true\n"}
+	}`, fx.sessionID, dir, tomlPath)
 	res, err := http.Post(fx.srv.URL+"/v1/install/plan", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -92,93 +111,156 @@ func TestInstallPlan_CodexProducesWriteOpAndWarning(t *testing.T) {
 }
 
 func TestInstallApply_CodexAutoEnablesFlagWhenMissing(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
+	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
 	// config.toml exists but the flag isn't set: auto-append.
-	writeCodexConfigToml(t, dir, "# nothing relevant\n")
-
-	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock")
+	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		tomlPath: "# nothing relevant\n",
+	})
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "config.toml"))
-	if err != nil {
-		t.Fatalf("read config.toml: %v", err)
+	out := decodeApplyResponse(t, res)
+	tomlOp, ok := findCodexTomlOp(out.Operations)
+	if !ok {
+		t.Fatalf("expected config.toml op in: %+v", out.Operations)
 	}
-	if !strings.Contains(string(got), "codex_hooks = true") {
-		t.Fatalf("expected codex_hooks = true appended, got:\n%s", got)
+	if !strings.Contains(tomlOp.Content, "codex_hooks = true") {
+		t.Fatalf("expected codex_hooks = true appended, got:\n%s", tomlOp.Content)
+	}
+	if tomlOp.BackupPath == "" {
+		t.Fatalf("expected backup_path on toml op (existing file present), got empty")
+	}
+}
+
+// Regression: when config.toml contains [section] headers and no
+// top-level codex_hooks flag, the new line MUST be inserted before the
+// first section, not appended at the end. Appending at end lands inside
+// the last section and the codex parser rejects it
+// ("invalid type: boolean true, expected u32 in tui.model_availability_nux").
+func TestInstallApply_CodexFlagInsertedBeforeFirstSection(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	dir := t.TempDir()
+	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
+	original := "[projects.\"/foo\"]\ntrust_level = \"trusted\"\n\n[tui.model_availability_nux]\n\"gpt-5.5\" = 4\n"
+	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		tomlPath: original,
+	})
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(res.Body)
+		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
+	}
+	out := decodeApplyResponse(t, res)
+	tomlOp, ok := findCodexTomlOp(out.Operations)
+	if !ok {
+		t.Fatalf("expected config.toml op in: %+v", out.Operations)
+	}
+	flagIdx := strings.Index(tomlOp.Content, "codex_hooks = true")
+	sectionIdx := strings.Index(tomlOp.Content, "[")
+	if flagIdx < 0 {
+		t.Fatalf("missing codex_hooks line:\n%s", tomlOp.Content)
+	}
+	if sectionIdx < 0 {
+		t.Fatalf("expected first section preserved:\n%s", tomlOp.Content)
+	}
+	if flagIdx > sectionIdx {
+		t.Fatalf("codex_hooks must come BEFORE first section header; got:\n%s", tomlOp.Content)
+	}
+	// Original content must be preserved.
+	if !strings.Contains(tomlOp.Content, "[tui.model_availability_nux]") {
+		t.Fatalf("original sections must be preserved:\n%s", tomlOp.Content)
+	}
+	if !strings.Contains(tomlOp.Content, `"gpt-5.5" = 4`) {
+		t.Fatalf("original section content must be preserved:\n%s", tomlOp.Content)
 	}
 }
 
 func TestInstallApply_CodexFlipsFalseToTrue(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
-	writeCodexConfigToml(t, dir, "codex_hooks = false\n")
-
-	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock")
+	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
+	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		tomlPath: "codex_hooks = false\n",
+	})
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "config.toml"))
-	if err != nil {
-		t.Fatalf("read config.toml: %v", err)
+	out := decodeApplyResponse(t, res)
+	tomlOp, ok := findCodexTomlOp(out.Operations)
+	if !ok {
+		t.Fatalf("expected config.toml op: %+v", out.Operations)
 	}
-	if !strings.Contains(string(got), "codex_hooks = true") {
-		t.Fatalf("expected flipped to true, got:\n%s", got)
+	if !strings.Contains(tomlOp.Content, "codex_hooks = true") {
+		t.Fatalf("expected flipped to true, got:\n%s", tomlOp.Content)
 	}
-	if strings.Contains(string(got), "codex_hooks = false") {
-		t.Fatalf("expected old false line replaced, got:\n%s", got)
+	if strings.Contains(tomlOp.Content, "codex_hooks = false") {
+		t.Fatalf("expected old false line replaced, got:\n%s", tomlOp.Content)
 	}
-	// Backup of the original false-state should exist alongside.
-	matches, _ := filepath.Glob(filepath.Join(dir, "config.toml.agentlock-backup-*"))
-	if len(matches) != 1 {
-		t.Fatalf("expected 1 backup, got %v", matches)
+	if tomlOp.BackupPath == "" {
+		t.Fatalf("expected backup_path set; got empty")
 	}
 }
 
 func TestInstallApply_CodexCreatesConfigWhenMissing(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
-	dir := t.TempDir() // no config.toml at all
-	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock")
+	dir := t.TempDir()
+	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", nil)
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "config.toml"))
-	if err != nil {
-		t.Fatalf("expected config.toml created: %v", err)
+	out := decodeApplyResponse(t, res)
+	tomlOp, ok := findCodexTomlOp(out.Operations)
+	if !ok {
+		t.Fatalf("expected config.toml op when file missing: %+v", out.Operations)
 	}
-	if string(got) != "codex_hooks = true\n" {
-		t.Fatalf("expected fresh codex_hooks=true file, got:\n%s", got)
+	if tomlOp.Content != "codex_hooks = true\n" {
+		t.Fatalf("expected fresh codex_hooks=true content, got:\n%s", tomlOp.Content)
+	}
+	if tomlOp.BackupPath != "" {
+		t.Fatalf("no backup expected when file was missing; got %q", tomlOp.BackupPath)
+	}
+}
+
+func TestInstallApply_CodexFlagAlreadyTrue_NoTomlOp(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	dir := t.TempDir()
+	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
+	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		tomlPath: "codex_hooks = true\n",
+	})
+	defer res.Body.Close()
+	out := decodeApplyResponse(t, res)
+	if _, ok := findCodexTomlOp(out.Operations); ok {
+		t.Fatalf("expected no config.toml op when flag is already true; got: %+v", out.Operations)
 	}
 }
 
 func TestInstallApply_CodexWritesHooksJson(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
-	writeCodexConfigToml(t, dir, "codex_hooks = true\n")
+	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
 
-	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock")
+	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		tomlPath: "codex_hooks = true\n",
+	})
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	var out installApplyResponse
-	_ = json.NewDecoder(res.Body).Decode(&out)
-	res.Body.Close()
+	out := decodeApplyResponse(t, res)
 	if !out.Applied {
 		t.Fatalf("not applied: %+v", out)
 	}
@@ -186,12 +268,8 @@ func TestInstallApply_CodexWritesHooksJson(t *testing.T) {
 		t.Fatalf("missing MCP warning: %+v", out.Warnings)
 	}
 
-	hooksPath := filepath.Join(dir, "hooks.json")
-	b, err := os.ReadFile(hooksPath)
-	if err != nil {
-		t.Fatalf("read hooks.json: %v", err)
-	}
-	s := string(b)
+	op := findCodexHooksOp(t, out.Operations)
+	s := op.Content
 	for _, want := range []string{
 		`"_agentlock"`,
 		`"PreToolUse"`,
@@ -203,7 +281,7 @@ func TestInstallApply_CodexWritesHooksJson(t *testing.T) {
 		`"AGENTLOCK_DAEMON_URL"`,
 	} {
 		if !strings.Contains(s, want) {
-			t.Fatalf("missing %q in hooks.json: %s", want, s)
+			t.Fatalf("missing %q in hooks.json content: %s", want, s)
 		}
 	}
 
@@ -222,10 +300,10 @@ func TestInstallApply_CodexWritesHooksJson(t *testing.T) {
 }
 
 func TestInstallApply_CodexPreservesExistingUserHooks(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
-	writeCodexConfigToml(t, dir, "codex_hooks = true\n")
+	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
+	hooksPath, _ := filepath.Abs(filepath.Join(dir, "hooks.json"))
 
 	user := `{
 		"hooks": {
@@ -234,66 +312,87 @@ func TestInstallApply_CodexPreservesExistingUserHooks(t *testing.T) {
 			]
 		}
 	}`
-	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(user), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock")
+	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		tomlPath:  "codex_hooks = true\n",
+		hooksPath: user,
+	})
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	res.Body.Close()
-
-	b, _ := os.ReadFile(filepath.Join(dir, "hooks.json"))
-	s := string(b)
+	out := decodeApplyResponse(t, res)
+	op := findCodexHooksOp(t, out.Operations)
+	s := op.Content
 	if !strings.Contains(s, "user-hook.sh") {
 		t.Fatalf("user hook lost: %s", s)
 	}
 	if !strings.Contains(s, "_agentlock") {
 		t.Fatalf("our entry missing: %s", s)
 	}
+	if op.BackupPath == "" {
+		t.Fatalf("expected backup_path on hooks op when existing file supplied")
+	}
 }
 
 func TestInstallApply_CodexIdempotent(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
-	writeCodexConfigToml(t, dir, "codex_hooks = true\n")
+	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
+	hooksPath, _ := filepath.Abs(filepath.Join(dir, "hooks.json"))
 
-	_ = postCodexApply(t, fx, dir, "/usr/local/bin/agentlock").Body.Close()
-	_ = postCodexApply(t, fx, dir, "/usr/local/bin/agentlock").Body.Close()
+	first := decodeApplyResponse(t, postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		tomlPath: "codex_hooks = true\n",
+	}))
+	firstOp := findCodexHooksOp(t, first.Operations)
 
-	b, _ := os.ReadFile(filepath.Join(dir, "hooks.json"))
-	got := strings.Count(string(b), `"_agentlock"`)
+	second := decodeApplyResponse(t, postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		tomlPath:  "codex_hooks = true\n",
+		hooksPath: firstOp.Content,
+	}))
+	secondOp := findCodexHooksOp(t, second.Operations)
+	got := strings.Count(secondOp.Content, `"_agentlock"`)
 	if got != 4 {
-		t.Fatalf("expected 4 _agentlock entries, got %d: %s", got, b)
+		t.Fatalf("expected 4 _agentlock entries, got %d: %s", got, secondOp.Content)
 	}
 }
 
 func TestInstallUninstall_CodexStripsOurEntriesOnly(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
-	writeCodexConfigToml(t, dir, "codex_hooks = true\n")
+	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
+	hooksPath, _ := filepath.Abs(filepath.Join(dir, "hooks.json"))
 
 	user := `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"mine.sh"}]}]}}`
-	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(user), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	applyOut := decodeApplyResponse(t, postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		tomlPath:  "codex_hooks = true\n",
+		hooksPath: user,
+	}))
+	mergedOp := findCodexHooksOp(t, applyOut.Operations)
 
-	_ = postCodexApply(t, fx, dir, "/usr/local/bin/agentlock").Body.Close()
-	res := postUninstall(t, fx, fx.sessionID)
+	res := postUninstallWithExisting(t, fx, fx.sessionID, map[string]string{
+		hooksPath: mergedOp.Content,
+	})
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	res.Body.Close()
-
-	b, _ := os.ReadFile(filepath.Join(dir, "hooks.json"))
-	s := string(b)
+	out := decodeUninstallResponse(t, res)
+	var stripOp uninstallOp
+	for _, op := range out.Operations {
+		if op.Path == hooksPath {
+			stripOp = op
+			break
+		}
+	}
+	if stripOp.Op != "strip" {
+		t.Fatalf("missing strip op for %s: %+v", hooksPath, out.Operations)
+	}
+	if stripOp.EntriesRemoved == 0 {
+		t.Fatalf("entries_removed = 0; expected >0: %+v", stripOp)
+	}
+	s := stripOp.Content
 	if !strings.Contains(s, "mine.sh") {
 		t.Fatalf("user hook lost: %s", s)
 	}

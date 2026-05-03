@@ -32,6 +32,12 @@ import { detectAll } from "../detect/index.ts";
 import type { HarnessId } from "../detect/types.ts";
 import { multiselect } from "../tui/multiselect.tsx";
 import { apiClient, type InstallFileOp } from "../util/api.ts";
+import {
+  checkSafeTarget,
+  executeFileOps,
+  executeUninstallOps,
+  readExistingFiles,
+} from "../util/install-fs.ts";
 import { home } from "../util/paths.ts";
 import { mintAttestedSession, type AttestedTier } from "../util/session-mint.ts";
 
@@ -262,35 +268,16 @@ export async function runInstall(argv: string[] = []): Promise<void> {
   const daemonUrl = flags.daemonUrl ?? api.baseUrl;
 
   // 3.5. Capabilities probe -------------------------------------------
-  // Read-only check against the daemon so we fail fast — before fetching
-  // the plan, before showing y/N — when apply is disabled or when the
-  // daemon's view of the host filesystem won't match the user's. Older
-  // daemons (pre-0.1.10) don't expose this endpoint; treat 404/network
-  // errors as "unknown" and fall through to the existing post-action
-  // error handling.
+  // The daemon no longer writes host files (the CLI does), so there's
+  // no apply / real-home gate to check. We still call the endpoint so
+  // unattested-disabled daemons surface early — but the check above
+  // (createUnattestedSession) already covers that case for tier=unattested.
+  // Older daemons (pre-0.1.10) don't expose the endpoint; ignore.
   try {
-    const caps = await api.installCapabilities();
-    if (!caps.apply_enabled) {
-      process.stderr.write(
-        "\ninstall apply is disabled on this daemon.\n" +
-          "restart the daemon with -e AGENTLOCK_ALLOW_APPLY=1 added.\n" +
-          "see https://openagentlock.github.io/OpenAgentLock/guide/daemon-flags/\n",
-      );
-      process.exitCode = 2;
-      return;
-    }
-    if (caps.container && !flags.configDirOverride) {
-      process.stdout.write(
-        "\nwarning: daemon is running in a container.\n" +
-          "  install will reference your host paths (e.g. ~/.claude). For\n" +
-          "  writes to actually land on the host, the daemon must have\n" +
-          "  same-path bind mounts (e.g. -v $HOME/.claude:$HOME/.claude).\n" +
-          "  see https://openagentlock.github.io/OpenAgentLock/guide/installation/\n",
-      );
-    }
+    await api.installCapabilities();
   } catch {
     // Probe failed — older daemon or transient. Continue; downstream
-    // calls will surface specific errors with the same hints.
+    // calls will surface specific errors.
   }
 
   // 3a. Per-harness uninstall for rows the user just deselected. Runs
@@ -300,12 +287,26 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     process.stdout.write(
       `\nuninstalling deselected harnesses: ${toUninstall.join(", ")}\n`,
     );
+    // Pass the current contents of every per-harness file so the daemon
+    // can compute the post-strip bytes without reading host paths.
+    const uninstallPaths: string[] = [];
+    for (const id of toUninstall) {
+      const dir = hostConfigDirs[id];
+      if (!dir) continue;
+      if (id === "claude-code") {
+        uninstallPaths.push(resolve(join(dir, "settings.json")));
+      } else if (id === "codex" || id === "cursor") {
+        uninstallPaths.push(resolve(join(dir, "hooks.json")));
+      }
+    }
+    const uninstallExisting = await readExistingFiles(uninstallPaths);
     try {
       const u = await api.installUninstallHarnesses({
         session_id: sessionId,
         harnesses: toUninstall,
         config_dir_override: flags.configDirOverride,
         harness_config_dirs: hostConfigDirs,
+        existing_files: uninstallExisting,
       });
       for (const op of u.operations) {
         const note = op.error ? `  ERROR: ${op.error}` : "";
@@ -317,18 +318,13 @@ export async function runInstall(argv: string[] = []): Promise<void> {
         process.stderr.write(
           `\n${u.failures} uninstall op(s) failed; see above. Continuing with install.\n`,
         );
+      } else {
+        // Execute the strip / remove ops on the host now that the daemon
+        // has signed the diff into the ledger.
+        await executeUninstallOps(u.operations);
       }
     } catch (err) {
       const msg = (err as Error).message;
-      if (msg.includes("apply_disabled")) {
-        process.stderr.write(
-          "\nuninstall is disabled on this daemon.\n" +
-            "restart the daemon with -e AGENTLOCK_ALLOW_APPLY=1 added.\n" +
-            "see https://openagentlock.github.io/OpenAgentLock/guide/daemon-flags/\n",
-        );
-        process.exitCode = 2;
-        return;
-      }
       process.stderr.write(`\nuninstall failed: ${msg}\n`);
       // Continue: a failed uninstall shouldn't block re-installing the
       // ones the user kept selected.
@@ -339,6 +335,22 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     process.stdout.write("\nno harnesses selected for install. done.\n");
     return;
   }
+
+  // Read every host file the daemon needs to merge against, so the plan
+  // ops carry the final byte-for-byte content the CLI will write. Missing
+  // files are silently skipped (readExistingFiles drops ENOENT).
+  const claudeSettings = resolve(
+    join(hostConfigDirs["claude-code"], "settings.json"),
+  );
+  const codexHooks = resolve(join(hostConfigDirs["codex"], "hooks.json"));
+  const codexConfig = resolve(join(hostConfigDirs["codex"], "config.toml"));
+  const cursorHooks = resolve(join(hostConfigDirs["cursor"], "hooks.json"));
+  const existingFiles = await readExistingFiles([
+    claudeSettings,
+    codexHooks,
+    codexConfig,
+    cursorHooks,
+  ]);
 
   const planReq = {
     session_id: sessionId,
@@ -351,6 +363,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     // override (e.g. point at the compiled single-file binary).
     agentlock_binary: process.env.AGENTLOCK_BINARY ?? defaultAgentlockBinary(),
     harness_config_dirs: hostConfigDirs,
+    existing_files: existingFiles,
   };
 
   // 4. Plan dry-run ------------------------------------------------------
@@ -404,7 +417,36 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     }
   }
 
+  // 5.5. Safety check + execute on the host ---------------------------
+  // The plan was returned by the daemon but it never touched disk. We
+  // refuse paths that don't resolve under one of the real harness home
+  // subtrees unless the caller explicitly opted into a dev sandbox via
+  // --config-dir or AGENTLOCK_DEV_HOME.
+  const bypass =
+    !!flags.configDirOverride || !!process.env.AGENTLOCK_DEV_HOME;
+  try {
+    for (const op of plan.operations) {
+      checkSafeTarget(op.path, { bypass });
+    }
+  } catch (err) {
+    process.stderr.write(`\n${(err as Error).message}\n`);
+    process.stderr.write(
+      "use --config-dir ./dev/.claude (or ./dev/.codex, ./dev/.cursor) for dev runs.\n",
+    );
+    process.exitCode = 2;
+    return;
+  }
+  try {
+    await executeFileOps(plan.operations);
+  } catch (err) {
+    process.stderr.write(`\nfile write failed: ${(err as Error).message}\n`);
+    process.exitCode = 2;
+    return;
+  }
+
   // 6. Apply -------------------------------------------------------------
+  // Files are already on disk; this call records the manifest + signs
+  // the install into the ledger.
   process.stdout.write("\napplying...\n");
   try {
     const result = await api.installApply(planReq);
@@ -416,21 +458,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     }
   } catch (err) {
     const msg = (err as Error).message;
-    if (msg.includes("apply_disabled")) {
-      process.stderr.write(
-        "\ninstall apply is disabled on this daemon.\n" +
-          "restart the daemon with -e AGENTLOCK_ALLOW_APPLY=1 added.\n" +
-          "see https://openagentlock.github.io/OpenAgentLock/guide/daemon-flags/\n",
-      );
-    } else if (msg.includes("unsafe_target")) {
-      process.stderr.write(
-        "\ndaemon refused to write to a path under real ~/.claude, ~/.codex, or ~/.cursor.\n" +
-          "use --config-dir ./dev/.claude (or ./dev/.codex, ./dev/.cursor) for dev runs, or set\n" +
-          "AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 on the daemon for real installs.\n",
-      );
-    } else {
-      process.stderr.write(`\napply failed: ${msg}\n`);
-    }
+    process.stderr.write(`\napply failed: ${msg}\n`);
     process.exitCode = 2;
     return;
   }

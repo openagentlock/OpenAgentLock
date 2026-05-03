@@ -7,17 +7,13 @@ OpenAgentLock daemon (agentlockd). Local HTTP service that evaluates policy, dri
 ```bash
 docker pull ghcr.io/openagentlock/agentlockd:latest
 docker run -d --name agentlock \
-  -e AGENTLOCK_ALLOW_APPLY=1 \
-  -e AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 \
   -v agentlock-state:/var/lib/agentlock \
-  -v "$HOME/.claude:$HOME/.claude" \
-  -v "$HOME/.codex:$HOME/.codex" \
   -p 127.0.0.1:7878:7878 \
   -p 127.0.0.1:7879:7879 \
   ghcr.io/openagentlock/agentlockd:latest
 ```
 
-State lives in the `agentlock-state` named volume; the `$HOME/.claude` / `$HOME/.codex` mounts use the **same path inside and outside** the container so install writes through to your real harness configs.
+State lives in the `agentlock-state` named volume. The CLI on your host owns harness-config writes; the daemon never reads or writes `~/.claude`, `~/.codex`, or `~/.cursor`, so no bind mount is needed.
 
 Or via the published `docker-compose.yml`:
 

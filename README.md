@@ -52,9 +52,9 @@ Full walkthrough at <https://openagentlock.github.io/OpenAgentLock/guide/getting
 | Surface | Status |
 |---|---|
 | `agentlock detect` | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| `agentlock install` (Claude Code, Codex CLI) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
+| `agentlock install` (Claude Code, Codex CLI, Cursor) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | `agentlock install --tier {unattested,software,totp}` | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| `agentlock install` (Cursor, OpenCode, Cline, Gemini CLI, Continue, VS Code Copilot) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
+| `agentlock install` (OpenCode, Cline, Gemini CLI, Continue, VS Code Copilot) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | Five baseline gates in monitor mode | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Tamper-evident Merkle ledger | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Local web dashboard | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |

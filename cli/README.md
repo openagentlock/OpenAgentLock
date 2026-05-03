@@ -12,7 +12,11 @@ The CLI talks to a local control plane (Go service in Docker, port 7878). Pull a
 
 ```bash
 docker pull ghcr.io/openagentlock/agentlockd:latest
-docker run -d --name agentlock -p 127.0.0.1:7878:7878 ghcr.io/openagentlock/agentlockd:latest
+docker run -d --name agentlock \
+  -p 127.0.0.1:7878:7878 \
+  -p 127.0.0.1:7879:7879 \
+  -v agentlock-state:/var/lib/agentlock \
+  ghcr.io/openagentlock/agentlockd:latest
 ```
 
 Then use the CLI:
@@ -22,6 +26,8 @@ agentlock detect            # list local agent harnesses
 agentlock install           # plan + apply hooks for selected harnesses
 agentlock status            # control-plane health
 ```
+
+For attested install (TOTP, hardware signers) and policies, see [openagentlock.github.io/OpenAgentLock](https://openagentlock.github.io/OpenAgentLock/).
 
 Full documentation: <https://openagentlock.github.io/OpenAgentLock/>
 
