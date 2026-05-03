@@ -22,6 +22,16 @@ Toggles the daemon-level `monitor` ↔ `firewall` switch. This is the outer over
 
 Returns the list of currently active gates with their per-gate status (matched count, last-hit timestamp).
 
+`POST /v1/gates/check`
+
+Synchronous verdict for a single tool call. Response fields:
+
+- `verdict` — `allow` or `deny` (the daemon never returns `ask` on this path)
+- `rule_id` — id of the gate that matched, empty when no rule fired
+- `reason` — short human-readable explanation, surfaced verbatim by the harness shim
+- `nudge` — optional, string. Present only when the matched rule defined a `nudge:` hint **and** the final verdict is `deny`. Allow / monitor-suppressed paths drop it. See [Policies → Nudges](../guide/policies.md#nudges).
+- `ledger_seq` — sequence number of the corresponding ledger leaf
+
 ## Install
 
 `POST /v1/install/plan` — render a diff of what would change in the harness configs
