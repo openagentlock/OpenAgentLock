@@ -74,6 +74,13 @@ Software (dev/CI) and TOTP shipped. OS keychain and YubiKey land next.
 Browse and install community-maintained gates with `agentlock rules install <id>`. Search the catalog at [openagentlock.github.io/rules](https://openagentlock.github.io/rules/) — or point the CLI at any Git repo to run a private registry.
 </div>
 
+<div class="gate-card" markdown>
+#### Agent skills
+<span class="gate-id">[openagentlock/skills](https://github.com/openagentlock/skills)</span>
+
+Claude Code / Cursor / Codex skills that turn "block X" intent into a policy gate, run `agentlock rules install`, and verify the deny fires.
+</div>
+
 </div>
 
 ## How it works

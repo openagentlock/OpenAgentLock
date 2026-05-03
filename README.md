@@ -59,6 +59,8 @@ agentlock rules install rogue.secret-read
 
 Or run your own private registry — any Git repo with the same layout works. Source: [openagentlock/rules](https://github.com/openagentlock/rules).
 
+For agents that need to **author** new rules from natural-language intent, see [openagentlock/skills](https://github.com/openagentlock/skills) — Claude Code / Cursor / Codex skills that drive the `agentlock rules` CLI.
+
 ## What ships today
 
 | Surface | Status |
