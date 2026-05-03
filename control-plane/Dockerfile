@@ -59,6 +59,7 @@ RUN install -d -m 0700 -o 65532 -g 65532 /out/agentlock-home
 FROM gcr.io/distroless/cc-debian12 AS runtime
 COPY --from=go-builder /out/control-plane /usr/local/bin/agentlockd
 COPY --from=go-builder --chown=65532:65532 /out/agentlock-home /var/lib/agentlock
+COPY policies/default.yaml /etc/agentlock/policies/default.yaml
 ENV AGENTLOCK_LISTEN=0.0.0.0:7878
 ENV AGENTLOCK_DASHBOARD_LISTEN=0.0.0.0:7879
 ENV AGENTLOCK_HOME=/var/lib/agentlock

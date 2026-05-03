@@ -6,8 +6,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
+  pull-requests: write
 
 concurrency:
   group: npm-publish-${{ github.ref }}
@@ -45,3 +46,40 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
+
+      - name: Open Homebrew formula PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          v="${VERSION#v}"
+          tarball="https://registry.npmjs.org/@openagentlock/cli/-/cli-${v}.tgz"
+          for i in 1 2 3 4 5 6; do
+            if curl -sfI "$tarball" >/dev/null; then break; fi
+            sleep 5
+          done
+          sha=$(curl -sfL "$tarball" | shasum -a 256 | awk '{print $1}')
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          branch="formula/v${v}"
+          git checkout -B "$branch" origin/main
+          sed -i -E \
+            -e "s|cli-[0-9]+\.[0-9]+\.[0-9]+\.tgz|cli-${v}.tgz|" \
+            -e "s|sha256 \"[^\"]+\"|sha256 \"${sha}\"|" \
+            -e "s|version \"[^\"]+\"|version \"${v}\"|" \
+            Formula/agentlock.rb
+          if git diff --quiet -- Formula/agentlock.rb; then
+            echo "Formula already at v${v}"
+            exit 0
+          fi
+          git add Formula/agentlock.rb
+          git commit -m "Formula: pin v${v} sha256"
+          git push -f origin "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "Formula: pin v${v} sha256" \
+            --body "Automated formula bump after publishing \`@openagentlock/cli@${v}\` to npm." \
+            || gh pr edit "$branch" --title "Formula: pin v${v} sha256"
