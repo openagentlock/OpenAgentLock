@@ -21,12 +21,16 @@ export interface ApiClient {
   installCapabilities(): Promise<InstallCapabilitiesResponse>;
   installPlan(req: InstallPlanRequest): Promise<InstallPlanResponse>;
   installApply(req: InstallPlanRequest): Promise<InstallApplyResponse>;
-  installUninstall(sessionId: string): Promise<InstallUninstallResponse>;
+  installUninstall(req: {
+    session_id: string;
+    existing_files?: Record<string, string>;
+  }): Promise<InstallUninstallResponse>;
   installUninstallHarnesses(req: {
     session_id: string;
     harnesses: string[];
     config_dir_override?: string;
     harness_config_dirs?: Record<string, string>;
+    existing_files?: Record<string, string>;
   }): Promise<InstallUninstallResponse>;
   listSessions(): Promise<SessionsListResponse>;
   getMode(): Promise<ModeResponse>;
@@ -112,11 +116,15 @@ export interface InstallPlanRequest {
   // makes the install flow honest under Docker, where the daemon's HOME
   // is /home/nonroot but the user expects writes under their real home.
   harness_config_dirs?: Record<string, string>;
+  // Existing host file contents the daemon needs to merge against when
+  // computing ops. Keys are absolute paths; missing keys mean "file does
+  // not exist." The CLI populates this for ~/.claude/settings.json,
+  // ~/.codex/hooks.json, ~/.codex/config.toml, and ~/.cursor/hooks.json
+  // so the daemon never has to read host paths itself.
+  existing_files?: Record<string, string>;
 }
 
 export interface InstallCapabilitiesResponse {
-  apply_enabled: boolean;
-  real_home_allowed: boolean;
   unattested_allowed: boolean;
   container: boolean;
 }
@@ -151,6 +159,10 @@ export interface InstallUninstallOp {
   op: string;
   path: string;
   entries_removed: number;
+  // Post-strip file contents the CLI should write back to `path`.
+  // Empty when the file had no agentlock entries (the CLI then leaves
+  // the file untouched).
+  content?: string;
   error?: string;
 }
 
@@ -420,11 +432,14 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
       return (await res.json()) as InstallApplyResponse;
     },
 
-    async installUninstall(sessionId: string): Promise<InstallUninstallResponse> {
+    async installUninstall(req: {
+      session_id: string;
+      existing_files?: Record<string, string>;
+    }): Promise<InstallUninstallResponse> {
       const res = await fetch(`${url}/v1/install/uninstall`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ session_id: sessionId }),
+        body: JSON.stringify(req),
       });
       if (!res.ok && res.status !== 207) {
         const body = await res.text();
@@ -440,6 +455,7 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
       harnesses: string[];
       config_dir_override?: string;
       harness_config_dirs?: Record<string, string>;
+      existing_files?: Record<string, string>;
     }): Promise<InstallUninstallResponse> {
       const res = await fetch(`${url}/v1/install/uninstall-harnesses`, {
         method: "POST",

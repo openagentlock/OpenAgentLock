@@ -99,7 +99,6 @@ function startMockDaemon(
             ],
             skipped: [],
             applied: false,
-            apply_note: "set AGENTLOCK_ALLOW_APPLY=1",
           },
         );
       }
@@ -232,11 +231,11 @@ describe("apiClient.installApply", () => {
     expect(apply.skipped).toEqual([]);
   });
 
-  test("surfaces apply_disabled error verbatim", async () => {
+  test("surfaces 403 error body verbatim", async () => {
     client = withMock({
       apply: {
         status: 403,
-        body: { error: "apply_disabled", detail: "set AGENTLOCK_ALLOW_APPLY=1" },
+        body: { error: "forbidden", detail: "session lacks signer" },
       },
     });
     let caught: Error | null = null;
@@ -246,24 +245,15 @@ describe("apiClient.installApply", () => {
       caught = e as Error;
     }
     expect(caught).not.toBeNull();
-    expect(caught!.message).toContain("apply_disabled");
-  });
-
-  test("surfaces unsafe_target error verbatim", async () => {
-    client = withMock({
-      apply: {
-        status: 403,
-        body: { error: "unsafe_target", detail: "target resolves to real ~/.claude" },
-      },
-    });
-    await expect(client.installApply(planReq)).rejects.toThrow(/unsafe_target/);
+    expect(caught!.message).toContain("forbidden");
+    expect(caught!.message).toContain("403");
   });
 });
 
 describe("apiClient.installUninstall", () => {
   test("returns uninstalled=true on 200", async () => {
     client = withMock();
-    const r = await client.installUninstall("01KMOCK-SESSION");
+    const r = await client.installUninstall({ session_id: "01KMOCK-SESSION" });
     expect(r.uninstalled).toBe(true);
     expect(r.failures).toBe(0);
     expect(r.operations[0].entries_removed).toBe(2);
@@ -294,7 +284,7 @@ describe("apiClient.installUninstall", () => {
         },
       },
     });
-    const r = await client.installUninstall("01KMOCK-SESSION");
+    const r = await client.installUninstall({ session_id: "01KMOCK-SESSION" });
     expect(r.failures).toBe(1);
     expect(r.uninstalled).toBe(false);
     expect(r.operations[1].error).toContain("permission denied");
@@ -307,6 +297,8 @@ describe("apiClient.installUninstall", () => {
         body: { error: "manifest_not_found", detail: "bad-session-id" },
       },
     });
-    await expect(client.installUninstall("bad-session-id")).rejects.toThrow(/404/);
+    await expect(
+      client.installUninstall({ session_id: "bad-session-id" }),
+    ).rejects.toThrow(/404/);
   });
 });
