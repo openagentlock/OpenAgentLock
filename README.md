@@ -24,13 +24,17 @@ OpenAgentLock detects local AI coding agent harnesses (Claude Code, Codex CLI, C
 
 ```bash
 # 1. Pull and start the daemon
-curl -O https://raw.githubusercontent.com/openagentlock/OpenAgentLock/main/docker-compose.yml
-docker compose up -d
+docker pull ghcr.io/openagentlock/agentlockd:latest
+docker run -d --name agentlock \
+  -p 127.0.0.1:7878:7878 \
+  -p 127.0.0.1:7879:7879 \
+  -v agentlock-state:/var/lib/agentlock \
+  ghcr.io/openagentlock/agentlockd:latest
 
 # 2. Install the CLI
-brew install openagentlock/tap/agentlock
+npm i -g @openagentlock/cli
 # or: bun add -g @openagentlock/cli
-# or: npm i -g @openagentlock/cli
+# or: brew install openagentlock/tap/agentlock
 
 # 3. Enroll a signer (TOTP — recommended for prod)
 agentlock signer enroll --tier totp --passphrase 'your-passphrase-here'
