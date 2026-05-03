@@ -11,11 +11,14 @@ import (
 // InstallCapabilities is the response shape for GET /v1/install/capabilities.
 //
 // Read-only view of runtime gates and environment so the CLI can fail fast
-// before rendering an install plan or asking for a TOTP code. No auth and no
-// daemon mutation here — this is a probe, not a control surface.
+// before asking for a TOTP code. No auth and no daemon mutation here — this
+// is a probe, not a control surface.
+//
+// File-writing happens on the host (in the CLI), not inside the daemon, so
+// there are no apply / real-home gates to advertise. `container` is kept for
+// the dashboard, but the CLI no longer warns on it: daemons in containers
+// do not need bind mounts because the daemon never touches host paths.
 type InstallCapabilities struct {
-	ApplyEnabled      bool `json:"apply_enabled"`
-	RealHomeAllowed   bool `json:"real_home_allowed"`
 	UnattestedAllowed bool `json:"unattested_allowed"`
 	Container         bool `json:"container"`
 }
@@ -23,8 +26,6 @@ type InstallCapabilities struct {
 func installCapabilitiesHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, InstallCapabilities{
-			ApplyEnabled:      os.Getenv("AGENTLOCK_ALLOW_APPLY") == "1",
-			RealHomeAllowed:   os.Getenv("AGENTLOCK_ALLOW_APPLY_REAL_HOME") == "1",
 			UnattestedAllowed: os.Getenv("AGENTLOCK_ALLOW_UNATTESTED") == "1",
 			Container:         inContainer(),
 		})

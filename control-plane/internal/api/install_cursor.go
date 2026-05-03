@@ -6,21 +6,19 @@
 // Cursor's `{permission, agent_message?}` shape.
 //
 // Unlike Codex, Cursor's hooks are on by default — no config flag
-// gate. We still refuse to write into the developer's real ~/.cursor
-// unless AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 is set.
+// gate. The daemon never reads or writes host files in the new flow:
+// the CLI passes the existing hooks.json bytes (when present) as
+// existingFiles and executes the returned ops on the host.
 
 package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/openagentlock/openagentlock/control-plane/internal/policy"
 )
 
 // cursorHooksPath returns the absolute path to hooks.json under the
@@ -118,119 +116,43 @@ func cursorHookConfig(daemonURL, agentlockBinary string) map[string]any {
 	}
 }
 
-// cursorPlan returns the file op for a Cursor install. The warnings
-// slice is currently empty (Cursor has no flag-gate caveat analogous
-// to Codex), but we keep the return shape to leave room for future
+// cursorPlan returns the file op for a Cursor install. Pure: no disk
+// I/O. The CLI executes the returned op on the host. The warnings slice
+// is currently empty (Cursor has no flag-gate caveat analogous to
+// Codex), but we keep the return shape to leave room for future
 // MCP-specific advisories.
-func cursorPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string) (fileOp, []string) {
+func cursorPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string, existingFiles map[string]string) (fileOp, []string) {
 	hooksPath, err := cursorHooksPath(configDirOverride, overrides)
 	if err != nil {
 		hooksPath = "<unresolved: " + err.Error() + ">"
 	}
-	body := map[string]any{
-		"version": 1,
-		"hooks":   cursorHookConfig(daemonURL, agentlockBinary),
-	}
-	b, _ := json.MarshalIndent(body, "", "  ")
-	return fileOp{
-		Op:      "write",
-		Path:    hooksPath,
-		Content: string(b),
-		Reason:  fmt.Sprintf("wire Cursor hooks → %s (via shim)", daemonURL),
-	}, nil
-}
-
-func applyCursor(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string) (installManifestE, fileOp, error) {
-	hooksPath, err := cursorHooksPath(configDirOverride, overrides)
-	if err != nil {
-		return installManifestE{}, fileOp{}, err
-	}
-	abs, err := filepath.Abs(hooksPath)
-	if err != nil {
-		return installManifestE{}, fileOp{}, fmt.Errorf("resolve %s: %w", hooksPath, err)
-	}
-	if err := checkSafeCursorTarget(abs); err != nil {
-		return installManifestE{}, fileOp{}, err
+	abs := hooksPath
+	if a, abserr := filepath.Abs(hooksPath); abserr == nil {
+		abs = a
 	}
 
-	dir := filepath.Dir(abs)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return installManifestE{}, fileOp{}, fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-
-	existing, readErr := os.ReadFile(abs)
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return installManifestE{}, fileOp{}, fmt.Errorf("read %s: %w", abs, readErr)
-	}
-
+	var existing []byte
 	backupPath := ""
-	if len(existing) > 0 {
+	if c, ok := existingFiles[abs]; ok && c != "" {
+		existing = []byte(c)
 		backupPath = fmt.Sprintf("%s.agentlock-backup-%d", abs, time.Now().UnixNano())
-		if err := policy.AtomicWriteFile(backupPath, existing, 0o600); err != nil {
-			return installManifestE{}, fileOp{}, fmt.Errorf("write backup: %w", err)
+	}
+
+	merged, mergeErr := mergeCursorHooks(existing, daemonURL, agentlockBinary)
+	if mergeErr != nil {
+		body := map[string]any{
+			"version": 1,
+			"hooks":   cursorHookConfig(daemonURL, agentlockBinary),
 		}
+		merged, _ = json.MarshalIndent(body, "", "  ")
 	}
-
-	merged, err := mergeCursorHooks(existing, daemonURL, agentlockBinary)
-	if err != nil {
-		return installManifestE{}, fileOp{}, err
-	}
-	if err := policy.AtomicWriteFile(abs, merged, 0o644); err != nil {
-		return installManifestE{}, fileOp{}, fmt.Errorf("write hooks.json: %w", err)
-	}
-
-	return installManifestE{
-			Harness:      "cursor",
-			SettingsPath: abs,
-			BackupPath:   backupPath,
-			DaemonURL:    daemonURL,
-		}, fileOp{
-			Op:         "write",
-			Path:       abs,
-			Reason:     fmt.Sprintf("wired Cursor hooks → %s (via shim)", daemonURL),
-			BackupPath: backupPath,
-		}, nil
-}
-
-// checkSafeCursorTarget refuses to let apply write into the developer's
-// real ~/.cursor directory. Mirrors checkSafeCodexTarget / checkSafeClaudeTarget.
-func checkSafeCursorTarget(absPath string) error {
-	if os.Getenv("AGENTLOCK_ALLOW_APPLY_REAL_HOME") == "1" {
-		return nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		if h := os.Getenv("HOME"); h != "" {
-			home = h
-		} else {
-			return fmt.Errorf("%w: cannot determine $HOME; refusing to apply", errUnsafeTarget)
-		}
-	}
-	absHome, err := filepath.Abs(home)
-	if err != nil {
-		return fmt.Errorf("%w: resolve home: %v", errUnsafeTarget, err)
-	}
-	resolvedHome, err := filepath.EvalSymlinks(absHome)
-	if err != nil {
-		resolvedHome = absHome
-	}
-	realCursor := filepath.Clean(filepath.Join(resolvedHome, ".cursor"))
-
-	resolvedTarget := absPath
-	dirResolved, derr := filepath.EvalSymlinks(filepath.Dir(absPath))
-	if derr == nil {
-		resolvedTarget = filepath.Join(dirResolved, filepath.Base(absPath))
-	}
-	resolvedTarget = filepath.Clean(resolvedTarget)
-
-	rel, err := filepath.Rel(realCursor, resolvedTarget)
-	if err != nil {
-		return nil
-	}
-	if rel == "." || (!strings.HasPrefix(rel, "..") && !strings.HasPrefix(rel, string(os.PathSeparator))) {
-		return fmt.Errorf("%w: %s", errUnsafeTarget, absPath)
-	}
-	return nil
+	return fileOp{
+		Op:         "write",
+		Path:       abs,
+		Content:    string(merged),
+		Reason:     fmt.Sprintf("wire Cursor hooks → %s (via shim)", daemonURL),
+		BackupPath: backupPath,
+	}, nil
 }
 
 // mergeCursorHooks merges our entries into existing hooks.json bytes,
@@ -275,28 +197,23 @@ func mergeCursorHooks(existing []byte, daemonURL, agentlockBinary string) ([]byt
 	return json.MarshalIndent(root, "", "  ")
 }
 
-// stripCursorHooks loads the current hooks.json, removes every entry
-// tagged _agentlock:true, trims empty containers, and writes it back.
-// Mirrors stripCodexHooks. Preserves the top-level version field and
-// any non-_agentlock user entries.
-func stripCursorHooks(path string) (int, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("read %s: %w", path, err)
+// stripCursorHooks parses the supplied hooks.json bytes, removes every
+// entry tagged _agentlock:true, trims empty containers, and returns
+// the new bytes + count. Pure: no disk I/O. Mirrors stripCodexHooks.
+// Preserves the top-level version field and any non-_agentlock user
+// entries.
+func stripCursorHooks(existing []byte) ([]byte, int, error) {
+	if len(existing) == 0 {
+		return nil, 0, nil
 	}
 	root := map[string]any{}
-	if len(b) > 0 {
-		if err := json.Unmarshal(b, &root); err != nil {
-			return 0, fmt.Errorf("parse %s: %w", path, err)
-		}
+	if err := json.Unmarshal(existing, &root); err != nil {
+		return nil, 0, fmt.Errorf("parse hooks.json: %w", err)
 	}
 
 	hooks, _ := root["hooks"].(map[string]any)
 	if hooks == nil {
-		return 0, nil
+		return nil, 0, nil
 	}
 
 	removed := 0
@@ -327,10 +244,7 @@ func stripCursorHooks(path string) (int, error) {
 
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
-		return 0, fmt.Errorf("marshal: %w", err)
+		return nil, 0, fmt.Errorf("marshal: %w", err)
 	}
-	if err := policy.AtomicWriteFile(path, out, 0o644); err != nil {
-		return 0, fmt.Errorf("write %s: %w", path, err)
-	}
-	return removed, nil
+	return out, removed, nil
 }

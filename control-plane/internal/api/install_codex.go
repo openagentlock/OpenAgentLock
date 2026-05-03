@@ -4,25 +4,20 @@
 // daemon. See docs/reference/hook-daemon-path.md.
 //
 // Codex's lifecycle hooks are gated by `codex_hooks = true` in
-// ~/.codex/config.toml. Apply auto-enables the flag (creating the file
-// if needed, backing it up if it existed) so users don't have to hand-
-// edit their TOML before installing. The same checkSafeCodexTarget
-// guard that protects hooks.json also protects config.toml — writes
-// into a real ~/.codex still require AGENTLOCK_ALLOW_APPLY_REAL_HOME=1.
+// ~/.codex/config.toml. The plan auto-emits a write op for that file
+// when the flag is missing or false, with the merged TOML bytes ready
+// for the CLI to write atomically.
 
 package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/openagentlock/openagentlock/control-plane/internal/policy"
 )
 
 const codexMCPGapWarning = "Codex CLI: PreToolUse only fires for shell tool calls today. MCP tool calls are NOT gated by OpenAgentLock until upstream expands hook coverage."
@@ -33,8 +28,8 @@ var (
 
 // codexHooksPath returns the absolute path to the hooks.json file we'd
 // write. Mirrors claudeCodeSettingsPath: returning an error rather than
-// a synthesized "/.codex/hooks.json" prevents apply from writing into
-// an attacker-friendly absolute path when HOME is unset.
+// a synthesized "/.codex/hooks.json" prevents apply from suggesting an
+// attacker-friendly absolute path when HOME is unset.
 func codexHooksPath(configDirOverride string, overrides map[string]string) (string, error) {
 	dir, err := codexConfigDir(configDirOverride, overrides)
 	if err != nil {
@@ -67,35 +62,6 @@ func codexConfigDir(configDirOverride string, overrides map[string]string) (stri
 		return filepath.Join(envHome, ".codex"), nil
 	}
 	return "", fmt.Errorf("cannot resolve user home directory; set config_dir_override or HOME")
-}
-
-// codexFlagEnabled returns true when ~/.codex/config.toml has
-// `codex_hooks = true` as a top-level key (i.e. before the first
-// section header). A bare line scan beats pulling in a TOML parser
-// for a single boolean probe. Same scan as cli/src/detect/codex.ts so
-// the detector's preview matches the apply gate.
-func codexFlagEnabled(configTomlPath string) (bool, error) {
-	b, err := os.ReadFile(configTomlPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("read %s: %w", configTomlPath, err)
-	}
-	for _, raw := range strings.Split(string(b), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, "[") {
-			break
-		}
-		m := codexFlagLineRegex.FindStringSubmatch(line)
-		if m != nil {
-			return m[1] == "true", nil
-		}
-	}
-	return false, nil
 }
 
 // codexBinaryDefault is the command Codex spawns when no override is
@@ -142,159 +108,158 @@ func codexHookConfig(daemonURL, agentlockBinary string) map[string]any {
 	}
 }
 
-func codexPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string) (fileOp, []string) {
+// codexPlan returns the file ops the CLI should execute for a Codex
+// install. Always one hooks.json op; optionally a config.toml op when
+// the codex_hooks flag isn't already true on the host. The daemon never
+// reads or writes host files in the new flow.
+func codexPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string, existingFiles map[string]string) ([]fileOp, []string) {
+	warnings := []string{codexMCPGapWarning}
+	ops := make([]fileOp, 0, 2)
+
 	hooksPath, err := codexHooksPath(configDirOverride, overrides)
 	if err != nil {
 		hooksPath = "<unresolved: " + err.Error() + ">"
 	}
-	body := map[string]any{"hooks": codexHookConfig(daemonURL, agentlockBinary)}
-	b, _ := json.MarshalIndent(body, "", "  ")
-	return fileOp{
-		Op:      "write",
-		Path:    hooksPath,
-		Content: string(b),
-		Reason:  fmt.Sprintf("wire Codex CLI hooks → %s (via shim)", daemonURL),
-	}, []string{codexMCPGapWarning}
+	hooksAbs := hooksPath
+	if a, abserr := filepath.Abs(hooksPath); abserr == nil {
+		hooksAbs = a
+	}
+
+	var existingHooks []byte
+	hooksBackup := ""
+	if c, ok := existingFiles[hooksAbs]; ok && c != "" {
+		existingHooks = []byte(c)
+		hooksBackup = fmt.Sprintf("%s.agentlock-backup-%d", hooksAbs, time.Now().UnixNano())
+	}
+
+	mergedHooks, mergeErr := mergeCodexHooks(existingHooks, daemonURL, agentlockBinary)
+	if mergeErr != nil {
+		body := map[string]any{"hooks": codexHookConfig(daemonURL, agentlockBinary)}
+		mergedHooks, _ = json.MarshalIndent(body, "", "  ")
+	}
+	ops = append(ops, fileOp{
+		Op:         "write",
+		Path:       hooksAbs,
+		Content:    string(mergedHooks),
+		Reason:     fmt.Sprintf("wire Codex CLI hooks → %s (via shim)", daemonURL),
+		BackupPath: hooksBackup,
+	})
+
+	tomlPath, tomlErr := codexConfigTomlPath(configDirOverride, overrides)
+	if tomlErr == nil {
+		tomlAbs := tomlPath
+		if a, abserr := filepath.Abs(tomlPath); abserr == nil {
+			tomlAbs = a
+		}
+		if op, note, ok := codexConfigTomlPlan(tomlAbs, existingFiles); ok {
+			ops = append(ops, op)
+			if note != "" {
+				warnings = append(warnings, note)
+			}
+		}
+	}
+
+	return ops, warnings
 }
 
-func applyCodex(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string) (installManifestE, fileOp, []string, error) {
-	tomlPath, err := codexConfigTomlPath(configDirOverride, overrides)
-	if err != nil {
-		return installManifestE{}, fileOp{}, nil, err
-	}
-	tomlNote, err := ensureCodexFlagEnabled(tomlPath)
-	if err != nil {
-		return installManifestE{}, fileOp{}, nil, err
-	}
-	warnings := []string{codexMCPGapWarning}
-	if tomlNote != "" {
-		warnings = append(warnings, tomlNote)
-	}
-
-	hooksPath, err := codexHooksPath(configDirOverride, overrides)
-	if err != nil {
-		return installManifestE{}, fileOp{}, nil, err
-	}
-	abs, err := filepath.Abs(hooksPath)
-	if err != nil {
-		return installManifestE{}, fileOp{}, nil, fmt.Errorf("resolve %s: %w", hooksPath, err)
-	}
-	if err := checkSafeCodexTarget(abs); err != nil {
-		return installManifestE{}, fileOp{}, nil, err
+// codexConfigTomlPlan returns the (optional) file op for the codex
+// config.toml flag-flip. Returns ok=false to mean "no change needed"
+// (flag already true). Pure: takes the existing bytes via existingFiles
+// and never touches disk. Mirrors the cases the old apply-time helper
+// covered:
+//  1. file missing → write "codex_hooks = true\n"
+//  2. flag missing → append "codex_hooks = true\n"
+//  3. flag = false → rewrite the matching line to true
+//  4. flag = true → skip
+func codexConfigTomlPlan(tomlAbs string, existingFiles map[string]string) (fileOp, string, bool) {
+	c, present := existingFiles[tomlAbs]
+	if !present {
+		return fileOp{
+			Op:      "write",
+			Path:    tomlAbs,
+			Content: "codex_hooks = true\n",
+			Reason:  fmt.Sprintf("create %s with codex_hooks = true", tomlAbs),
+		}, fmt.Sprintf("created %s with codex_hooks = true", tomlAbs), true
 	}
 
-	dir := filepath.Dir(abs)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return installManifestE{}, fileOp{}, nil, fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-
-	existing, readErr := os.ReadFile(abs)
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return installManifestE{}, fileOp{}, nil, fmt.Errorf("read %s: %w", abs, readErr)
-	}
-
-	backupPath := ""
-	if len(existing) > 0 {
-		backupPath = fmt.Sprintf("%s.agentlock-backup-%d", abs, time.Now().UnixNano())
-		if err := policy.AtomicWriteFile(backupPath, existing, 0o600); err != nil {
-			return installManifestE{}, fileOp{}, nil, fmt.Errorf("write backup: %w", err)
-		}
-	}
-
-	merged, err := mergeCodexHooks(existing, daemonURL, agentlockBinary)
-	if err != nil {
-		return installManifestE{}, fileOp{}, nil, err
-	}
-	if err := policy.AtomicWriteFile(abs, merged, 0o644); err != nil {
-		return installManifestE{}, fileOp{}, nil, fmt.Errorf("write hooks.json: %w", err)
-	}
-
-	return installManifestE{
-			Harness:      "codex",
-			SettingsPath: abs,
-			BackupPath:   backupPath,
-			DaemonURL:    daemonURL,
-		}, fileOp{
-			Op:         "write",
-			Path:       abs,
-			Reason:     fmt.Sprintf("wired Codex CLI hooks → %s (via shim)", daemonURL),
-			BackupPath: backupPath,
-		}, warnings, nil
-}
-
-// ensureCodexFlagEnabled idempotently makes sure
-// `codex_hooks = true` is a top-level key in the user's config.toml.
-// Cases:
-//  1. file missing → create with `codex_hooks = true\n`
-//  2. flag missing → append `codex_hooks = true\n`
-//  3. flag = false → rewrite to true (with backup)
-//  4. flag = true → no-op
-//
-// Returns a human-readable note when a write happened (empty string =
-// no change), so the caller can surface it as an install warning. The
-// real-home guard mirrors hooks.json: writes into a real ~/.codex
-// require AGENTLOCK_ALLOW_APPLY_REAL_HOME=1.
-func ensureCodexFlagEnabled(tomlPath string) (string, error) {
-	abs, err := filepath.Abs(tomlPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve %s: %w", tomlPath, err)
-	}
-	if err := checkSafeCodexTarget(abs); err != nil {
-		return "", err
-	}
-
-	existing, readErr := os.ReadFile(abs)
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return "", fmt.Errorf("read %s: %w", abs, readErr)
-	}
-
-	// Case 1: file missing → create with the flag set.
-	if errors.Is(readErr, os.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-			return "", fmt.Errorf("mkdir %s: %w", filepath.Dir(abs), err)
-		}
-		if err := policy.AtomicWriteFile(abs, []byte("codex_hooks = true\n"), 0o644); err != nil {
-			return "", fmt.Errorf("write %s: %w", abs, err)
-		}
-		return fmt.Sprintf("created %s with codex_hooks = true", abs), nil
-	}
-
-	// Look only at top-level (pre-first-section) lines, mirroring
-	// codexFlagEnabled.
+	existing := []byte(c)
 	state, idx := topLevelCodexFlag(existing)
 	switch state {
 	case "true":
-		return "", nil // case 4: already set
+		return fileOp{}, "", false
 	case "false":
-		// case 3: rewrite the matching line.
 		updated := append([]byte(nil), existing[:idx.start]...)
 		updated = append(updated, []byte("codex_hooks = true")...)
 		updated = append(updated, existing[idx.end:]...)
-		backup := fmt.Sprintf("%s.agentlock-backup-%d", abs, time.Now().UnixNano())
-		if err := policy.AtomicWriteFile(backup, existing, 0o600); err != nil {
-			return "", fmt.Errorf("write backup: %w", err)
-		}
-		if err := policy.AtomicWriteFile(abs, updated, 0o644); err != nil {
-			return "", fmt.Errorf("write %s: %w", abs, err)
-		}
-		return fmt.Sprintf("flipped codex_hooks false→true in %s (backup: %s)", abs, backup), nil
+		backup := fmt.Sprintf("%s.agentlock-backup-%d", tomlAbs, time.Now().UnixNano())
+		return fileOp{
+			Op:         "write",
+			Path:       tomlAbs,
+			Content:    string(updated),
+			Reason:     fmt.Sprintf("flip codex_hooks false→true in %s", tomlAbs),
+			BackupPath: backup,
+		}, fmt.Sprintf("flipped codex_hooks false→true in %s (backup: %s)", tomlAbs, backup), true
 	default:
-		// case 2: append. Make sure we don't glue onto a partial line.
+		// Insert before the first [section] header. Appending to the end
+		// of a file that already has sections lands the line *inside*
+		// the last section — which the codex parser then reads as
+		// e.g. `tui.model_availability_nux.codex_hooks = true` and
+		// rejects ("invalid type: boolean true, expected u32"). Only
+		// fall back to end-of-file when the file has no sections at all.
+		insertAt := firstSectionHeaderOffset(existing)
 		var buf []byte
-		buf = append(buf, existing...)
-		if len(buf) > 0 && buf[len(buf)-1] != '\n' {
-			buf = append(buf, '\n')
+		if insertAt < 0 {
+			// No sections — safe to append.
+			buf = append(buf, existing...)
+			if len(buf) > 0 && buf[len(buf)-1] != '\n' {
+				buf = append(buf, '\n')
+			}
+			buf = append(buf, []byte("codex_hooks = true\n")...)
+		} else {
+			// Insert immediately before the first section. Make sure the
+			// preceding bytes end with a newline so the new line stands
+			// alone, and add a trailing blank line so it's visually
+			// separated from the section header.
+			buf = append(buf, existing[:insertAt]...)
+			if len(buf) > 0 && buf[len(buf)-1] != '\n' {
+				buf = append(buf, '\n')
+			}
+			buf = append(buf, []byte("codex_hooks = true\n\n")...)
+			buf = append(buf, existing[insertAt:]...)
 		}
-		buf = append(buf, []byte("codex_hooks = true\n")...)
-		backup := fmt.Sprintf("%s.agentlock-backup-%d", abs, time.Now().UnixNano())
-		if err := policy.AtomicWriteFile(backup, existing, 0o600); err != nil {
-			return "", fmt.Errorf("write backup: %w", err)
-		}
-		if err := policy.AtomicWriteFile(abs, buf, 0o644); err != nil {
-			return "", fmt.Errorf("write %s: %w", abs, err)
-		}
-		return fmt.Sprintf("added codex_hooks = true to %s (backup: %s)", abs, backup), nil
+		backup := fmt.Sprintf("%s.agentlock-backup-%d", tomlAbs, time.Now().UnixNano())
+		return fileOp{
+			Op:         "write",
+			Path:       tomlAbs,
+			Content:    string(buf),
+			Reason:     fmt.Sprintf("insert codex_hooks = true at top of %s", tomlAbs),
+			BackupPath: backup,
+		}, fmt.Sprintf("added codex_hooks = true to %s (backup: %s)", tomlAbs, backup), true
 	}
+}
+
+// firstSectionHeaderOffset returns the byte offset of the first line that
+// starts (after whitespace) with `[`. Returns -1 when no section header
+// exists in the file.
+func firstSectionHeaderOffset(b []byte) int {
+	cursor := 0
+	for cursor < len(b) {
+		nl := indexByteFrom(b, '\n', cursor)
+		end := nl
+		if end < 0 {
+			end = len(b)
+		}
+		line := b[cursor:end]
+		trimmed := strings.TrimSpace(string(line))
+		if strings.HasPrefix(trimmed, "[") {
+			return cursor
+		}
+		if nl < 0 {
+			return -1
+		}
+		cursor = nl + 1
+	}
+	return -1
 }
 
 type codexFlagSpan struct{ start, end int }
@@ -336,48 +301,6 @@ func indexByteFrom(b []byte, c byte, from int) int {
 		return -1
 	}
 	return from + idx
-}
-
-// checkSafeCodexTarget refuses to let apply write into the developer's
-// real ~/.codex directory, mirroring checkSafeClaudeTarget. Fail-SAFE:
-// if HOME can't be resolved, treat the target as unsafe.
-func checkSafeCodexTarget(absPath string) error {
-	if os.Getenv("AGENTLOCK_ALLOW_APPLY_REAL_HOME") == "1" {
-		return nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		if h := os.Getenv("HOME"); h != "" {
-			home = h
-		} else {
-			return fmt.Errorf("%w: cannot determine $HOME; refusing to apply", errUnsafeTarget)
-		}
-	}
-	absHome, err := filepath.Abs(home)
-	if err != nil {
-		return fmt.Errorf("%w: resolve home: %v", errUnsafeTarget, err)
-	}
-	resolvedHome, err := filepath.EvalSymlinks(absHome)
-	if err != nil {
-		resolvedHome = absHome
-	}
-	realCodex := filepath.Clean(filepath.Join(resolvedHome, ".codex"))
-
-	resolvedTarget := absPath
-	dirResolved, derr := filepath.EvalSymlinks(filepath.Dir(absPath))
-	if derr == nil {
-		resolvedTarget = filepath.Join(dirResolved, filepath.Base(absPath))
-	}
-	resolvedTarget = filepath.Clean(resolvedTarget)
-
-	rel, err := filepath.Rel(realCodex, resolvedTarget)
-	if err != nil {
-		return nil
-	}
-	if rel == "." || (!strings.HasPrefix(rel, "..") && !strings.HasPrefix(rel, string(os.PathSeparator))) {
-		return fmt.Errorf("%w: %s", errUnsafeTarget, absPath)
-	}
-	return nil
 }
 
 // mergeCodexHooks merges our entries into existing hooks.json bytes,
@@ -449,22 +372,16 @@ func isCodexEventKey(k string) bool {
 	return false
 }
 
-// stripCodexHooks loads the current hooks.json, removes every entry
-// tagged _agentlock:true, trims empty containers, and writes it back.
-// Mirrors stripClaudeSettings.
-func stripCodexHooks(path string) (int, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("read %s: %w", path, err)
+// stripCodexHooks parses the supplied hooks.json bytes, removes every
+// entry tagged _agentlock:true, trims empty containers, and returns the
+// new bytes + count. Pure: no disk I/O. Mirrors stripClaudeSettings.
+func stripCodexHooks(existing []byte) ([]byte, int, error) {
+	if len(existing) == 0 {
+		return nil, 0, nil
 	}
 	root := map[string]any{}
-	if len(b) > 0 {
-		if err := json.Unmarshal(b, &root); err != nil {
-			return 0, fmt.Errorf("parse %s: %w", path, err)
-		}
+	if err := json.Unmarshal(existing, &root); err != nil {
+		return nil, 0, fmt.Errorf("parse hooks.json: %w", err)
 	}
 
 	hooks, _ := root["hooks"].(map[string]any)
@@ -479,7 +396,7 @@ func stripCodexHooks(path string) (int, error) {
 		}
 	}
 	if hooks == nil {
-		return 0, nil
+		return nil, 0, nil
 	}
 
 	removed := 0
@@ -517,10 +434,7 @@ func stripCodexHooks(path string) (int, error) {
 
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
-		return 0, fmt.Errorf("marshal: %w", err)
+		return nil, 0, fmt.Errorf("marshal: %w", err)
 	}
-	if err := policy.AtomicWriteFile(path, out, 0o644); err != nil {
-		return 0, fmt.Errorf("write %s: %w", path, err)
-	}
-	return removed, nil
+	return out, removed, nil
 }
