@@ -39,7 +39,7 @@ func policyViewHandler(d Deps) http.HandlerFunc {
 				Tool:            g.Match.Tool,
 				ToolPrefix:      g.Match.ToolPrefix,
 				AnyCommandRegex: regexStrings(g.Match.Regexes),
-				Evaluators:      evaluatorNames(g.Evaluators),
+				Evaluators:      evaluatorNames(g.Evaluators()),
 			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

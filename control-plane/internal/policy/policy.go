@@ -87,18 +87,36 @@ type Policy struct {
 	RawYAML []byte
 }
 
+// evalEntry pairs a compiled evaluator with the optional human-readable
+// nudge string from the same evaluate[] YAML entry. Welding the two
+// together via a single slice prevents the parallel-slice footgun the
+// previous shape had (Evaluators + EvalNudges drifting out of sync).
+type evalEntry struct {
+	eval  Evaluator
+	nudge string
+}
+
 type Gate struct {
-	ID         string
-	Mode       string // monitor | enforce — inherits Policy.Mode if empty
-	Disabled   bool   // true = skip this gate during evaluation
-	Match      Matcher
-	Evaluators []Evaluator
-	// EvalNudges is a parallel slice to Evaluators carrying the optional
-	// `nudge:` string from each evaluate[] entry. Same length as
-	// Evaluators; entries are "" when the corresponding rawEval omitted
-	// the field. Evaluate uses the firing index to pull the matching
-	// nudge into the result without changing the Evaluator interface.
-	EvalNudges []string
+	ID       string
+	Mode     string // monitor | enforce — inherits Policy.Mode if empty
+	Disabled bool   // true = skip this gate during evaluation
+	Match    Matcher
+	// Evals is the compiled evaluate[] pipeline. Each entry carries the
+	// evaluator plus its optional `nudge:` hint; the firing entry's nudge
+	// gets propagated into EvalResult on a deny verdict.
+	Evals []evalEntry
+}
+
+// Evaluators returns the compiled evaluators from this gate, in order.
+// External callers (the read-only policy view in the API package) need
+// to introspect the evaluator types without poking at the unexported
+// nudge field on each entry.
+func (g Gate) Evaluators() []Evaluator {
+	out := make([]Evaluator, len(g.Evals))
+	for i, e := range g.Evals {
+		out[i] = e.eval
+	}
+	return out
 }
 
 // Evaluator is a step in a gate's `evaluate` pipeline. Each returns
@@ -392,9 +410,11 @@ type EvalResult struct {
 	// Equal to Verdict when MonitorMatch is false.
 	OriginalVerdict string
 	// Nudge is the optional human-readable hint propagated from the
-	// firing evaluate clause. Only populated when the final verdict is
-	// "deny" — allow verdicts and monitor-downgraded matches leave it
-	// empty (the agent is proceeding, no need to nudge).
+	// firing evaluate clause. Populated whenever a rule with a nudge
+	// matched and produced a deny — including monitor-downgraded
+	// matches, so a daemon-level firewall escalation can re-surface the
+	// hint. The API layer (applyDaemonModeOverride) is responsible for
+	// clearing this when the agent is being allowed to proceed.
 	Nudge string
 }
 
@@ -422,15 +442,13 @@ func Load(r io.Reader) (*Policy, error) {
 		if len(rg.Evaluate) == 0 {
 			return nil, fmt.Errorf("gate %q: missing evaluate", rg.ID)
 		}
-		evaluators := make([]Evaluator, 0, len(rg.Evaluate))
-		nudges := make([]string, 0, len(rg.Evaluate))
+		evals := make([]evalEntry, 0, len(rg.Evaluate))
 		for i, e := range rg.Evaluate {
 			ev, err := compileEvaluator(e)
 			if err != nil {
 				return nil, fmt.Errorf("gate %q: evaluate[%d]: %w", rg.ID, i, err)
 			}
-			evaluators = append(evaluators, ev)
-			nudges = append(nudges, e.Nudge)
+			evals = append(evals, evalEntry{eval: ev, nudge: e.Nudge})
 		}
 		m, err := compileMatch(rg.Match)
 		if err != nil {
@@ -440,12 +458,11 @@ func Load(r io.Reader) (*Policy, error) {
 			return nil, fmt.Errorf("gate %q: match has no criteria", rg.ID)
 		}
 		gates = append(gates, Gate{
-			ID:         rg.ID,
-			Mode:       rg.Mode,
-			Disabled:   rg.Disabled,
-			Match:      m,
-			Evaluators: evaluators,
-			EvalNudges: nudges,
+			ID:       rg.ID,
+			Mode:     rg.Mode,
+			Disabled: rg.Disabled,
+			Match:    m,
+			Evals:    evals,
 		})
 	}
 
@@ -472,8 +489,8 @@ func (p *Policy) Evaluate(req EvalRequest) EvalResult {
 		}
 		verdict := "skip"
 		firingIdx := -1
-		for i, ev := range g.Evaluators {
-			v := ev.Evaluate(req)
+		for i, e := range g.Evals {
+			v := e.eval.Evaluate(req)
 			if v == "skip" {
 				continue
 			}
@@ -491,22 +508,24 @@ func (p *Policy) Evaluate(req EvalRequest) EvalResult {
 			effectiveMode = p.Mode
 		}
 		reason := fmt.Sprintf("matched rule %s (%s)", g.ID, verdict)
-		// Pull the nudge from the firing evaluator's parallel-slice
-		// entry. Bounds-checked because EvalNudges may be nil/short on
-		// hand-built Gate values from tests.
+		// Pull the nudge from the firing evaluator's entry. The slice is
+		// always built alongside the evaluators (see Load), so the index
+		// is guaranteed in range — no bounds check needed.
 		var nudge string
-		if firingIdx >= 0 && firingIdx < len(g.EvalNudges) {
-			nudge = g.EvalNudges[firingIdx]
+		if firingIdx >= 0 {
+			nudge = g.Evals[firingIdx].nudge
 		}
 		if effectiveMode == "monitor" {
-			// Monitor-downgraded matches let the agent proceed, so
-			// suppress the nudge — there is no block to remediate.
+			// Nudge is preserved through monitor downgrade so daemon-level
+			// firewall escalation can re-attach it; the API layer decides
+			// whether to surface it.
 			return EvalResult{
 				Verdict:         "allow",
 				RuleID:          g.ID,
 				Reason:          "monitor: " + reason,
 				MonitorMatch:    true,
 				OriginalVerdict: verdict,
+				Nudge:           nudge,
 			}
 		}
 		// Only carry the nudge through on a deny verdict; an allow

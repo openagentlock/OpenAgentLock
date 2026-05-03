@@ -955,8 +955,10 @@ gates:
         action: deny
 `
 
-// Loading a YAML rule with a `nudge:` produces a Gate whose
-// EvalNudges parallel slice carries the string at the matching index.
+// Loading a YAML rule with a `nudge:` produces a Gate whose evals slice
+// carries the string at the matching index. The slice was previously
+// two parallel slices (Evaluators + EvalNudges); welded into a single
+// []evalEntry to prevent drift.
 func TestLoad_NudgeStoredOnGate(t *testing.T) {
 	p, err := Load(strings.NewReader(nudgeYAML))
 	if err != nil {
@@ -966,12 +968,14 @@ func TestLoad_NudgeStoredOnGate(t *testing.T) {
 		t.Fatalf("len(gates) = %d, want 1", len(p.Gates))
 	}
 	g := p.Gates[0]
-	if len(g.EvalNudges) != len(g.Evaluators) {
-		t.Fatalf("EvalNudges len = %d, Evaluators len = %d (must be parallel)",
-			len(g.EvalNudges), len(g.Evaluators))
+	if len(g.Evals) != 1 {
+		t.Fatalf("len(Evals) = %d, want 1", len(g.Evals))
 	}
-	if g.EvalNudges[0] != "use trash instead" {
-		t.Fatalf("EvalNudges[0] = %q, want %q", g.EvalNudges[0], "use trash instead")
+	if g.Evals[0].nudge != "use trash instead" {
+		t.Fatalf("Evals[0].nudge = %q, want %q", g.Evals[0].nudge, "use trash instead")
+	}
+	if g.Evals[0].eval == nil {
+		t.Fatal("Evals[0].eval must be non-nil")
 	}
 }
 
@@ -1038,10 +1042,12 @@ func TestEvaluate_NonMatchingRequestHasNoNudge(t *testing.T) {
 	}
 }
 
-// Monitor-mode matches downgrade deny → allow and must NOT carry the
-// nudge through. The agent is being allowed to proceed; surfacing
-// remediation guidance would be misleading.
-func TestEvaluate_MonitorDowngradeSuppressesNudge(t *testing.T) {
+// Monitor-mode matches downgrade deny → allow but PRESERVE the nudge so
+// a downstream daemon-level firewall escalation can re-attach the hint.
+// The decision to suppress the nudge on a final-allow verdict lives in
+// the API layer (applyDaemonModeOverride) — see
+// TestApplyDaemonModeOverride_MonitorMatchStripsNudge.
+func TestEvaluate_MonitorDowngradeKeepsNudge(t *testing.T) {
 	p, _ := Load(strings.NewReader(nudgeMonitorYAML))
 	v := p.Evaluate(EvalRequest{
 		Tool:  "Bash",
@@ -1053,7 +1059,10 @@ func TestEvaluate_MonitorDowngradeSuppressesNudge(t *testing.T) {
 	if !v.MonitorMatch {
 		t.Fatal("MonitorMatch must be true on a monitor downgrade")
 	}
-	if v.Nudge != "" {
-		t.Fatalf("nudge must be empty on monitor downgrade, got %q", v.Nudge)
+	if v.OriginalVerdict != "deny" {
+		t.Fatalf("OriginalVerdict = %q, want deny", v.OriginalVerdict)
+	}
+	if v.Nudge != "use trash instead" {
+		t.Fatalf("nudge must survive monitor downgrade for firewall re-escalation, got %q", v.Nudge)
 	}
 }
