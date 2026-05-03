@@ -10,33 +10,48 @@ OpenAgentLock's evaluator is intentionally **deterministic YAML**: a path-shape 
 
 For these we want a second tier of evaluator that calls into a small **safety classifier** model — running locally — and returns a numeric score that policy can act on.
 
+## Severity model
+
+Each category in a guardrail verdict carries a severity from a fixed ordered scale:
+
+```
+none < low < medium < high < critical
+```
+
+Comparison operators (`>=`, `>`, `=`) in the policy's `on_threshold` block are evaluated against this ordering. The literal `category: any` matches if **any** category meets the threshold.
+
+The classifier we wrap may emit raw boolean per-category flags rather than severities directly. The OpenAgentLock-side adapter normalizes those into the scale above using a per-model mapping table — for the NemoGuard models, a `true` flag maps to `high` by default, with overrides shipped in the model registry entry.
+
 ## Reference: Llama 3.1 NemoGuard
 
-The shape we're targeting is close to NVIDIA's [`llama-3.1-nemotron-safety-guard-8b-v3`](https://build.nvidia.com/nvidia/llama-3_1-nemotron-safety-guard-8b-v3). Input: a tool-call or message payload + the agent's recent context. Output: structured JSON over a fixed taxonomy:
+The shape we're targeting is close to NVIDIA's [`llama-3.1-nemotron-safety-guard-8b-v3`](https://build.nvidia.com/nvidia/llama-3_1-nemotron-safety-guard-8b-v3). Input: a tool-call or message payload + the agent's recent context. Output: structured JSON over a fixed taxonomy. The classifier emits booleans; the daemon-side adapter rewrites them into severity scores before the gate's `on_threshold` block evaluates:
 
-```json
+```jsonc
+// Classifier output, before adapter rewrite:
 {
   "safe": false,
   "categories": {
-    "violent_crimes": false,
-    "non_violent_crimes": false,
-    "sex_crimes": false,
-    "child_exploitation": false,
     "indiscriminate_weapons": true,
-    "hate": false,
-    "self_harm": false,
-    "intellectual_property": false,
     "privacy": false,
-    "specialized_advice": false,
-    "elections": false,
-    "code_interpreter_abuse": false,
-    "profanity": false
+    "self_harm": false
+    // ... etc
+  },
+  "rationale": "request mentions enrichment of fissile material..."
+}
+
+// After OpenAgentLock adapter rewrite — what the policy sees:
+{
+  "safe": false,
+  "categories": {
+    "indiscriminate_weapons": { "severity": "high",   "raw": true  },
+    "privacy":                { "severity": "none",   "raw": false },
+    "self_harm":              { "severity": "none",   "raw": false }
   },
   "rationale": "request mentions enrichment of fissile material..."
 }
 ```
 
-A guardrail-typed gate consumes this verdict.
+A guardrail-typed gate then matches `severity: ">= high"` against `indiscriminate_weapons` and the `category: any` rule fires.
 
 ## Proposed gate shape
 

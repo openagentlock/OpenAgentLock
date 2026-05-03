@@ -85,7 +85,9 @@ evaluate:
 		t.Fatalf("status=%d, want 201", res.StatusCode)
 	}
 	var resp map[string]any
-	_ = json.NewDecoder(res.Body).Decode(&resp)
+	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if resp["id"] != "exfil.curl-with-env" {
 		t.Errorf("response id = %v, want exfil.curl-with-env", resp["id"])
 	}
@@ -145,7 +147,10 @@ evaluate:
 	}
 
 	// Confirm the regex was rewritten.
-	view, _ := http.Get(srv.URL + "/v1/policy/view")
+	view, err := http.Get(srv.URL + "/v1/policy/view")
+	if err != nil {
+		t.Fatalf("GET policy/view: %v", err)
+	}
 	defer view.Body.Close()
 	buf := new(bytes.Buffer)
 	_, _ = buf.ReadFrom(view.Body)

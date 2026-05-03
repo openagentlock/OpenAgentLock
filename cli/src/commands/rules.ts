@@ -119,30 +119,37 @@ function ensureUpstreamRegistered(): void {
   writeRegistries(file);
 }
 
+// Dynamically require `yaml` so a missing dependency surfaces as a clear
+// MODULE_NOT_FOUND, but actual parse errors propagate to the caller —
+// otherwise a malformed rule.yaml would silently fall back to JSON.parse
+// and produce a misleading SyntaxError pointing at the wrong line.
+function requireYAML(): { parse(s: string): unknown; stringify(o: unknown): string } {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require("yaml") as { parse(s: string): unknown; stringify(o: unknown): string };
+}
+
 function loadRule(yamlBody: string): RuleYAML {
-  // Hand-rolled minimal YAML reader is too fragile for this; instead we
-  // call into bun's bundled YAML parsing through a dynamic require to
-  // avoid pulling another package. If `yaml` is unavailable we try
-  // JSON-as-fallback (rule.yaml authors sometimes maintain JSON).
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const yaml = require("yaml") as { parse(s: string): unknown };
-    return yaml.parse(yamlBody) as RuleYAML;
-  } catch {
-    return JSON.parse(yamlBody) as RuleYAML;
+    return requireYAML().parse(yamlBody) as RuleYAML;
+  } catch (err) {
+    if ((err as { code?: string }).code === "MODULE_NOT_FOUND") {
+      // Dev fallback: rule files can be authored as JSON in tests where
+      // the `yaml` dep is intentionally absent. Real registry rules are
+      // always YAML so this branch is exercised only by tooling.
+      return JSON.parse(yamlBody) as RuleYAML;
+    }
+    throw err;
   }
 }
 
 function dumpYAML(obj: unknown): string {
-  // Same dependency as loadRule; bun ships `yaml` transitively via the
-  // CLI's package.json. Fall back to JSON.stringify when missing — the
-  // daemon happily round-trips JSON-as-YAML for our gate shape.
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const yaml = require("yaml") as { stringify(o: unknown): string };
-    return yaml.stringify(obj);
-  } catch {
-    return JSON.stringify(obj, null, 2);
+    return requireYAML().stringify(obj);
+  } catch (err) {
+    if ((err as { code?: string }).code === "MODULE_NOT_FOUND") {
+      return JSON.stringify(obj, null, 2);
+    }
+    throw err;
   }
 }
 
@@ -232,6 +239,12 @@ export async function runRulesAdd(opts: { url: string; name?: string } & RulesCo
   mkdirSync(join(agentlockHome(), "registries"), { recursive: true });
   const r = git(["clone", "--depth", "1", opts.url, dir]);
   if (!r.ok) {
+    // Partial clones can leave a half-initialized .git/ behind that would
+    // make a retry blow up with "destination path already exists". Wipe
+    // it so the user can re-run `rules add` without manual cleanup.
+    if (existsSync(dir)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
     throw new Error(`git clone failed: ${r.stderr}`);
   }
   file.registries.push({ id, url: opts.url, added_at: new Date().toISOString() });
@@ -335,10 +348,13 @@ export async function runRulesInstall(
   }
   // Wire-shape the rule.yaml's `gate:` block as a top-level gate. The
   // daemon parses it as yamlRawGate; the rule id needs to live at the
-  // top level of the gate block, not under it.
+  // top level of the gate block, not under it. The spread comes first
+  // so the canonical rule id always wins — a malformed registry rule
+  // that smuggles `id:` into its `gate:` block can't override the
+  // top-level rule.id we resolved against.
   const gateBlock = {
-    id: resolved.rule.id,
     ...(resolved.rule.gate as Record<string, unknown>),
+    id: resolved.rule.id,
   };
   const yamlBody = dumpYAML(gateBlock);
   const client = apiClient(opts.url);
