@@ -52,6 +52,11 @@ type installPlanRequest struct {
 	// CLI callers should pass an absolute path so the dev loop and CI
 	// don't depend on PATH lookups inside Codex's spawn environment.
 	AgentlockBinary string `json:"agentlock_binary,omitempty"`
+	// StatusLineScript is the absolute path to the small bash script the
+	// CLI wrote at install time that prints "OpenAgentLock ✓ / ⚠ daemon
+	// offline". When set, Claude Code's settings.json gets a statusLine
+	// entry pointing at it. Empty means "skip the statusLine wiring."
+	StatusLineScript string `json:"status_line_script,omitempty"`
 	// HarnessConfigDirs lets the CLI pre-resolve per-harness config dirs
 	// on the host, so the daemon doesn't probe its own os.UserHomeDir()
 	// (which is /home/nonroot inside a container). Keys are harness ids
@@ -126,7 +131,7 @@ func buildPlanOps(req installPlanRequest) ([]fileOp, []string, []string) {
 	for _, h := range req.Harnesses {
 		switch h {
 		case "claude-code":
-			ops = append(ops, claudeCodePlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles))
+			ops = append(ops, claudeCodePlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.StatusLineScript, req.HarnessConfigDirs, req.ExistingFiles))
 		case "codex":
 			codexOps, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
 			ops = append(ops, codexOps...)
@@ -230,7 +235,7 @@ func claudeCodeHookConfig(daemonURL, agentlockBinary string) map[string]any {
 			"hooks": []any{
 				map[string]any{
 					"type":    "command",
-					"command": fmt.Sprintf("%s hook claude-code %s", bin, event),
+					"command": fmt.Sprintf("%s hook claude-code %s", shellQuote(bin), event),
 					"env": map[string]any{
 						"AGENTLOCK_DAEMON_URL": daemonURL,
 					},
@@ -296,7 +301,7 @@ func claudeCodeSettingsPath(configDirOverride string, overrides map[string]strin
 // The op carries op.BackupPath when an existing file was supplied — the
 // CLI uses that as the suggested backup name and creates it during apply.
 // The daemon never reads or writes host files in the new flow.
-func claudeCodePlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string, existingFiles map[string]string) fileOp {
+func claudeCodePlan(daemonURL, configDirOverride, agentlockBinary, statusLineScript string, overrides map[string]string, existingFiles map[string]string) fileOp {
 	settingsPath, err := claudeCodeSettingsPath(configDirOverride, overrides)
 	if err != nil {
 		// Plan is informational — keep going with a placeholder so the
@@ -316,12 +321,15 @@ func claudeCodePlan(daemonURL, configDirOverride, agentlockBinary string, overri
 		backupPath = fmt.Sprintf("%s.agentlock-backup-%d", abs, time.Now().UnixNano())
 	}
 
-	merged, mergeErr := mergeClaudeSettings(existing, daemonURL, agentlockBinary)
+	merged, mergeErr := mergeClaudeSettings(existing, daemonURL, agentlockBinary, statusLineScript)
 	if mergeErr != nil {
 		// Fall back to the agentlock-only payload so we still produce a
 		// usable op; the CLI will surface the parse error when it sees
 		// the existing file contents differ.
 		hook := map[string]any{"hooks": claudeCodeHookConfig(daemonURL, agentlockBinary)}
+		if statusLineScript != "" {
+			hook["statusLine"] = claudeStatusLineEntry(statusLineScript)
+		}
 		merged, _ = json.MarshalIndent(hook, "", "  ")
 	}
 	return fileOp{
@@ -491,7 +499,12 @@ func harnessForPath(path string) string {
 // bytes. Existing non-agentlock entries under hooks.PreToolUse / hooks.Stop
 // are preserved. Our own (tagged with _agentlock:true) are replaced, so the
 // operation is idempotent.
-func mergeClaudeSettings(existing []byte, daemonURL, agentlockBinary string) ([]byte, error) {
+//
+// When statusLineScript is non-empty we additionally write a statusLine
+// entry tagged _agentlock:true so users see live "OpenAgentLock ✓ /
+// ⚠ daemon offline" under their Claude Code chat. We never clobber a
+// user-defined statusLine (one without our tag).
+func mergeClaudeSettings(existing []byte, daemonURL, agentlockBinary, statusLineScript string) ([]byte, error) {
 	settings := map[string]any{}
 	if len(existing) > 0 {
 		if err := json.Unmarshal(existing, &settings); err != nil {
@@ -519,7 +532,29 @@ func mergeClaudeSettings(existing []byte, daemonURL, agentlockBinary string) ([]
 	}
 	settings["hooks"] = hooks
 
+	if statusLineScript != "" {
+		if existingSL, ok := settings["statusLine"].(map[string]any); ok && !isAgentlockEntry(existingSL) {
+			// User has their own statusLine — leave it alone.
+		} else {
+			settings["statusLine"] = claudeStatusLineEntry(statusLineScript)
+		}
+	}
+
 	return json.MarshalIndent(settings, "", "  ")
+}
+
+// claudeStatusLineEntry renders the settings.json statusLine block that
+// points Claude Code at our health-check script. Claude Code passes this
+// string through a shell on every UI render, so spaces in the path (e.g.
+// macOS "Library/Application Support") need quoting too — same fix as
+// the hook command writers above.
+func claudeStatusLineEntry(scriptPath string) map[string]any {
+	return map[string]any{
+		"_agentlock": true,
+		"type":       "command",
+		"command":    shellQuote(scriptPath),
+		"padding":    0,
+	}
 }
 
 func isAgentlockEntry(v any) bool {
@@ -529,6 +564,20 @@ func isAgentlockEntry(v any) bool {
 	}
 	b, _ := m["_agentlock"].(bool)
 	return b
+}
+
+// shellQuote wraps a path in single quotes so a shell-interpreted hook
+// command survives spaces (e.g. macOS "Library/Application Support").
+// Hook configs across Claude Code / Codex / Cursor pass the command
+// string through /bin/sh, which splits on unquoted whitespace and
+// executes "/Users/ronaldli/Library/Application" as a script — that's
+// the "line 1: on: command not found" failure mode that produced red
+// "PreToolUse:hook error" banners in earlier installs. Single quotes
+// are the simplest robust escape: macOS state dirs can't contain '\''.
+// For the (extremely unlikely) edge case where they do, we fall back
+// to the close-quote / escaped-quote / open-quote idiom.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // --- uninstall ----------------------------------------------------------
@@ -890,6 +939,12 @@ func stripClaudeSettings(existing []byte) ([]byte, int, error) {
 		delete(settings, "hooks")
 	} else {
 		settings["hooks"] = hooks
+	}
+
+	// Strip our statusLine entry too, leaving any user-defined one alone.
+	if sl, ok := settings["statusLine"].(map[string]any); ok && isAgentlockEntry(sl) {
+		delete(settings, "statusLine")
+		removed++
 	}
 
 	out, err := json.MarshalIndent(settings, "", "  ")

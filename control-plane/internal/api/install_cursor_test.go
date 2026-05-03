@@ -80,7 +80,7 @@ func TestInstallPlan_CursorProducesWriteOp(t *testing.T) {
 		`"afterMCPExecution"`,
 		`"postToolUse"`,
 		`"sessionEnd"`,
-		`/usr/local/bin/agentlock hook cursor pre-tool-use`,
+		`'/usr/local/bin/agentlock' hook cursor pre-tool-use`,
 		`"AGENTLOCK_DAEMON_URL": "http://127.0.0.1:7878"`,
 	} {
 		if !strings.Contains(content, want) {
@@ -124,7 +124,7 @@ func TestInstallApply_CursorReturnsHooksContent(t *testing.T) {
 		`"postToolUse"`,
 		`"sessionEnd"`,
 		`"type": "command"`,
-		`/usr/local/bin/agentlock hook cursor pre-tool-use`,
+		`'/usr/local/bin/agentlock' hook cursor pre-tool-use`,
 		`"AGENTLOCK_DAEMON_URL"`,
 	} {
 		if !strings.Contains(s, want) {
