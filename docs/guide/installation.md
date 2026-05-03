@@ -57,17 +57,13 @@ State is persisted in a named Docker volume (`agentlock-state`) so ledger entrie
 
 ```bash
 docker run -d --name agentlock \
-  -e AGENTLOCK_ALLOW_APPLY=1 \
-  -e AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 \
   -v agentlock-state:/var/lib/agentlock \
-  -v "$HOME/.claude:$HOME/.claude" \
-  -v "$HOME/.codex:$HOME/.codex" \
   -p 127.0.0.1:7878:7878 \
   -p 127.0.0.1:7879:7879 \
   ghcr.io/openagentlock/agentlockd:latest
 ```
 
-Daemon state lives in the `agentlock-state` named volume (Docker copies the image's owner/mode on first mount, so no host-side `chown` is needed). The `$HOME/.claude` and `$HOME/.codex` bind mounts use the **same path inside and outside** the container so the install plan resolves to your real harness configs — `agentlock install` writes settings.json/hooks.json straight to the host. Add the corresponding host directory for any other harness you plan to harden.
+Daemon state lives in the `agentlock-state` named volume (Docker copies the image's owner/mode on first mount, so no host-side `chown` is needed). The CLI runs on your host and is the only process that writes harness configs (`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.cursor/hooks.json`); the daemon never reads or writes those paths, so no bind mount is needed.
 
 If you previously bind-mounted to `$HOME/.agentlock`, your data is still there. Migrate it with:
 

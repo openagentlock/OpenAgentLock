@@ -22,17 +22,13 @@ The control plane is a small Go HTTP service that lives in a Docker container. I
     ```bash
     docker pull ghcr.io/openagentlock/agentlockd:latest
     docker run -d --name agentlock \
-      -e AGENTLOCK_ALLOW_APPLY=1 \
-      -e AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 \
       -v agentlock-state:/var/lib/agentlock \
-      -v "$HOME/.claude:$HOME/.claude" \
-      -v "$HOME/.codex:$HOME/.codex" \
       -p 127.0.0.1:7878:7878 \
       -p 127.0.0.1:7879:7879 \
       ghcr.io/openagentlock/agentlockd:latest
     ```
 
-    The `$HOME/.claude` and `$HOME/.codex` mounts use the **same path inside and outside** the container so `agentlock install` writes through to your real harness configs. State lives in the `agentlock-state` named volume.
+    The CLI runs on your host and is the only process that touches host configs (`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.cursor/hooks.json`); the daemon never reads or writes there, so no bind mount is needed. State lives in the `agentlock-state` named volume.
 
 The service binds to `127.0.0.1:7878` (CLI / hook traffic) and `127.0.0.1:7879` (local web dashboard). Neither port should ever be exposed to a non-loopback interface.
 
@@ -80,13 +76,13 @@ agentlock --help
 agentlock detect
 ```
 
-This prints a table of every agent harness it found on your machine. Today, end-to-end hooks are wired for **Claude Code** and **Codex CLI**; other harnesses are detected but the installer flags them as not yet implemented. See [Status](../status.md).
+This prints a table of every agent harness it found on your machine. Today, end-to-end hooks are wired for **Claude Code**, **Codex CLI**, and **Cursor**; other harnesses are detected but the installer flags them as not yet implemented. See [Status](../status.md).
 
 Then pick a signer tier and run `install`. Two recommended paths:
 
 === "Production: TOTP-attested (recommended)"
 
-    The daemon refuses unattested sessions by default. Enroll a TOTP signer once, then use it for `install`:
+    For ledger-signed entries you need an attested signer (TOTP / hardware key). Install accepts unattested sessions for the file-writing step, but ledger entries from those sessions get the red `UNATTESTED` banner. Enroll a TOTP signer once, then use it for `install`:
 
     ```bash
     # 1. one-time enrollment — pick a passphrase, scan the QR with your authenticator
@@ -108,12 +104,8 @@ Then pick a signer tier and run `install`. Two recommended paths:
     ```bash
     docker rm -f agentlock
     docker run -d --name agentlock \
-      -e AGENTLOCK_ALLOW_APPLY=1 \
-      -e AGENTLOCK_ALLOW_APPLY_REAL_HOME=1 \
       -e AGENTLOCK_ALLOW_UNATTESTED=1 \
       -v agentlock-state:/var/lib/agentlock \
-      -v "$HOME/.claude:$HOME/.claude" \
-      -v "$HOME/.codex:$HOME/.codex" \
       -p 127.0.0.1:7878:7878 -p 127.0.0.1:7879:7879 \
       ghcr.io/openagentlock/agentlockd:latest
 
