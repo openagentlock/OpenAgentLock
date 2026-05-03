@@ -9,7 +9,7 @@ Every ledger entry is signed. The strength of that signature is **opt-in**, orde
 | Unattested | None — no signature at all | Zero | Red: `UNATTESTED — LEDGER NOT SIGNED` | <span class="md-status-pill shipped">Shipped</span> |
 | Software (dev / CI) | Low — keypair on disk | Zero | Red: `DEV — SOFTWARE SIGNER` | <span class="md-status-pill shipped">Shipped</span> |
 | TOTP | Medium — software key unsealed by a 6-digit code | One TOTP entry | Yellow: `TOTP-BACKED — MEDIUM ASSURANCE` | <span class="md-status-pill shipped">Shipped</span> |
-| OS keychain | High — keypair sealed by the OS | Zero | None | <span class="md-status-pill not-yet">Not yet implemented</span> |
+| OS keychain | High — keypair sealed by the OS | Zero (unlocked login keychain); one prompt otherwise | None | <span class="md-status-pill shipped">Shipped (macOS)</span> |
 | Hardware key (YubiKey) | Strongest — PIV / FIDO2 | One tap | None | <span class="md-status-pill not-yet">Not yet implemented</span> |
 
 Every ledger entry records its `signer` kind so verifiers can downgrade trust appropriately. Banners are intentionally alarming for weak modes — do not suppress them.
@@ -35,6 +35,29 @@ Every ledger entry records its `signer` kind so verifiers can downgrade trust ap
     ```
 
     Ledger entries get the yellow `TOTP-BACKED — MEDIUM ASSURANCE` banner.
+
+=== "OS keychain (macOS)"
+
+    One-time enrollment stashes a fresh ed25519 seed in the macOS login keychain via `/usr/bin/security add-generic-password`. The CLI keeps a small meta file under `$AGENTLOCK_HOME/os-keychain.meta.json` with the pubkey and (optionally) an expiry timestamp.
+
+    ```bash
+    # no expiry
+    agentlock signer enroll --tier os-keychain
+
+    # expires after 4 hours (good for ephemeral dev sessions)
+    agentlock signer enroll --tier os-keychain --ttl 4h
+    ```
+
+    `--ttl` accepts compound durations: `30m`, `4h`, `7d`, `1h30m`, `90s`. The TTL is enforced by the CLI before each `session create` — once expired, you re-enroll. macOS Keychain itself has no native TTL, so the keychain entry persists until the next `--tier os-keychain` enroll overwrites it (`-U` to `security`).
+
+    Mint sessions with no extra flags:
+
+    ```bash
+    agentlock session create --tier os-keychain
+    agentlock session rotate --id <session-id> --tier os-keychain
+    ```
+
+    Ledger entries get `signer=os_keychain` and currently no banner — strength is "as strong as your login keychain". Linux Secret Service / Windows DPAPI are not yet implemented; the CLI errors out clearly on those platforms.
 
 === "Software (dev / CI only)"
 

@@ -6,10 +6,11 @@ import { apiClient, type SessionStartRequest } from "../util/api";
 import { agentlockHome } from "../util/paths";
 import { loadOrCreateSoftwareSigner } from "../signer/software";
 import { loadTOTPSigner } from "../signer/totp";
+import { loadOSKeychainSigner } from "../signer/keychain";
 import { canonicalAttestation } from "../signer/canonical";
 import type { Signer, SignerKind } from "../signer/types";
 
-export type SessionTier = "software" | "totp";
+export type SessionTier = "software" | "totp" | "os-keychain";
 
 interface Options {
   tier: SessionTier;
@@ -43,6 +44,9 @@ export async function runSessionRotate(opts: Options & { id: string }): Promise<
   if (opts.tier === "software") {
     signer = await loadOrCreateSoftwareSigner(home);
     signerKind = "software";
+  } else if (opts.tier === "os-keychain") {
+    signer = await loadOSKeychainSigner(home);
+    signerKind = "os_keychain";
   } else {
     if (!opts.code || !opts.passphrase) {
       throw new Error(
@@ -104,6 +108,9 @@ export async function runSessionCreate(opts: Options): Promise<void> {
   if (opts.tier === "software") {
     signer = await loadOrCreateSoftwareSigner(home);
     signerKind = "software";
+  } else if (opts.tier === "os-keychain") {
+    signer = await loadOSKeychainSigner(home);
+    signerKind = "os_keychain";
   } else {
     if (!opts.code || !opts.passphrase) {
       throw new Error(
