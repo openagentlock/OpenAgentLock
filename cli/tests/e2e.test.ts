@@ -90,6 +90,17 @@ beforeAll(async () => {
 
   // Enforce-mode policy so the destructive-bash test observes a real deny
   // rather than a monitor-mode allow-with-tag.
+  //
+  // Gate ordering matters here: `safety.rm-suggest-trash` is intentionally
+  // placed BEFORE `rogue.destructive-bash` so that a plain `rm -rf` Bash
+  // command fires the nudge-bearing rule (the round-trip we're testing in
+  // T5). The legacy destructive-bash test now exercises the second
+  // alternation (`git push --force`) which still flows through
+  // `rogue.destructive-bash` — coverage preserved.
+  //
+  // `safety.secret-read-suggest-skill` matches `**/.aws/credentials`, a
+  // path that does NOT match `rogue.secret-read`'s `**/.env*` or
+  // `**/.ssh/**` globs, so the new rule fires cleanly without colliding.
   const policyPath = join(agentlockHome, "policy.yaml");
   writeFileSync(
     policyPath,
@@ -99,6 +110,23 @@ mode: enforce
 defaults:
   bash: allow
 gates:
+  - id: safety.rm-suggest-trash
+    match:
+      tool: Bash
+      any_command_regex:
+        - 'rm\\s+-rf\\b'
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "use 'trash <path>' (macOS) or move the directory aside — recoverable from Trash."
+  - id: safety.secret-read-suggest-skill
+    match:
+      tool: Read
+      path_glob: "**/.aws/credentials"
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "use the openagentlock/skills secret-fetcher skill if installed; otherwise ask the operator to paste the credentials."
   - id: rogue.destructive-bash
     match:
       tool: Bash
@@ -379,6 +407,9 @@ describe.if(!SKIP)("e2e — CLI <-> control-plane", () => {
 
   test("fake-hook: destructive Bash command → deny + rule_id=rogue.destructive-bash", async () => {
     const sessionId = await createSession();
+    // Uses `git push --force` (the second alternation in destructive-bash)
+    // because `rm -rf` now matches safety.rm-suggest-trash first — see the
+    // gate-ordering comment in the policy fixture above.
     const proc = spawn({
       cmd: [
         "bun",
@@ -392,7 +423,7 @@ describe.if(!SKIP)("e2e — CLI <-> control-plane", () => {
         "--tool",
         "Bash",
         "--command",
-        "rm -rf /tmp/demo",
+        "git push origin main --force",
         "--json",
         "--url",
         `http://127.0.0.1:${port}`,
@@ -498,6 +529,114 @@ describe.if(!SKIP)("e2e — CLI <-> control-plane", () => {
     expect(proc.exitCode).toBe(3);
     const v = JSON.parse(stdout) as { rule_id: string };
     expect(v.rule_id).toBe("rogue.secret-read");
+  });
+
+  // T5 nudge round-trip: a policy rule with `nudge:` must surface the
+  // hint string in the gate JSON response, and rules without a nudge must
+  // omit the field entirely (omitempty on the wire).
+
+  test("fake-hook: rm -rf → deny with safety.rm-suggest-trash and nudge text", async () => {
+    const sessionId = await createSession();
+    const proc = spawn({
+      cmd: [
+        "bun",
+        "run",
+        CLI_ENTRY,
+        "fake-hook",
+        "--session",
+        sessionId,
+        "--source",
+        "claude-code",
+        "--tool",
+        "Bash",
+        "--command",
+        "rm -rf /tmp/demo",
+        "--json",
+        "--url",
+        `http://127.0.0.1:${port}`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    expect(proc.exitCode).toBe(3);
+    const v = JSON.parse(stdout) as {
+      verdict: string;
+      rule_id: string;
+      nudge: string;
+    };
+    expect(v.verdict).toBe("deny");
+    expect(v.rule_id).toBe("safety.rm-suggest-trash");
+    expect(v.nudge).toContain("trash");
+  });
+
+  test("fake-hook: Read .aws/credentials → deny with secret-read-suggest-skill nudge", async () => {
+    const sessionId = await createSession();
+    const proc = spawn({
+      cmd: [
+        "bun",
+        "run",
+        CLI_ENTRY,
+        "fake-hook",
+        "--session",
+        sessionId,
+        "--tool",
+        "Read",
+        "--file-path",
+        "/home/alice/.aws/credentials",
+        "--json",
+        "--url",
+        `http://127.0.0.1:${port}`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    expect(proc.exitCode).toBe(3);
+    const v = JSON.parse(stdout) as {
+      verdict: string;
+      rule_id: string;
+      nudge: string;
+    };
+    expect(v.verdict).toBe("deny");
+    expect(v.rule_id).toBe("safety.secret-read-suggest-skill");
+    expect(v.nudge).toContain("secret-fetcher");
+  });
+
+  test("fake-hook: allow path → no nudge field in JSON (omitempty wire check)", async () => {
+    const sessionId = await createSession();
+    const proc = spawn({
+      cmd: [
+        "bun",
+        "run",
+        CLI_ENTRY,
+        "fake-hook",
+        "--session",
+        sessionId,
+        "--source",
+        "claude-code",
+        "--tool",
+        "Bash",
+        "--command",
+        "echo hello",
+        "--json",
+        "--url",
+        `http://127.0.0.1:${port}`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
+    const v = JSON.parse(stdout) as Record<string, unknown>;
+    expect(v.verdict).toBe("allow");
+    // omitempty must drop the `nudge` key when no rule fired with one —
+    // not just produce an empty string. Assert wire-level absence.
+    expect("nudge" in v).toBe(false);
+    expect(Object.keys(v)).not.toContain("nudge");
   });
 
   test("fake-hook: pip install numpy → allow (pkg on allowlist)", async () => {

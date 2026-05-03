@@ -50,16 +50,40 @@ func setRuntimeMode(m string) bool {
 	return false
 }
 
+// denyReasonWithNudge composes the user-facing deny reason that the
+// harness shims forward to the model. When the policy carried a nudge
+// hint with the matching rule, we append it after the original reason
+// using a stable, parseable shape:
+//
+//	"<reason>\n\n→ Suggested: <nudge>"
+//
+// The exact arrow + "Suggested" prefix is part of the contract — tests
+// across the daemon, CLI, and downstream tooling rely on the literal
+// substring "→ Suggested: " to spot the hint. Allow / monitor /
+// non-matching paths feed result.Nudge == "" here and pass through
+// unchanged.
+func denyReasonWithNudge(result policy.EvalResult) string {
+	if result.Verdict != "deny" || result.Nudge == "" {
+		return result.Reason
+	}
+	return result.Reason + "\n\n→ Suggested: " + result.Nudge
+}
+
 // applyDaemonModeOverride composes the daemon-level mode with a policy
 // EvalResult. The daemon mode is the *outer* switch — the dashboard's
 // big red button — and must trump the per-policy / per-gate monitor
 // override the YAML can set.
 //
-// Two directions:
-//   - daemon=monitor + verdict=deny → suppress to allow (existing
-//     behavior, just centralised here so every hook handler agrees)
+// Three directions:
+//   - daemon=monitor + verdict=deny → suppress to allow, strip nudge
+//     (existing behavior, just centralised here so every hook handler
+//     agrees)
+//   - daemon=monitor + MonitorMatch passthrough → keep allow, strip
+//     nudge (the agent is being allowed; a remediation hint would be
+//     misleading)
 //   - daemon=firewall + MonitorMatch + OriginalVerdict=deny → escalate
-//     back to deny, ignoring the policy's monitor downgrade
+//     back to deny, KEEP the nudge so the user sees the hint that the
+//     policy's monitor downgrade had stashed for this exact moment
 //
 // Returns the (possibly mutated) result + the daemon mode that was in
 // effect, so callers can stamp the ledger consistently.
@@ -82,6 +106,16 @@ func applyDaemonModeOverride(r policy.EvalResult) (policy.EvalResult, string, st
 			r.MonitorMatch = true
 			r.Verdict = "allow"
 			r.Reason = "deny suppressed by daemon monitor mode"
+			// policy layer leaves Nudge populated on real denies (and on
+			// monitor-downgraded denies, post-fix); clear it here because
+			// the agent is being allowed to proceed and showing a hint
+			// would be misleading.
+			r.Nudge = ""
+		} else if r.MonitorMatch {
+			// Policy-level monitor downgrade carried the nudge through
+			// (so daemon=firewall could re-attach on escalation). Daemon
+			// is also in monitor, so the agent proceeds — clear the hint.
+			r.Nudge = ""
 		}
 	case daemonModeFirewall:
 		if r.MonitorMatch && r.OriginalVerdict == "deny" {
@@ -93,6 +127,8 @@ func applyDaemonModeOverride(r policy.EvalResult) (policy.EvalResult, string, st
 			r.Reason = reason
 			r.MonitorMatch = false
 			origVerdict = "deny"
+			// Nudge intentionally preserved: the policy layer carried it
+			// through the monitor downgrade for exactly this case.
 		}
 	}
 	return r, mode, origVerdict

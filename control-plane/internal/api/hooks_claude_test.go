@@ -354,6 +354,58 @@ func TestGateCheck_FirewallEscalatesPolicyMonitorMatch(t *testing.T) {
 	}
 }
 
+// TestClaudePreToolUse_DenyConcatenatesNudge verifies that when a policy
+// rule fires with a `nudge:` clause, the daemon's deny response carries
+// both the original "matched rule X (deny)" reason AND the literal
+// "→ Suggested: <hint>" suffix in BOTH permissionDecisionReason AND
+// stopReason — these are the only channels the harness uses to surface
+// the explanation to the model. The exact "→ Suggested: " prefix is the
+// stable contract downstream consumers (CLI shim, dashboard) match on.
+func TestClaudePreToolUse_DenyConcatenatesNudge(t *testing.T) {
+	fx := newGateFixture(t, nudgePolicyYAML)
+	body := `{
+		"session_id": "claude-sess-nudge",
+		"hook_event_name": "PreToolUse",
+		"tool_name": "Bash",
+		"tool_use_id": "toolu_nudge",
+		"tool_input": {"command": "rm -rf /tmp/x"}
+	}`
+	res, out := postClaudePre(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	spec, _ := out["hookSpecificOutput"].(map[string]any)
+	if spec["permissionDecision"] != "deny" {
+		t.Fatalf("decision = %v, want deny", spec)
+	}
+	reason, _ := spec["permissionDecisionReason"].(string)
+	if !strings.Contains(reason, "matched rule safety.rm-suggest-trash (deny)") {
+		t.Fatalf("permissionDecisionReason missing original reason: %q", reason)
+	}
+	if !strings.Contains(reason, "→ Suggested: use trash instead") {
+		t.Fatalf("permissionDecisionReason missing nudge suffix: %q", reason)
+	}
+	stop, _ := out["stopReason"].(string)
+	if !strings.Contains(stop, "→ Suggested: use trash instead") {
+		t.Fatalf("stopReason missing nudge suffix: %q", stop)
+	}
+
+	// Allow path: a benign command must NOT carry the suggested-line.
+	allowBody := `{
+		"session_id": "claude-sess-nudge-allow",
+		"hook_event_name": "PreToolUse",
+		"tool_name": "Bash",
+		"tool_use_id": "toolu_nudge_allow",
+		"tool_input": {"command": "ls -la"}
+	}`
+	_, allowOut := postClaudePre(t, fx, allowBody)
+	allowSpec, _ := allowOut["hookSpecificOutput"].(map[string]any)
+	allowReason, _ := allowSpec["permissionDecisionReason"].(string)
+	if strings.Contains(allowReason, "→ Suggested:") {
+		t.Fatalf("allow reason must not carry nudge: %q", allowReason)
+	}
+}
+
 func TestClaudePreToolUse_FirewallEscalatesPolicyMonitorMatch(t *testing.T) {
 	t.Setenv("AGENTLOCK_MODE", "")
 	runtimeMode.Store("firewall")

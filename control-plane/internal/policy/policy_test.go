@@ -897,3 +897,172 @@ gates:
 		t.Fatal("expected Load to reject malformed any_url_regex")
 	}
 }
+
+const nudgeYAML = `
+version: 1
+mode: enforce
+defaults:
+  bash: allow
+gates:
+  - id: safety.rm-suggest-trash
+    match:
+      tool: Bash
+      any_command_regex:
+        - '\brm\s+(-[rRfF]+\s+)+\S+'
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "use trash instead"
+`
+
+const nudgeMonitorYAML = `
+version: 1
+mode: monitor
+defaults:
+  bash: allow
+gates:
+  - id: safety.rm-suggest-trash
+    match:
+      tool: Bash
+      any_command_regex:
+        - '\brm\s+(-[rRfF]+\s+)+\S+'
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "use trash instead"
+`
+
+const nudgeMixedYAML = `
+version: 1
+mode: enforce
+defaults:
+  bash: allow
+gates:
+  - id: with.nudge
+    match:
+      tool: Bash
+      command_regex: '^do-nudge\b'
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "try the safe alternative"
+  - id: without.nudge
+    match:
+      tool: Bash
+      command_regex: '^no-nudge\b'
+    evaluate:
+      - kind: always
+        action: deny
+`
+
+// Loading a YAML rule with a `nudge:` produces a Gate whose evals slice
+// carries the string at the matching index. The slice was previously
+// two parallel slices (Evaluators + EvalNudges); welded into a single
+// []evalEntry to prevent drift.
+func TestLoad_NudgeStoredOnGate(t *testing.T) {
+	p, err := Load(strings.NewReader(nudgeYAML))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(p.Gates) != 1 {
+		t.Fatalf("len(gates) = %d, want 1", len(p.Gates))
+	}
+	g := p.Gates[0]
+	if len(g.Evals) != 1 {
+		t.Fatalf("len(Evals) = %d, want 1", len(g.Evals))
+	}
+	if g.Evals[0].nudge != "use trash instead" {
+		t.Fatalf("Evals[0].nudge = %q, want %q", g.Evals[0].nudge, "use trash instead")
+	}
+	if g.Evals[0].eval == nil {
+		t.Fatal("Evals[0].eval must be non-nil")
+	}
+}
+
+// A matching deny rule with a nudge surfaces the nudge in the result.
+func TestEvaluate_DenyCarriesNudge(t *testing.T) {
+	p, _ := Load(strings.NewReader(nudgeYAML))
+	v := p.Evaluate(EvalRequest{
+		Tool:  "Bash",
+		Input: map[string]any{"command": "rm -rf /tmp/x"},
+	})
+	if v.Verdict != "deny" {
+		t.Fatalf("verdict = %q, want deny", v.Verdict)
+	}
+	if v.Nudge != "use trash instead" {
+		t.Fatalf("nudge = %q, want %q", v.Nudge, "use trash instead")
+	}
+}
+
+// A matching deny rule that omits the nudge field returns an empty string.
+// (Backward compat — existing rules pre-nudge keep working unchanged.)
+func TestEvaluate_DenyWithoutNudgeIsEmpty(t *testing.T) {
+	p, _ := Load(strings.NewReader(nudgeMixedYAML))
+	v := p.Evaluate(EvalRequest{
+		Tool:  "Bash",
+		Input: map[string]any{"command": "no-nudge target"},
+	})
+	if v.Verdict != "deny" || v.RuleID != "without.nudge" {
+		t.Fatalf("got %+v", v)
+	}
+	if v.Nudge != "" {
+		t.Fatalf("nudge = %q, want empty (rule has no nudge)", v.Nudge)
+	}
+}
+
+// Sister rule with a nudge still attaches it; confirms the parallel-slice
+// lookup uses the correct gate (not just the first one).
+func TestEvaluate_DenyWithNudgeWhenSiblingHasNone(t *testing.T) {
+	p, _ := Load(strings.NewReader(nudgeMixedYAML))
+	v := p.Evaluate(EvalRequest{
+		Tool:  "Bash",
+		Input: map[string]any{"command": "do-nudge target"},
+	})
+	if v.Verdict != "deny" || v.RuleID != "with.nudge" {
+		t.Fatalf("got %+v", v)
+	}
+	if v.Nudge != "try the safe alternative" {
+		t.Fatalf("nudge = %q", v.Nudge)
+	}
+}
+
+// A non-matching request returns the default allow verdict and never
+// surfaces a nudge from somewhere else in the policy.
+func TestEvaluate_NonMatchingRequestHasNoNudge(t *testing.T) {
+	p, _ := Load(strings.NewReader(nudgeYAML))
+	v := p.Evaluate(EvalRequest{
+		Tool:  "Bash",
+		Input: map[string]any{"command": "ls -la"},
+	})
+	if v.Verdict != "allow" || v.RuleID != "default" {
+		t.Fatalf("got %+v", v)
+	}
+	if v.Nudge != "" {
+		t.Fatalf("nudge leaked: %q", v.Nudge)
+	}
+}
+
+// Monitor-mode matches downgrade deny → allow but PRESERVE the nudge so
+// a downstream daemon-level firewall escalation can re-attach the hint.
+// The decision to suppress the nudge on a final-allow verdict lives in
+// the API layer (applyDaemonModeOverride) — see
+// TestApplyDaemonModeOverride_MonitorMatchStripsNudge.
+func TestEvaluate_MonitorDowngradeKeepsNudge(t *testing.T) {
+	p, _ := Load(strings.NewReader(nudgeMonitorYAML))
+	v := p.Evaluate(EvalRequest{
+		Tool:  "Bash",
+		Input: map[string]any{"command": "rm -rf /tmp/x"},
+	})
+	if v.Verdict != "allow" {
+		t.Fatalf("verdict = %q, want allow (monitor)", v.Verdict)
+	}
+	if !v.MonitorMatch {
+		t.Fatal("MonitorMatch must be true on a monitor downgrade")
+	}
+	if v.OriginalVerdict != "deny" {
+		t.Fatalf("OriginalVerdict = %q, want deny", v.OriginalVerdict)
+	}
+	if v.Nudge != "use trash instead" {
+		t.Fatalf("nudge must survive monitor downgrade for firewall re-escalation, got %q", v.Nudge)
+	}
+}

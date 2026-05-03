@@ -263,16 +263,20 @@ func cursorGateHandler(d Deps, eventName string, kind cursorDedupeKind) http.Han
 			return
 		}
 
+		// On deny + nudge, append the hint into the reason. The cached
+		// response below preserves the concatenated form so the paired
+		// MCP/preToolUse event short-circuits with the same text.
+		reason := denyReasonWithNudge(result)
 		out := claudeHookOutput{
 			Continue: result.Verdict == "allow",
 			HookSpecificOutput: claudeHookSpecifics{
 				HookEventName:            eventName,
 				PermissionDecision:       result.Verdict,
-				PermissionDecisionReason: result.Reason,
+				PermissionDecisionReason: reason,
 			},
 		}
 		if result.Verdict == "deny" {
-			out.StopReason = result.Reason
+			out.StopReason = reason
 		}
 
 		// Cache the response keyed on tool_use_id so the paired event
@@ -515,16 +519,18 @@ func cursorBeforeShellHandler(d Deps) http.HandlerFunc {
 		// No ledger append — preToolUse owns the audit trail for this
 		// tool call. We're just echoing the verdict in Cursor's expected
 		// envelope so it can fail-closed at the shell-execution stage.
+		// Same nudge concat as the gate handler for parity.
+		reason := denyReasonWithNudge(result)
 		out := claudeHookOutput{
 			Continue: result.Verdict == "allow",
 			HookSpecificOutput: claudeHookSpecifics{
 				HookEventName:            "BeforeShellExecution",
 				PermissionDecision:       result.Verdict,
-				PermissionDecisionReason: result.Reason,
+				PermissionDecisionReason: reason,
 			},
 		}
 		if result.Verdict == "deny" {
-			out.StopReason = result.Reason
+			out.StopReason = reason
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

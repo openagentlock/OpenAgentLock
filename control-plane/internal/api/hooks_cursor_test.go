@@ -447,6 +447,118 @@ func TestCursorPreToolUse_FirewallEscalatesPolicyMonitorMatch(t *testing.T) {
 	}
 }
 
+// shellNudgePolicyYAML mirrors nudgePolicyYAML (gate_test.go) but matches
+// on `tool: Shell`, the synthetic name BeforeShellExecution evaluates
+// against (no tool_name in that payload).
+const shellNudgePolicyYAML = `
+version: 1
+mode: enforce
+defaults:
+  bash: allow
+gates:
+  - id: safety.rm-suggest-trash
+    match:
+      tool: Shell
+      any_command_regex:
+        - '\brm\s+(-[rRfF]+\s+)+\S+'
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "use trash instead"
+`
+
+// Mirror of TestClaudePreToolUse_DenyConcatenatesNudge for the Cursor
+// preToolUse handler. The same gate handler also serves
+// beforeMCPExecution, so this exercises the shared concat path.
+func TestCursorPreToolUse_DenyConcatenatesNudge(t *testing.T) {
+	cursorResetDedupe()
+	fx := newGateFixture(t, nudgePolicyYAML)
+	body := `{
+		"conversation_id": "cursor-sess-nudge",
+		"generation_id": "gen-nudge",
+		"hook_event_name": "preToolUse",
+		"cursor_version": "1.7.0",
+		"tool_name": "Bash",
+		"tool_use_id": "cursor_nudge",
+		"tool_input": {"command": "rm -rf /tmp/x"}
+	}`
+	res, out := postCursorPre(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	spec, _ := out["hookSpecificOutput"].(map[string]any)
+	if spec["permissionDecision"] != "deny" {
+		t.Fatalf("decision = %v, want deny", spec)
+	}
+	reason, _ := spec["permissionDecisionReason"].(string)
+	if !strings.Contains(reason, "matched rule safety.rm-suggest-trash (deny)") {
+		t.Fatalf("permissionDecisionReason missing original reason: %q", reason)
+	}
+	if !strings.Contains(reason, "→ Suggested: use trash instead") {
+		t.Fatalf("permissionDecisionReason missing nudge suffix: %q", reason)
+	}
+	stop, _ := out["stopReason"].(string)
+	if !strings.Contains(stop, "→ Suggested: use trash instead") {
+		t.Fatalf("stopReason missing nudge suffix: %q", stop)
+	}
+
+	// Allow path: a benign command must NOT carry the suggested-line.
+	cursorResetDedupe()
+	allowBody := `{
+		"conversation_id": "cursor-sess-nudge-allow",
+		"generation_id": "gen-nudge-allow",
+		"hook_event_name": "preToolUse",
+		"cursor_version": "1.7.0",
+		"tool_name": "Bash",
+		"tool_use_id": "cursor_nudge_allow",
+		"tool_input": {"command": "ls -la"}
+	}`
+	_, allowOut := postCursorPre(t, fx, allowBody)
+	allowSpec, _ := allowOut["hookSpecificOutput"].(map[string]any)
+	allowReason, _ := allowSpec["permissionDecisionReason"].(string)
+	if strings.Contains(allowReason, "→ Suggested:") {
+		t.Fatalf("allow reason must not carry nudge: %q", allowReason)
+	}
+}
+
+// Cursor 2.x's BeforeShellExecution payload routes through a separate
+// handler (no tool_use_id, no tool_name); confirm the same nudge concat
+// applies there too.
+func TestCursorBeforeShellExecution_DenyConcatenatesNudge(t *testing.T) {
+	cursorResetDedupe()
+	fx := newGateFixture(t, shellNudgePolicyYAML)
+	body := `{
+		"conversation_id": "cursor-shell-nudge",
+		"generation_id": "gen-shell-nudge",
+		"hook_event_name": "beforeShellExecution",
+		"command": "rm -rf /tmp/x",
+		"cwd": "/tmp",
+		"sandbox": false,
+		"cursor_version": "1.7.0"
+	}`
+	res, err := http.Post(fx.srv.URL+"/v1/hooks/cursor/before-shell-execution", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var out map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	spec, _ := out["hookSpecificOutput"].(map[string]any)
+	if spec["permissionDecision"] != "deny" {
+		t.Fatalf("decision = %v, want deny", spec)
+	}
+	reason, _ := spec["permissionDecisionReason"].(string)
+	if !strings.Contains(reason, "matched rule safety.rm-suggest-trash (deny)") {
+		t.Fatalf("permissionDecisionReason missing original reason: %q", reason)
+	}
+	if !strings.Contains(reason, "→ Suggested: use trash instead") {
+		t.Fatalf("permissionDecisionReason missing nudge suffix: %q", reason)
+	}
+}
+
 // BeforeShellExecution doesn't append to the ledger (PreToolUse owns
 // that), so we only assert on the response envelope.
 func TestCursorBeforeShellExecution_FirewallEscalatesPolicyMonitorMatch(t *testing.T) {

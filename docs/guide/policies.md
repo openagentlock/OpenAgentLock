@@ -151,6 +151,19 @@ gates:
 
 The daemon's regex engine is Go RE2 — **no negative lookahead, no backreferences**. If you find yourself reaching for `(?!…)`, invert the match: write a positive regex for the dangerous shape rather than a negative regex around the safe one.
 
+### Nudges
+
+Each `evaluate[]` clause may carry an optional `nudge: <string>` hint. When the clause fires a `deny`, the harness shim splices the hint onto the reason it forwards to the model as `"<reason>\n\n→ Suggested: <nudge>"`. Use it to redirect the agent toward a safer command (e.g. `trash` instead of `rm`) or to point at the right [skill](https://github.com/openagentlock/skills) instead of leaving it to retry blindly.
+
+```yaml
+evaluate:
+  - kind: always
+    action: deny
+    nudge: "use `trash <path>` (macOS) — recoverable from Trash"
+```
+
+Nudges only surface on `deny` verdicts; `allow`, monitor-suppressed, and non-matching paths drop the field. See the [openagentlock/rules](https://github.com/openagentlock/rules) registry for `safety.rm-suggest-trash` and `safety.secret-read-suggest-skill` as canonical examples.
+
 ## Enforcement vs monitor
 
 - **Monitor** — every gate matches but the verdict is downgraded to `allow` for the harness. Use this on day one.
