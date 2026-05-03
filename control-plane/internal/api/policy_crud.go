@@ -106,6 +106,71 @@ func policyAddGateHandler(d Deps) http.HandlerFunc {
 	}
 }
 
+// policyAddGateYAMLHandler accepts a complete gate block as YAML, used by
+// `agentlock rules install` so a community rule with a non-trivial
+// `evaluate` shape (allowlist, typosquat, ...) round-trips into the live
+// policy without needing a JSON-shaped translation. The on-disk format is
+// what the rule was authored in.
+//
+// Request body shape:
+//
+//	{ "yaml": "id: rogue.destructive-bash\nmatch:\n  tool: Bash\n... " }
+//
+// The YAML is a single gate (no leading "- "), parsed as yamlRawGate.
+type addGateYAMLRequest struct {
+	YAML    string `json:"yaml"`
+	Replace bool   `json:"replace,omitempty"`
+}
+
+func policyAddGateYAMLHandler(d Deps) http.HandlerFunc {
+	if d.Policy == nil {
+		return todo("policy.add_gate_yaml")
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req addGateYAMLRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_json", err.Error())
+			return
+		}
+		if strings.TrimSpace(req.YAML) == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "yaml body is empty")
+			return
+		}
+		var incoming yamlRawGate
+		if err := yaml.Unmarshal([]byte(req.YAML), &incoming); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_yaml", err.Error())
+			return
+		}
+		if incoming.ID == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "gate id required")
+			return
+		}
+		p, err := mutatePolicy(d, func(raw *yamlRawPolicy) error {
+			for i, g := range raw.Gates {
+				if g.ID == incoming.ID {
+					if !req.Replace {
+						return fmt.Errorf("gate %q already exists (set replace=true to overwrite)", incoming.ID)
+					}
+					raw.Gates[i] = incoming
+					return nil
+				}
+			}
+			raw.Gates = append(raw.Gates, incoming)
+			return nil
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_policy", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"hash":         p.Hash,
+			"gates":        len(p.Gates),
+			"id":           incoming.ID,
+			"needs_reload": true,
+		})
+	}
+}
+
 func policyPatchGateHandler(d Deps) http.HandlerFunc {
 	if d.Policy == nil {
 		return todo("policy.patch_gate")

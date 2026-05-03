@@ -1,7 +1,10 @@
 // OpenAgentLock dashboard TUI. Keyboard-driven read-mostly viewer over
 // the same JSON endpoints the web dashboard talks to.
 //
-// Tabs:  Events | Sessions | Rules | Mode
+// Tabs:  Events | Sessions | Gates | Mode
+//   "Gates" lists the live policy gates loaded by the daemon. Rules from
+//   the community registry (`agentlock rules ...`) become gates once
+//   installed, so this pane is where you confirm an install landed.
 //   h/l or ←/→     switch tab
 //   j/k or ↑/↓     scroll within the focused tab
 //   m              flip daemon mode (firewall ↔ monitor)
@@ -35,12 +38,12 @@ interface LedgerEntry {
   verdict?: string;
 }
 
-type TabName = "events" | "sessions" | "rules" | "mode";
+type TabName = "events" | "sessions" | "gates" | "mode";
 
 const TABS: { name: string; description: string; value: TabName }[] = [
   { name: "Events", description: "Live ledger tail", value: "events" },
   { name: "Sessions", description: "Who's connected", value: "sessions" },
-  { name: "Rules", description: "Loaded policy gates", value: "rules" },
+  { name: "Gates", description: "Loaded policy gates", value: "gates" },
   { name: "Mode", description: "Firewall / monitor", value: "mode" },
 ];
 
@@ -72,7 +75,7 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
   const [scroll, setScroll] = useState<Record<TabName, number>>({
     events: 0,
     sessions: 0,
-    rules: 0,
+    gates: 0,
     mode: 0,
   });
   const [daemonOk, setDaemonOk] = useState<boolean | null>(null);
@@ -235,8 +238,8 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
           <EventsPane entries={events} scroll={scroll.events} sseStatus={sseStatus} />
         ) : tab === "sessions" ? (
           <SessionsPane data={sessions} scroll={scroll.sessions} />
-        ) : tab === "rules" ? (
-          <RulesPane data={policy} scroll={scroll.rules} />
+        ) : tab === "gates" ? (
+          <GatesPane data={policy} scroll={scroll.gates} />
         ) : (
           <ModePane data={mode} />
         )}
@@ -397,9 +400,9 @@ function signerColor(s: string): string {
   return "#AAAAAA";
 }
 
-// ---------- rules pane -----------------------------------------------------
+// ---------- gates pane -----------------------------------------------------
 
-function RulesPane({
+function GatesPane({
   data,
   scroll,
 }: {

@@ -52,7 +52,8 @@
     "@opentui/react": "0.1.107",
     "commander": "^12.1.0",
     "qrcode-terminal": "^0.12.0",
-    "react": "^19.2.5"
+    "react": "^19.2.5",
+    "yaml": "^2.8.4"
   },
   "overrides": {
     "@opentui/core": "0.1.107"

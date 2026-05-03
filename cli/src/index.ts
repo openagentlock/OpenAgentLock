@@ -25,6 +25,15 @@ import { runHookCodex } from "./commands/hook-codex.ts";
 import { runHookCursor } from "./commands/hook-cursor.ts";
 import { runLedgerRoot, runLedgerVerify } from "./commands/ledger.ts";
 import { runSignerEnroll } from "./commands/signer-enroll.ts";
+import {
+  runRulesAdd,
+  runRulesInstall,
+  runRulesRemove,
+  runRulesSearch,
+  runRulesSources,
+  runRulesSync,
+  runRulesUninstall,
+} from "./commands/rules.ts";
 
 // Read version from the published package.json so `agentlock --version`
 // always matches the installed npm version, no hand-bumping required.
@@ -399,6 +408,79 @@ ledger
   .option("--json", "Emit JSON instead of human output.", false)
   .action(async (opts: { url?: string; json: boolean }) => {
     await runLedgerVerify(opts);
+  });
+
+const rules = program
+  .command("rules")
+  .description(
+    "Browse and install community rules from the openagentlock/rules registry " +
+      "(or any compatible git repo). Each install POSTs the rule's gate block " +
+      "to the daemon's /v1/policy/gates/yaml endpoint.",
+  );
+
+rules
+  .command("add <git-url>")
+  .description("Register an additional rules registry. Default upstream is openagentlock/rules.")
+  .option("--name <id>", "Local registry id (defaults to a slug derived from the git URL).")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (gitUrl: string, opts: { name?: string; json: boolean }) => {
+    await runRulesAdd({ url: gitUrl, name: opts.name, json: opts.json });
+  });
+
+rules
+  .command("sources")
+  .description("List configured rules registries (clones live under $AGENTLOCK_HOME/registries/).")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (opts: { json: boolean }) => {
+    await runRulesSources({ json: opts.json });
+  });
+
+rules
+  .command("sync")
+  .description(
+    "Clone or fast-forward each registered registry to its remote HEAD. " +
+      "Auto-registers openagentlock/rules on first use.",
+  )
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (opts: { json: boolean }) => {
+    await runRulesSync({ json: opts.json });
+  });
+
+rules
+  .command("search [query]")
+  .description("Grep across rule.yaml files in every synced registry.")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (query: string | undefined, opts: { json: boolean }) => {
+    await runRulesSearch({ query, json: opts.json });
+  });
+
+rules
+  .command("install <ruleId>")
+  .description(
+    "Install a rule into the local policy. Accepts a bare id or 'registryId:ruleId' to disambiguate.",
+  )
+  .option("--replace", "Overwrite an existing gate with the same id.")
+  .option("--url <url>", "Control-plane base URL.")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (ruleId: string, opts: { replace?: boolean; url?: string; json: boolean }) => {
+    await runRulesInstall({ spec: ruleId, replace: opts.replace, url: opts.url, json: opts.json });
+  });
+
+rules
+  .command("uninstall <gateId>")
+  .description("Remove an installed gate from the local policy.")
+  .option("--url <url>", "Control-plane base URL.")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (gateId: string, opts: { url?: string; json: boolean }) => {
+    await runRulesUninstall({ id: gateId, url: opts.url, json: opts.json });
+  });
+
+rules
+  .command("remove <registryId>")
+  .description("Drop a registry locally — does not touch the daemon's installed gates.")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (registryId: string, opts: { json: boolean }) => {
+    await runRulesRemove({ id: registryId, json: opts.json });
   });
 
 // `agentlock hook <harness> <event>` — shim spawned by command-hook
