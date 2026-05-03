@@ -8,9 +8,10 @@ import (
 )
 
 func TestInstallCapabilities_ReflectsEnv(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
-	t.Setenv("AGENTLOCK_ALLOW_APPLY_REAL_HOME", "1")
-	t.Setenv("AGENTLOCK_ALLOW_UNATTESTED", "")
+	// AGENTLOCK_ALLOW_UNATTESTED is the only env-controlled gate that
+	// still maps to a capabilities field; AGENTLOCK_IN_CONTAINER drives
+	// the container probe.
+	t.Setenv("AGENTLOCK_ALLOW_UNATTESTED", "1")
 	t.Setenv("AGENTLOCK_IN_CONTAINER", "1")
 
 	srv := httptest.NewServer(NewRouter())
@@ -30,9 +31,7 @@ func TestInstallCapabilities_ReflectsEnv(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	want := InstallCapabilities{
-		ApplyEnabled:      true,
-		RealHomeAllowed:   true,
-		UnattestedAllowed: false,
+		UnattestedAllowed: true,
 		Container:         true,
 	}
 	if got != want {
@@ -52,7 +51,7 @@ func TestValidateHarnessConfigDirs(t *testing.T) {
 		{name: "empty ok", input: map[string]string{}, wantOK: true},
 		{name: "empty value ignored", input: map[string]string{"claude-code": ""}, wantOK: true},
 		{name: "absolute canonical ok",
-			input: map[string]string{"claude-code": "/Users/me/.claude", "codex": "/Users/me/.codex"},
+			input:  map[string]string{"claude-code": "/Users/me/.claude", "codex": "/Users/me/.codex"},
 			wantOK: true},
 		{name: "relative rejected",
 			input:   map[string]string{"claude-code": "relative/path"},
@@ -101,8 +100,6 @@ func TestValidateHarnessConfigDirs(t *testing.T) {
 }
 
 func TestInstallCapabilities_DefaultsAreSecure(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "")
-	t.Setenv("AGENTLOCK_ALLOW_APPLY_REAL_HOME", "")
 	t.Setenv("AGENTLOCK_ALLOW_UNATTESTED", "")
 	t.Setenv("AGENTLOCK_IN_CONTAINER", "")
 
@@ -120,8 +117,8 @@ func TestInstallCapabilities_DefaultsAreSecure(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	// Container may be true if the test runner is itself in a container, so
-	// don't pin it. The three env-controlled fields must all be false.
-	if got.ApplyEnabled || got.RealHomeAllowed || got.UnattestedAllowed {
-		t.Fatalf("expected all gates off; got %+v", got)
+	// don't pin it. The env-controlled field must be false.
+	if got.UnattestedAllowed {
+		t.Fatalf("expected unattested gate off; got %+v", got)
 	}
 }

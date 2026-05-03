@@ -6,28 +6,32 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func cursorApplyBody(fx gateFixture, dir, binary string) string {
+func cursorApplyBody(fx gateFixture, dir, binary string, existing map[string]string) string {
+	if existing == nil {
+		existing = map[string]string{}
+	}
+	ex, _ := json.Marshal(existing)
 	return fmt.Sprintf(`{
 		"session_id": %q,
 		"harnesses": ["cursor"],
 		"daemon_url": "http://127.0.0.1:7878",
 		"config_dir_override": %q,
-		"agentlock_binary": %q
-	}`, fx.sessionID, dir, binary)
+		"agentlock_binary": %q,
+		"existing_files": %s
+	}`, fx.sessionID, dir, binary, ex)
 }
 
-func postCursorApply(t *testing.T, fx gateFixture, dir, binary string) *http.Response {
+func postCursorApply(t *testing.T, fx gateFixture, dir, binary string, existing map[string]string) *http.Response {
 	t.Helper()
 	res, err := http.Post(
 		fx.srv.URL+"/v1/install/apply",
 		"application/json",
-		strings.NewReader(cursorApplyBody(fx, dir, binary)),
+		strings.NewReader(cursorApplyBody(fx, dir, binary, existing)),
 	)
 	if err != nil {
 		t.Fatalf("POST apply: %v", err)
@@ -90,30 +94,25 @@ func TestInstallPlan_CursorProducesWriteOp(t *testing.T) {
 	}
 }
 
-func TestInstallApply_CursorWritesHooksJson(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
+func TestInstallApply_CursorReturnsHooksContent(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
 
-	res := postCursorApply(t, fx, dir, "/usr/local/bin/agentlock")
+	res := postCursorApply(t, fx, dir, "/usr/local/bin/agentlock", nil)
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	var out installApplyResponse
-	_ = json.NewDecoder(res.Body).Decode(&out)
-	res.Body.Close()
+	out := decodeApplyResponse(t, res)
 	if !out.Applied {
 		t.Fatalf("not applied: %+v", out)
 	}
-
-	hooksPath := filepath.Join(dir, "hooks.json")
-	b, err := os.ReadFile(hooksPath)
-	if err != nil {
-		t.Fatalf("read hooks.json: %v", err)
+	op, ok := findOpByPath(out.Operations, "hooks.json")
+	if !ok {
+		t.Fatalf("no hooks.json op: %+v", out.Operations)
 	}
-	s := string(b)
+	s := op.Content
 	for _, want := range []string{
 		`"_agentlock"`,
 		`"version": 1`,
@@ -129,7 +128,7 @@ func TestInstallApply_CursorWritesHooksJson(t *testing.T) {
 		`"AGENTLOCK_DAEMON_URL"`,
 	} {
 		if !strings.Contains(s, want) {
-			t.Fatalf("missing %q in hooks.json: %s", want, s)
+			t.Fatalf("missing %q in hooks.json content: %s", want, s)
 		}
 	}
 
@@ -147,9 +146,9 @@ func TestInstallApply_CursorWritesHooksJson(t *testing.T) {
 }
 
 func TestInstallApply_CursorPreservesExistingUserHooks(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
+	hooksPath, _ := filepath.Abs(filepath.Join(dir, "hooks.json"))
 
 	user := `{
 		"hooks": {
@@ -158,97 +157,107 @@ func TestInstallApply_CursorPreservesExistingUserHooks(t *testing.T) {
 			]
 		}
 	}`
-	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(user), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	res := postCursorApply(t, fx, dir, "/usr/local/bin/agentlock")
+	res := postCursorApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		hooksPath: user,
+	})
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	res.Body.Close()
-
-	b, _ := os.ReadFile(filepath.Join(dir, "hooks.json"))
-	s := string(b)
+	out := decodeApplyResponse(t, res)
+	op, _ := findOpByPath(out.Operations, "hooks.json")
+	s := op.Content
 	if !strings.Contains(s, "user-hook.sh") {
 		t.Fatalf("user hook lost: %s", s)
 	}
 	if !strings.Contains(s, "_agentlock") {
 		t.Fatalf("our entry missing: %s", s)
 	}
+	if op.BackupPath == "" {
+		t.Fatalf("expected backup_path on hooks op when existing file supplied")
+	}
 }
 
 func TestInstallApply_CursorPreservesVersionField(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
+	hooksPath, _ := filepath.Abs(filepath.Join(dir, "hooks.json"))
 
 	// User had set their own top-level version; we must not stomp it.
 	user := `{"version": 2, "hooks": {}}`
-	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(user), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	res := postCursorApply(t, fx, dir, "/usr/local/bin/agentlock")
+	res := postCursorApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		hooksPath: user,
+	})
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	res.Body.Close()
-
-	b, _ := os.ReadFile(filepath.Join(dir, "hooks.json"))
+	out := decodeApplyResponse(t, res)
+	op, _ := findOpByPath(out.Operations, "hooks.json")
 	var parsed map[string]any
-	if err := json.Unmarshal(b, &parsed); err != nil {
+	if err := json.Unmarshal([]byte(op.Content), &parsed); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	got, _ := parsed["version"].(float64)
 	if int(got) != 2 {
-		t.Fatalf("user version field lost: got %v, want 2; full: %s", parsed["version"], b)
+		t.Fatalf("user version field lost: got %v, want 2; full: %s", parsed["version"], op.Content)
 	}
 }
 
 func TestInstallApply_CursorIdempotent(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
+	hooksPath, _ := filepath.Abs(filepath.Join(dir, "hooks.json"))
 
-	_ = postCursorApply(t, fx, dir, "/usr/local/bin/agentlock").Body.Close()
-	_ = postCursorApply(t, fx, dir, "/usr/local/bin/agentlock").Body.Close()
+	first := decodeApplyResponse(t, postCursorApply(t, fx, dir, "/usr/local/bin/agentlock", nil))
+	firstOp, _ := findOpByPath(first.Operations, "hooks.json")
 
-	b, _ := os.ReadFile(filepath.Join(dir, "hooks.json"))
-	got := strings.Count(string(b), `"_agentlock"`)
+	second := decodeApplyResponse(t, postCursorApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		hooksPath: firstOp.Content,
+	}))
+	secondOp, _ := findOpByPath(second.Operations, "hooks.json")
+	got := strings.Count(secondOp.Content, `"_agentlock"`)
 	// 7 events wired (sessionStart + preToolUse + beforeShellExecution +
 	// beforeMCPExecution + afterMCPExecution + postToolUse + sessionEnd).
 	// Re-applying must replace, not duplicate.
 	if got != 7 {
-		t.Fatalf("expected 7 _agentlock entries, got %d: %s", got, b)
+		t.Fatalf("expected 7 _agentlock entries, got %d: %s", got, secondOp.Content)
 	}
 }
 
 func TestInstallUninstall_CursorStripsOurEntriesOnly(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
+	hooksPath, _ := filepath.Abs(filepath.Join(dir, "hooks.json"))
 
 	user := `{"version":1,"hooks":{"preToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"mine.sh"}]}]}}`
-	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(user), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	applyOut := decodeApplyResponse(t, postCursorApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
+		hooksPath: user,
+	}))
+	mergedOp, _ := findOpByPath(applyOut.Operations, "hooks.json")
 
-	_ = postCursorApply(t, fx, dir, "/usr/local/bin/agentlock").Body.Close()
-	res := postUninstall(t, fx, fx.sessionID)
+	res := postUninstallWithExisting(t, fx, fx.sessionID, map[string]string{
+		hooksPath: mergedOp.Content,
+	})
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	res.Body.Close()
-
-	b, _ := os.ReadFile(filepath.Join(dir, "hooks.json"))
-	s := string(b)
+	out := decodeUninstallResponse(t, res)
+	var stripOp uninstallOp
+	for _, op := range out.Operations {
+		if op.Path == hooksPath {
+			stripOp = op
+			break
+		}
+	}
+	if stripOp.Op != "strip" {
+		t.Fatalf("missing strip op for %s: %+v", hooksPath, out.Operations)
+	}
+	s := stripOp.Content
 	if !strings.Contains(s, "mine.sh") {
 		t.Fatalf("user hook lost: %s", s)
 	}
@@ -260,30 +269,10 @@ func TestInstallUninstall_CursorStripsOurEntriesOnly(t *testing.T) {
 	}
 	// The user's original version field still survives.
 	var parsed map[string]any
-	if err := json.Unmarshal(b, &parsed); err != nil {
+	if err := json.Unmarshal([]byte(s), &parsed); err != nil {
 		t.Fatalf("parse final: %v", err)
 	}
 	if v, _ := parsed["version"].(float64); int(v) != 1 {
 		t.Fatalf("user version = %v, want 1", parsed["version"])
-	}
-}
-
-func TestInstallApply_CursorRefusesRealHome(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
-	fx := newGateFixture(t, enforcePolicyYAML)
-
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		t.Skip("no home")
-	}
-	res := postCursorApply(t, fx, filepath.Join(home, ".cursor"), "/usr/local/bin/agentlock")
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", res.StatusCode)
-	}
-	var body map[string]string
-	_ = json.NewDecoder(res.Body).Decode(&body)
-	if body["error"] != "unsafe_target" {
-		t.Fatalf("error = %v", body["error"])
 	}
 }

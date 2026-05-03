@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,8 +123,8 @@ func TestInstallPlan_HarnessConfigDirs_Honored(t *testing.T) {
 	var plan map[string]any
 	_ = json.NewDecoder(res.Body).Decode(&plan)
 	ops, _ := plan["operations"].([]any)
-	if len(ops) != 2 {
-		t.Fatalf("want 2 ops, got %d: %+v", len(ops), plan)
+	if len(ops) < 2 {
+		t.Fatalf("want >=2 ops, got %d: %+v", len(ops), plan)
 	}
 	for _, anyOp := range ops {
 		op, _ := anyOp.(map[string]any)
@@ -217,6 +216,55 @@ func TestInstallPlan_UnknownHarness_Skipped(t *testing.T) {
 	}
 }
 
+// TestClaudeCodePlan_PreservesExistingUserKeys exercises the merge path
+// directly: a settings.json with model + hooks keys should round-trip
+// through claudeCodePlan with the agentlock entries spliced in and the
+// user's keys intact.
+func TestClaudeCodePlan_PreservesExistingUserKeys(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	abs, err := filepath.Abs(settingsPath)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	existing := `{"model":"opus","hooks":{}}`
+	op := claudeCodePlan(
+		"http://127.0.0.1:7878",
+		filepath.Dir(abs),
+		"",
+		nil,
+		map[string]string{abs: existing},
+	)
+	if op.Op != "write" {
+		t.Fatalf("op = %v", op.Op)
+	}
+	if op.Path != abs {
+		t.Fatalf("path = %q, want %q", op.Path, abs)
+	}
+	if op.BackupPath == "" {
+		t.Fatalf("backup_path must be set when an existing file was supplied")
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(op.Content), &parsed); err != nil {
+		t.Fatalf("parse merged content: %v\n%s", err, op.Content)
+	}
+	if parsed["model"] != "opus" {
+		t.Fatalf("user-set model lost: %+v", parsed)
+	}
+	hooks, _ := parsed["hooks"].(map[string]any)
+	if hooks == nil {
+		t.Fatalf("hooks dropped: %+v", parsed)
+	}
+	pre, _ := hooks["PreToolUse"].([]any)
+	if len(pre) == 0 {
+		t.Fatalf("PreToolUse not wired: %+v", hooks)
+	}
+	first, _ := pre[0].(map[string]any)
+	if b, _ := first["_agentlock"].(bool); !b {
+		t.Fatalf("agentlock marker missing on PreToolUse entry: %+v", first)
+	}
+}
+
 // ---- apply ----
 
 func applyBody(fx gateFixture, overrideDir string) string {
@@ -228,6 +276,17 @@ func applyBody(fx gateFixture, overrideDir string) string {
 	}`, fx.sessionID, overrideDir)
 }
 
+func applyBodyWithExisting(fx gateFixture, overrideDir string, existing map[string]string) string {
+	ex, _ := json.Marshal(existing)
+	return fmt.Sprintf(`{
+		"session_id": %q,
+		"harnesses": ["claude-code"],
+		"daemon_url": "http://127.0.0.1:7878",
+		"config_dir_override": %q,
+		"existing_files": %s
+	}`, fx.sessionID, overrideDir, ex)
+}
+
 func postApply(t *testing.T, fx gateFixture, overrideDir string) *http.Response {
 	t.Helper()
 	res, err := http.Post(fx.srv.URL+"/v1/install/apply", "application/json", strings.NewReader(applyBody(fx, overrideDir)))
@@ -237,33 +296,35 @@ func postApply(t *testing.T, fx gateFixture, overrideDir string) *http.Response 
 	return res
 }
 
-func decodeJSON(t *testing.T, res *http.Response) map[string]any {
+func postApplyWithExisting(t *testing.T, fx gateFixture, overrideDir string, existing map[string]string) *http.Response {
+	t.Helper()
+	res, err := http.Post(fx.srv.URL+"/v1/install/apply", "application/json", strings.NewReader(applyBodyWithExisting(fx, overrideDir, existing)))
+	if err != nil {
+		t.Fatalf("POST apply: %v", err)
+	}
+	return res
+}
+
+func decodeApplyResponse(t *testing.T, res *http.Response) installApplyResponse {
 	t.Helper()
 	defer res.Body.Close()
-	var out map[string]any
+	var out installApplyResponse
 	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	return out
 }
 
-func TestInstallApply_RefusedWithoutAllowEnv(t *testing.T) {
-	fx := newGateFixture(t, enforcePolicyYAML)
-	// No AGENTLOCK_ALLOW_APPLY.
-	res := postApply(t, fx, t.TempDir())
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", res.StatusCode)
+func findOpByPath(ops []fileOp, suffix string) (fileOp, bool) {
+	for _, op := range ops {
+		if strings.HasSuffix(op.Path, suffix) {
+			return op, true
+		}
 	}
-	var body map[string]string
-	_ = json.NewDecoder(res.Body).Decode(&body)
-	if body["error"] != "apply_disabled" {
-		t.Fatalf("error = %v", body["error"])
-	}
+	return fileOp{}, false
 }
 
-func TestInstallApply_WritesSettingsJson(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
+func TestInstallApply_ReturnsSettingsContent(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 
 	dir := t.TempDir()
@@ -273,27 +334,28 @@ func TestInstallApply_WritesSettingsJson(t *testing.T) {
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	out := decodeJSON(t, res)
-	if out["applied"] != true {
-		t.Fatalf("applied = %v", out["applied"])
+	out := decodeApplyResponse(t, res)
+	if !out.Applied {
+		t.Fatalf("applied = %v", out.Applied)
 	}
-
-	settingsPath := filepath.Join(dir, "settings.json")
-	b, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatalf("read settings: %v", err)
+	op, ok := findOpByPath(out.Operations, "settings.json")
+	if !ok {
+		t.Fatalf("no settings.json op in response: %+v", out.Operations)
 	}
-	if !strings.Contains(string(b), "PreToolUse") {
-		t.Fatalf("missing PreToolUse: %s", b)
+	if op.Op != "write" {
+		t.Fatalf("op = %v", op.Op)
 	}
-	if !strings.Contains(string(b), "_agentlock") {
-		t.Fatalf("missing _agentlock marker: %s", b)
+	if !strings.Contains(op.Content, "PreToolUse") {
+		t.Fatalf("missing PreToolUse: %s", op.Content)
 	}
-	if !strings.Contains(string(b), "hook claude-code pre-tool-use") {
-		t.Fatalf("missing claude-code pre-tool-use shim invocation: %s", b)
+	if !strings.Contains(op.Content, "_agentlock") {
+		t.Fatalf("missing _agentlock marker: %s", op.Content)
 	}
-	if !strings.Contains(string(b), `"type": "command"`) {
-		t.Fatalf("expected command-typed hook entries: %s", b)
+	if !strings.Contains(op.Content, "hook claude-code pre-tool-use") {
+		t.Fatalf("missing claude-code pre-tool-use shim invocation: %s", op.Content)
+	}
+	if !strings.Contains(op.Content, `"type": "command"`) {
+		t.Fatalf("expected command-typed hook entries: %s", op.Content)
 	}
 
 	// Ledger grew with install.apply entry (in addition to session.create).
@@ -314,10 +376,10 @@ func TestInstallApply_WritesSettingsJson(t *testing.T) {
 }
 
 func TestInstallApply_PreservesExistingUserHooks(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 
 	dir := t.TempDir()
+	settingsPath, _ := filepath.Abs(filepath.Join(dir, "settings.json"))
 	userSettings := `{
 		"hooks": {
 			"PreToolUse": [
@@ -326,18 +388,16 @@ func TestInstallApply_PreservesExistingUserHooks(t *testing.T) {
 		},
 		"telemetry": false
 	}`
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(userSettings), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	res := postApply(t, fx, dir)
+	res := postApplyWithExisting(t, fx, dir, map[string]string{settingsPath: userSettings})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
-	res.Body.Close()
-
-	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
-	s := string(b)
+	out := decodeApplyResponse(t, res)
+	op, ok := findOpByPath(out.Operations, "settings.json")
+	if !ok {
+		t.Fatalf("no settings.json op: %+v", out.Operations)
+	}
+	s := op.Content
 	if !strings.Contains(s, "my-user-hook.sh") {
 		t.Fatalf("user hook lost: %s", s)
 	}
@@ -349,70 +409,52 @@ func TestInstallApply_PreservesExistingUserHooks(t *testing.T) {
 	}
 }
 
-func TestInstallApply_WritesBackupFile(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
+func TestInstallApply_BackupPathSetWhenExistingFileSupplied(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 
 	dir := t.TempDir()
-	original := []byte(`{"user":"settings"}`)
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), original, 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	settingsPath, _ := filepath.Abs(filepath.Join(dir, "settings.json"))
+	original := `{"user":"settings"}`
 
-	res := postApply(t, fx, dir)
-	res.Body.Close()
-
-	matches, _ := filepath.Glob(filepath.Join(dir, "settings.json.agentlock-backup-*"))
-	if len(matches) != 1 {
-		t.Fatalf("want exactly 1 backup, got %d (%v)", len(matches), matches)
+	res := postApplyWithExisting(t, fx, dir, map[string]string{settingsPath: original})
+	out := decodeApplyResponse(t, res)
+	op, ok := findOpByPath(out.Operations, "settings.json")
+	if !ok {
+		t.Fatalf("no settings.json op: %+v", out.Operations)
 	}
-	b, _ := os.ReadFile(matches[0])
-	if !bytes.Equal(b, original) {
-		t.Fatalf("backup content drift: got %s", b)
+	if op.BackupPath == "" {
+		t.Fatalf("backup_path must be set when existing_files carried bytes; got empty")
+	}
+	if !strings.HasPrefix(op.BackupPath, settingsPath+".agentlock-backup-") {
+		t.Fatalf("backup_path shape unexpected: %q", op.BackupPath)
 	}
 }
 
 func TestInstallApply_Idempotent(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 
 	dir := t.TempDir()
-	_ = postApply(t, fx, dir).Body.Close()
-	_ = postApply(t, fx, dir).Body.Close()
+	settingsPath, _ := filepath.Abs(filepath.Join(dir, "settings.json"))
 
-	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
-	// Our marker should appear exactly twice (once each for PreToolUse + Stop),
-	// not four (would indicate duplication on second apply).
-	// SessionStart + PreToolUse + PostToolUse + Stop = 4 entries,
-	// each tagged once. Idempotent apply must not duplicate any.
-	got := strings.Count(string(b), `"_agentlock"`)
+	// First apply: no existing file. CLI would write the result to disk.
+	first := decodeApplyResponse(t, postApply(t, fx, dir))
+	firstOp, _ := findOpByPath(first.Operations, "settings.json")
+
+	// Second apply: simulate the CLI having written the previous content
+	// back to disk by sending it as existing_files.
+	second := decodeApplyResponse(t, postApplyWithExisting(t, fx, dir, map[string]string{settingsPath: firstOp.Content}))
+	secondOp, _ := findOpByPath(second.Operations, "settings.json")
+
+	// Our marker should appear exactly 4 times in the second op's content
+	// (SessionStart + PreToolUse + PostToolUse + Stop), not 8 — re-applying
+	// must not duplicate.
+	got := strings.Count(secondOp.Content, `"_agentlock"`)
 	if got != 4 {
-		t.Fatalf("expected 4 _agentlock entries, got %d: %s", got, b)
-	}
-}
-
-func TestInstallApply_RefusesRealHomeClaude(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
-	fx := newGateFixture(t, enforcePolicyYAML)
-
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		t.Skip("no home")
-	}
-	res := postApply(t, fx, filepath.Join(home, ".claude"))
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", res.StatusCode)
-	}
-	var body map[string]string
-	_ = json.NewDecoder(res.Body).Decode(&body)
-	if body["error"] != "unsafe_target" {
-		t.Fatalf("error = %v", body["error"])
+		t.Fatalf("expected 4 _agentlock entries, got %d: %s", got, secondOp.Content)
 	}
 }
 
 func TestInstallApply_UnknownSession404(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	_ = fx.sessionID // unused on purpose
 
@@ -444,61 +486,86 @@ func postUninstall(t *testing.T, fx gateFixture, sessionID string) *http.Respons
 	return res
 }
 
-func TestInstallUninstall_RefusedWithoutAllowEnv(t *testing.T) {
-	fx := newGateFixture(t, enforcePolicyYAML)
-	res := postUninstall(t, fx, fx.sessionID)
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d", res.StatusCode)
+func postUninstallWithExisting(t *testing.T, fx gateFixture, sessionID string, existing map[string]string) *http.Response {
+	t.Helper()
+	ex, _ := json.Marshal(existing)
+	body := fmt.Sprintf(`{"session_id":%q,"existing_files":%s}`, sessionID, ex)
+	res, err := http.Post(fx.srv.URL+"/v1/install/uninstall", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST uninstall: %v", err)
 	}
+	return res
+}
+
+func decodeUninstallResponse(t *testing.T, res *http.Response) installUninstallResponse {
+	t.Helper()
+	defer res.Body.Close()
+	var out installUninstallResponse
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return out
 }
 
 func TestInstallUninstall_StripsOurEntriesOnly(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 
 	dir := t.TempDir()
-	// Seed with a user hook first.
+	settingsPath, _ := filepath.Abs(filepath.Join(dir, "settings.json"))
+	// Apply with a user hook in existing_files so the manifest records
+	// the right path. The merged content is what the CLI would write back.
 	userSettings := `{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"mine.sh"}]}]}}`
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(userSettings), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	applyOut := decodeApplyResponse(t, postApplyWithExisting(t, fx, dir, map[string]string{settingsPath: userSettings}))
+	mergedOp, _ := findOpByPath(applyOut.Operations, "settings.json")
 
-	_ = postApply(t, fx, dir).Body.Close()
-	res := postUninstall(t, fx, fx.sessionID)
+	// Now uninstall, simulating the CLI sending back the merged file
+	// contents as existing_files.
+	res := postUninstallWithExisting(t, fx, fx.sessionID, map[string]string{settingsPath: mergedOp.Content})
 	if res.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(res.Body)
 		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
 	}
-	res.Body.Close()
-
-	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
-	s := string(b)
-	if !strings.Contains(s, "mine.sh") {
-		t.Fatalf("user hook lost: %s", s)
+	out := decodeUninstallResponse(t, res)
+	if !out.Uninstalled {
+		t.Fatalf("uninstalled = false; %+v", out)
 	}
-	if strings.Contains(s, "_agentlock") {
-		t.Fatalf("our marker should be gone: %s", s)
+	var stripOp uninstallOp
+	for _, op := range out.Operations {
+		if op.Path == settingsPath {
+			stripOp = op
+			break
+		}
 	}
-	if strings.Contains(s, "/v1/hooks/claude-code/pre-tool-use") {
-		t.Fatalf("our URL should be gone: %s", s)
+	if stripOp.Op != "strip" {
+		t.Fatalf("missing strip op for %s: %+v", settingsPath, out.Operations)
+	}
+	if stripOp.EntriesRemoved == 0 {
+		t.Fatalf("expected entries removed > 0; got %+v", stripOp)
+	}
+	if stripOp.Content == "" {
+		t.Fatalf("expected non-empty Content (the post-strip JSON), got empty: %+v", stripOp)
+	}
+	if !strings.Contains(stripOp.Content, "mine.sh") {
+		t.Fatalf("user hook lost in strip output: %s", stripOp.Content)
+	}
+	if strings.Contains(stripOp.Content, "_agentlock") {
+		t.Fatalf("agentlock marker should be gone from strip output: %s", stripOp.Content)
 	}
 }
 
 func TestInstallUninstall_PreservesUserEditsMadeAfterInstall(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 
 	dir := t.TempDir()
-	_ = postApply(t, fx, dir).Body.Close()
+	settingsPath, _ := filepath.Abs(filepath.Join(dir, "settings.json"))
+	applyOut := decodeApplyResponse(t, postApply(t, fx, dir))
+	merged, _ := findOpByPath(applyOut.Operations, "settings.json")
 
-	// Simulate the user adding their own hook after install, plus a top-level
-	// unrelated setting.
-	settingsPath := filepath.Join(dir, "settings.json")
-	b, _ := os.ReadFile(settingsPath)
+	// Simulate the user adding their own hook after install, plus a
+	// top-level unrelated setting.
 	var s map[string]any
-	_ = json.Unmarshal(b, &s)
+	_ = json.Unmarshal([]byte(merged.Content), &s)
 	hooks, _ := s["hooks"].(map[string]any)
 	pre, _ := hooks["PreToolUse"].([]any)
 	hooks["PreToolUse"] = append(pre, map[string]any{
@@ -507,80 +574,56 @@ func TestInstallUninstall_PreservesUserEditsMadeAfterInstall(t *testing.T) {
 	})
 	s["hooks"] = hooks
 	s["telemetry"] = false
-	nb, _ := json.MarshalIndent(s, "", "  ")
-	if err := os.WriteFile(settingsPath, nb, 0o644); err != nil {
-		t.Fatalf("rewrite: %v", err)
-	}
+	mutated, _ := json.MarshalIndent(s, "", "  ")
 
-	res := postUninstall(t, fx, fx.sessionID)
-	res.Body.Close()
-
-	final, _ := os.ReadFile(settingsPath)
-	fs := string(final)
-	if !strings.Contains(fs, "user-added.sh") {
-		t.Fatalf("post-install user edit lost: %s", fs)
+	res := postUninstallWithExisting(t, fx, fx.sessionID, map[string]string{settingsPath: string(mutated)})
+	out := decodeUninstallResponse(t, res)
+	stripOp, _ := func() (uninstallOp, bool) {
+		for _, op := range out.Operations {
+			if op.Path == settingsPath {
+				return op, true
+			}
+		}
+		return uninstallOp{}, false
+	}()
+	if !strings.Contains(stripOp.Content, "user-added.sh") {
+		t.Fatalf("post-install user edit lost: %s", stripOp.Content)
 	}
-	if !strings.Contains(fs, `"telemetry": false`) {
-		t.Fatalf("post-install top-level user edit lost: %s", fs)
+	if !strings.Contains(stripOp.Content, `"telemetry": false`) {
+		t.Fatalf("post-install top-level user edit lost: %s", stripOp.Content)
 	}
-	if strings.Contains(fs, "_agentlock") {
-		t.Fatalf("our marker should be gone: %s", fs)
+	if strings.Contains(stripOp.Content, "_agentlock") {
+		t.Fatalf("our marker should be gone: %s", stripOp.Content)
 	}
 }
 
 func TestInstallUninstall_RemovesEmptyContainers(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 
 	dir := t.TempDir()
-	_ = postApply(t, fx, dir).Body.Close()
-	_ = postUninstall(t, fx, fx.sessionID).Body.Close()
+	settingsPath, _ := filepath.Abs(filepath.Join(dir, "settings.json"))
+	applyOut := decodeApplyResponse(t, postApply(t, fx, dir))
+	merged, _ := findOpByPath(applyOut.Operations, "settings.json")
 
-	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	res := postUninstallWithExisting(t, fx, fx.sessionID, map[string]string{settingsPath: merged.Content})
+	out := decodeUninstallResponse(t, res)
+	var stripOp uninstallOp
+	for _, op := range out.Operations {
+		if op.Path == settingsPath {
+			stripOp = op
+			break
+		}
+	}
 	var s map[string]any
-	if err := json.Unmarshal(b, &s); err != nil {
-		t.Fatalf("parse: %v", err)
+	if err := json.Unmarshal([]byte(stripOp.Content), &s); err != nil {
+		t.Fatalf("parse: %v\n%s", err, stripOp.Content)
 	}
 	if _, has := s["hooks"]; has {
-		t.Fatalf("hooks container should be gone: %s", b)
-	}
-}
-
-func TestInstallUninstall_IgnoresBackupFile(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
-	fx := newGateFixture(t, enforcePolicyYAML)
-
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"original":true}`), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	_ = postApply(t, fx, dir).Body.Close()
-
-	// Mutate settings AFTER apply; uninstall should read from this, not the backup.
-	final := `{"user_changed":"after-install","hooks":{"PreToolUse":[{"_agentlock":true,"matcher":"*","hooks":[{"type":"http","url":"x"}]}]}}`
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(final), 0o644); err != nil {
-		t.Fatalf("mutate: %v", err)
-	}
-
-	_ = postUninstall(t, fx, fx.sessionID).Body.Close()
-
-	b, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
-	if !strings.Contains(string(b), "user_changed") {
-		t.Fatalf("post-apply mutation lost: %s", b)
-	}
-	if strings.Contains(string(b), "_agentlock") {
-		t.Fatalf("marker should be gone: %s", b)
-	}
-
-	// Backup still on disk.
-	matches, _ := filepath.Glob(filepath.Join(dir, "settings.json.agentlock-backup-*"))
-	if len(matches) != 1 {
-		t.Fatalf("backup missing or multiplied: %v", matches)
+		t.Fatalf("hooks container should be gone: %s", stripOp.Content)
 	}
 }
 
 func TestInstallUninstall_UnknownSession404(t *testing.T) {
-	t.Setenv("AGENTLOCK_ALLOW_APPLY", "1")
 	fx := newGateFixture(t, enforcePolicyYAML)
 	res := postUninstall(t, fx, "nope")
 	defer res.Body.Close()
