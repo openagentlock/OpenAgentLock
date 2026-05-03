@@ -16,6 +16,10 @@ import {
   executeUninstallOps,
   readExistingFiles,
 } from "../src/util/install-fs.ts";
+import {
+  installAndResolveAgentlockBinary,
+  installStatusLineScript,
+} from "../src/commands/install.ts";
 import type { InstallFileOp, InstallUninstallOp } from "../src/util/api.ts";
 
 let workdir: string;
@@ -288,4 +292,81 @@ describe("readExistingFiles", () => {
     const got = await readExistingFiles([]);
     expect(Object.keys(got)).toHaveLength(0);
   });
+});
+
+describe("installAndResolveAgentlockBinary", () => {
+  test("writes an executable wrapper under <agentlockHome>/bin and returns its path", async () => {
+    const home = await mkdtemp(join(tmpdir(), "agentlock-binhome-"));
+    const prev = process.env.AGENTLOCK_HOME;
+    process.env.AGENTLOCK_HOME = home;
+    try {
+      const path = installAndResolveAgentlockBinary();
+      expect(path).toBe(join(home, "bin", "agentlock"));
+      const st = await fs.stat(path);
+      expect(st.isFile()).toBe(true);
+      // Owner exec bit set so /bin/sh can spawn it from harness hook entries.
+      expect(st.mode & 0o100).toBe(0o100);
+      const body = await fs.readFile(path, "utf8");
+      expect(body).toContain("#!/usr/bin/env bash");
+      expect(body).toContain("exec bun run");
+      expect(body).toContain("src/index.ts");
+    } finally {
+      if (prev === undefined) delete process.env.AGENTLOCK_HOME;
+      else process.env.AGENTLOCK_HOME = prev;
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("rewrites the wrapper idempotently on repeat calls", async () => {
+    const home = await mkdtemp(join(tmpdir(), "agentlock-binhome-"));
+    const prev = process.env.AGENTLOCK_HOME;
+    process.env.AGENTLOCK_HOME = home;
+    try {
+      const a = installAndResolveAgentlockBinary();
+      const bodyA = await fs.readFile(a, "utf8");
+      const b = installAndResolveAgentlockBinary();
+      const bodyB = await fs.readFile(b, "utf8");
+      expect(b).toBe(a);
+      expect(bodyB).toBe(bodyA);
+    } finally {
+      if (prev === undefined) delete process.env.AGENTLOCK_HOME;
+      else process.env.AGENTLOCK_HOME = prev;
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("installStatusLineScript", () => {
+  test("writes an executable health-check script and reports offline when daemon is unreachable", async () => {
+    const home = await mkdtemp(join(tmpdir(), "agentlock-statusline-"));
+    const prev = process.env.AGENTLOCK_HOME;
+    process.env.AGENTLOCK_HOME = home;
+    try {
+      const path = installStatusLineScript();
+      expect(path).toBe(join(home, "bin", "agentlock-status"));
+      const st = await fs.stat(path);
+      expect(st.isFile()).toBe(true);
+      expect(st.mode & 0o100).toBe(0o100);
+
+      // Run the script with a guaranteed-unreachable daemon URL — must
+      // print the offline indicator without erroring.
+      const proc = Bun.spawnSync([path], {
+        env: { ...process.env, AGENTLOCK_DAEMON_URL: "http://127.0.0.1:1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const out = new TextDecoder().decode(proc.stdout);
+      expect(out).toContain("OpenAgentLock");
+      expect(out).toContain("offline");
+      expect(proc.exitCode).toBe(0);
+    } finally {
+      if (prev === undefined) delete process.env.AGENTLOCK_HOME;
+      else process.env.AGENTLOCK_HOME = prev;
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  // Note: we don't have a "reports protected" test here because
+  // Bun.spawnSync blocks the event loop, so any in-process Bun.serve mock
+  // can't accept connections during the curl call. The healthy-path is
+  // verified in manual e2e and via the daemon's own integration tests.
 });
