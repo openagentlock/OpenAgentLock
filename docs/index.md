@@ -67,6 +67,13 @@ Read logs, author rules, watch live activity. Firewall-admin shape.
 Software (dev/CI) and TOTP shipped. OS keychain and YubiKey land next.
 </div>
 
+<div class="gate-card" markdown>
+#### Community rules registry
+<span class="gate-id">[openagentlock/rules](https://openagentlock.github.io/rules/)</span>
+
+Browse and install community-maintained gates with `agentlock rules install <id>`. Search the catalog at [openagentlock.github.io/rules](https://openagentlock.github.io/rules/) — or point the CLI at any Git repo to run a private registry.
+</div>
+
 </div>
 
 ## How it works

@@ -20,6 +20,7 @@ Live status of every component shipped to the public repo. <span class="md-statu
 | `agentlock fake-hook` (eval / scenario harness) | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock dashboard` (open local web dashboard) | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock login` | <span class="md-status-pill shipped">Shipped</span> (password mode only) |
+| `agentlock rules add / sources / sync / search / install / uninstall / remove` | <span class="md-status-pill shipped">Shipped</span> — backed by [openagentlock/rules](https://github.com/openagentlock/rules) |
 
 ## Control plane
 
@@ -27,6 +28,7 @@ Live status of every component shipped to the public repo. <span class="md-statu
 |---|---|
 | `/v1/health` | <span class="md-status-pill shipped">Shipped</span> |
 | `/v1/gates`, `/v1/mode` | <span class="md-status-pill shipped">Shipped</span> |
+| `/v1/policy/view`, `/v1/policy/gates` (POST/PATCH/DELETE), `/v1/policy/gates/yaml` | <span class="md-status-pill shipped">Shipped</span> |
 | `/v1/install/plan`, `/v1/install/apply`, `/v1/uninstall` | <span class="md-status-pill shipped">Shipped</span> |
 | `/v1/mcp/pin/check`, `/v1/mcp/pin/accept` | <span class="md-status-pill shipped">Shipped</span> |
 | `/v1/sessions/*`, `/v1/sessions/insights` | <span class="md-status-pill shipped">Shipped</span> |
