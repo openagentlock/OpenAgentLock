@@ -26,7 +26,6 @@ services:
       AGENTLOCK_HOME: "/var/lib/agentlock"
     volumes:
       - agentlock-state:/var/lib/agentlock
-      - ./policies:/etc/agentlock/policies:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/agentlockd", "--health"]
       interval: 10s
