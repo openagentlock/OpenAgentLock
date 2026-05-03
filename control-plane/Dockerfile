@@ -63,6 +63,7 @@ COPY policies/default.yaml /etc/agentlock/policies/default.yaml
 ENV AGENTLOCK_LISTEN=0.0.0.0:7878
 ENV AGENTLOCK_DASHBOARD_LISTEN=0.0.0.0:7879
 ENV AGENTLOCK_HOME=/var/lib/agentlock
+ENV AGENTLOCK_POLICY=/etc/agentlock/policies/default.yaml
 ENV AGENTLOCK_IN_CONTAINER=1
 # Default to unattested so `docker run` works zero-conf. TUI + dashboard
 # show the red "UNATTESTED — LEDGER NOT SIGNED" banner. Override with

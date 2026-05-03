@@ -22,7 +22,6 @@ services:
     environment:
       AGENTLOCK_LISTEN: "0.0.0.0:7878"
       AGENTLOCK_DASHBOARD_LISTEN: "0.0.0.0:7879"
-      AGENTLOCK_POLICY: "/etc/agentlock/policies/default.yaml"
       AGENTLOCK_HOME: "/var/lib/agentlock"
     volumes:
       - agentlock-state:/var/lib/agentlock
