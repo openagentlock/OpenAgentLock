@@ -117,6 +117,7 @@ nav:
       - Windows notes: guide/windows.md
   - Architecture:
       - Overview: architecture/overview.md
+      - LLM-based guardrails (roadmap): architecture/llm-guardrails.md
   - Reference:
       - HTTP API: reference/api.md
       - Detection registry: reference/detection.md

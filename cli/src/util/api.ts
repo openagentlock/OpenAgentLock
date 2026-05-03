@@ -36,6 +36,21 @@ export interface ApiClient {
   getMode(): Promise<ModeResponse>;
   patchMode(mode: "firewall" | "monitor" | ""): Promise<ModeResponse>;
   policyView(): Promise<PolicyViewResponse>;
+  installGateYAML(yaml: string, replace?: boolean): Promise<InstallGateYAMLResponse>;
+  deleteGate(id: string): Promise<DeleteGateResponse>;
+}
+
+export interface InstallGateYAMLResponse {
+  hash: string;
+  gates: number;
+  id: string;
+  needs_reload: boolean;
+}
+
+export interface DeleteGateResponse {
+  hash: string;
+  gates: number;
+  needs_reload: boolean;
 }
 
 export interface SessionSummary {
@@ -508,6 +523,31 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
         throw new Error(`policy.view: ${res.status} ${res.statusText}`);
       }
       return (await res.json()) as PolicyViewResponse;
+    },
+
+    async installGateYAML(yaml: string, replace?: boolean): Promise<InstallGateYAMLResponse> {
+      const res = await fetch(`${url}/v1/policy/gates/yaml`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ yaml, replace: !!replace }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`policy.install_gate_yaml: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as InstallGateYAMLResponse;
+    },
+
+    async deleteGate(id: string): Promise<DeleteGateResponse> {
+      const res = await fetch(`${url}/v1/policy/gates/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`policy.delete_gate: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as DeleteGateResponse;
     },
   };
 

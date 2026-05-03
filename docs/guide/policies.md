@@ -62,6 +62,32 @@ Two rules of thumb:
 
 > **Use the dashboard.** The local web dashboard (`127.0.0.1:7879`) lets you right-click a logged tool call and "block this next time" — it generates a starter rule from the call's shape. Iterate from there.
 
+## Installing community rules
+
+The [openagentlock/rules](https://github.com/openagentlock/rules) registry ships ready-to-pin gates. Browse them at <https://openagentlock.github.io/rules>, then install via CLI:
+
+```bash
+# upstream is auto-registered on first sync
+agentlock rules sync
+agentlock rules search exfil
+
+# install one rule into the live policy
+agentlock rules install exfil.curl-with-env
+
+# remove later
+agentlock rules uninstall exfil.curl-with-env
+```
+
+The rule's `gate:` block is POSTed to `/v1/policy/gates/yaml` and lands in the live policy with a fresh hash; existing sessions stay pinned to the old hash until they reload, so installs never invalidate in-flight work.
+
+You can register additional registries (private internal rules, etc.):
+
+```bash
+agentlock rules add https://github.com/your-org/your-rules.git
+agentlock rules sources
+agentlock rules remove your-org-your-rules        # local-only — does not touch installed gates
+```
+
 ## Authoring via the dashboard
 
 Open <http://127.0.0.1:7879/>. The dashboard is shaped like a firewall admin UI:

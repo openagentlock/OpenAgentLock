@@ -93,6 +93,7 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"PATCH", "/v1/mode", modePatchHandler(d)},
 		{"GET", "/v1/policy/view", policyViewHandler(d)},
 		{"POST", "/v1/policy/gates", policyAddGateHandler(d)},
+		{"POST", "/v1/policy/gates/yaml", policyAddGateYAMLHandler(d)},
 		{"PATCH", "/v1/policy/gates/{id}", policyPatchGateHandler(d)},
 		{"DELETE", "/v1/policy/gates/{id}", policyDeleteGateHandler(d)},
 		{"GET", "/v1/sessions", sessionsListHandler(d)},

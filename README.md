@@ -12,7 +12,7 @@
 [![docs](https://img.shields.io/badge/docs-openagentlock.github.io/OpenAgentLock-black?style=flat-square)](https://openagentlock.github.io/OpenAgentLock/)
 [![stars](https://img.shields.io/github/stars/openagentlock/openagentlock?style=flat-square)](https://github.com/openagentlock/OpenAgentLock/stargazers)
 
-[Documentation](https://openagentlock.github.io/OpenAgentLock/) · [Getting started](https://openagentlock.github.io/OpenAgentLock/guide/getting-started/) · [Status](https://openagentlock.github.io/OpenAgentLock/status/) · [Architecture](https://openagentlock.github.io/OpenAgentLock/architecture/overview/)
+[Documentation](https://openagentlock.github.io/OpenAgentLock/) · [Getting started](https://openagentlock.github.io/OpenAgentLock/guide/getting-started/) · [Rules registry](https://openagentlock.github.io/rules/) · [Status](https://openagentlock.github.io/OpenAgentLock/status/) · [Architecture](https://openagentlock.github.io/OpenAgentLock/architecture/overview/)
 
 </div>
 
@@ -46,6 +46,18 @@ For a quick eval without a signer (dev only): start the daemon with `-e AGENTLOC
 Open the local web dashboard at <http://127.0.0.1:7879/>.
 
 Full walkthrough at <https://openagentlock.github.io/OpenAgentLock/guide/getting-started/>.
+
+## Community rules registry
+
+Need more gates than the five baseline ones? Browse the community catalog at <https://openagentlock.github.io/rules/> — secret reads, force-push to shared branches, network exfil, untrusted eval. Install with one command:
+
+```bash
+agentlock rules sync
+agentlock rules search exfil
+agentlock rules install rogue.secret-read
+```
+
+Or run your own private registry — any Git repo with the same layout works. Source: [openagentlock/rules](https://github.com/openagentlock/rules).
 
 ## What ships today
 
