@@ -25,7 +25,7 @@
 //     For multi-harness dev runs prefer AGENTLOCK_DEV_HOME=./dev which
 //     re-roots every detector AND the daemon's apply paths.
 
-import { existsSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { detectAll } from "../detect/index.ts";
@@ -38,18 +38,58 @@ import {
   executeUninstallOps,
   readExistingFiles,
 } from "../util/install-fs.ts";
-import { home } from "../util/paths.ts";
+import { binDir, home, isWin } from "../util/paths.ts";
 import { mintAttestedSession, type AttestedTier } from "../util/session-mint.ts";
 
-// Source-tree default: cli/agentlock is a bash wrapper that does
-// `exec bun run cli/src/index.ts "$@"`, so harnesses can spawn
-// `agentlock hook codex <event>` without needing a compiled binary.
-// `process.execPath` alone points at `bun`, which crashes (exit 1) when
-// invoked as `bun hook codex pre-tool-use` because `hook` isn't a script.
-function defaultAgentlockBinary(): string {
-  const wrapper = resolve(import.meta.dir, "..", "..", "agentlock");
-  if (existsSync(wrapper)) return wrapper;
-  return process.execPath;
+// Stable wrapper path: <agentlockHome>/bin/agentlock. Lives in our state dir,
+// not in the package manager's volatile node_modules tree, so package
+// upgrades / reinstalls don't strand the wired hook command at a path the
+// shell can't spawn (which renders as red "PreToolUse hook error" banners
+// in Claude Code, and similar in Cursor / Codex). Re-running `agentlock
+// install` rewrites the wrapper, picking up any new index.ts location.
+//
+// The wrapper itself is bash-only — Windows wiring lands separately.
+export function installAndResolveAgentlockBinary(): string {
+  if (isWin()) {
+    throw new Error(
+      "agentlock install: Windows wrapper not yet supported. Use macOS/Linux for now.",
+    );
+  }
+  const indexPath = resolve(import.meta.dir, "..", "index.ts");
+  const dir = binDir();
+  const wrapper = join(dir, "agentlock");
+  const body = `#!/usr/bin/env bash\nexec bun run "${indexPath}" "$@"\n`;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(wrapper, body, { flag: "w" });
+  chmodSync(wrapper, 0o755);
+  return wrapper;
+}
+
+// Tiny health-check script wired into Claude Code's `statusLine` config.
+// Output renders as a UI element under the chat — never injected into the
+// model's input stream — so the user sees live "is the daemon up?" without
+// a prompt-injection vector. Curl with a 200ms timeout keeps the status
+// line snappy; a hung daemon fails to "offline" instead of stalling the UI.
+export function installStatusLineScript(): string {
+  if (isWin()) {
+    throw new Error(
+      "agentlock install: Windows status-line not yet supported. Use macOS/Linux for now.",
+    );
+  }
+  const dir = binDir();
+  const script = join(dir, "agentlock-status");
+  const body = `#!/usr/bin/env bash
+url="\${AGENTLOCK_DAEMON_URL:-http://127.0.0.1:7878}"
+if curl --max-time 1 -fs "$url/v1/health" >/dev/null 2>&1; then
+  printf 'OpenAgentLock \\xe2\\x9c\\x93'
+else
+  printf 'OpenAgentLock \\xe2\\x9a\\xa0 daemon offline'
+fi
+`;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(script, body, { flag: "w" });
+  chmodSync(script, 0o755);
+  return script;
 }
 
 type InstallTier = "unattested" | AttestedTier;
@@ -352,16 +392,22 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     cursorHooks,
   ]);
 
+  // Write the status-line script alongside the binary wrapper. Daemon
+  // wires this path into ~/.claude/settings.json `statusLine` so users
+  // see live OAL health without any chat injection.
+  const statusLineScript = installStatusLineScript();
+
   const planReq = {
     session_id: sessionId,
     harnesses: chosen,
     daemon_url: daemonUrl,
     config_dir_override: flags.configDirOverride,
     // Pass an absolute path so Codex's command-hook spawn doesn't depend
-    // on PATH at hook-fire time. Source-tree dev runs use the
-    // `cli/agentlock` wrapper; AGENTLOCK_BINARY lets release builds
-    // override (e.g. point at the compiled single-file binary).
-    agentlock_binary: process.env.AGENTLOCK_BINARY ?? defaultAgentlockBinary(),
+    // on PATH at hook-fire time. The wrapper lives under agentlockHome()
+    // so it survives package-manager upgrades; AGENTLOCK_BINARY lets
+    // release builds override (e.g. point at a compiled single-file binary).
+    agentlock_binary: process.env.AGENTLOCK_BINARY ?? installAndResolveAgentlockBinary(),
+    status_line_script: statusLineScript,
     harness_config_dirs: hostConfigDirs,
     existing_files: existingFiles,
   };

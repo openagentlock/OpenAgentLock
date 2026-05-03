@@ -231,6 +231,7 @@ func TestClaudeCodePlan_PreservesExistingUserKeys(t *testing.T) {
 		"http://127.0.0.1:7878",
 		filepath.Dir(abs),
 		"",
+		"",
 		nil,
 		map[string]string{abs: existing},
 	)
@@ -262,6 +263,99 @@ func TestClaudeCodePlan_PreservesExistingUserKeys(t *testing.T) {
 	first, _ := pre[0].(map[string]any)
 	if b, _ := first["_agentlock"].(bool); !b {
 		t.Fatalf("agentlock marker missing on PreToolUse entry: %+v", first)
+	}
+}
+
+// Regression: paths with spaces (e.g. macOS "Library/Application Support")
+// must be shell-quoted so /bin/sh doesn't split them when running the hook.
+// Without quoting, Claude/Codex/Cursor render a red "hook error" banner with
+// "line 1: on: command not found" or "exit code 127" on every event.
+func TestClaudeCodePlan_QuotesBinaryPathWithSpaces(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	abs, _ := filepath.Abs(settingsPath)
+	op := claudeCodePlan(
+		"http://127.0.0.1:7878",
+		filepath.Dir(abs),
+		"/Users/x/Library/Application Support/OpenAgentLock/bin/agentlock",
+		"",
+		nil,
+		nil,
+	)
+	// The wired command must wrap the binary path in single quotes so
+	// /bin/sh treats it as one token.
+	if !strings.Contains(op.Content, "'/Users/x/Library/Application Support/OpenAgentLock/bin/agentlock'") {
+		t.Fatalf("binary path not shell-quoted in hook command:\n%s", op.Content)
+	}
+}
+
+// statusLine wiring: when status_line_script is supplied, the merged
+// settings.json must carry an _agentlock-tagged statusLine pointing at
+// the script. Re-running keeps it idempotent. A user-defined statusLine
+// (no _agentlock tag) must survive untouched.
+func TestClaudeCodePlan_StatusLineWiring(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	abs, _ := filepath.Abs(settingsPath)
+	op := claudeCodePlan(
+		"http://127.0.0.1:7878",
+		filepath.Dir(abs),
+		"",
+		"/usr/local/oal/bin/agentlock-status",
+		nil,
+		nil,
+	)
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(op.Content), &parsed); err != nil {
+		t.Fatalf("parse: %v\n%s", err, op.Content)
+	}
+	sl, ok := parsed["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("statusLine not wired: %+v", parsed)
+	}
+	if got := sl["command"]; got != "'/usr/local/oal/bin/agentlock-status'" {
+		t.Fatalf("statusLine command = %v (expected single-quoted to survive shell parsing of paths with spaces)", got)
+	}
+	if b, _ := sl["_agentlock"].(bool); !b {
+		t.Fatalf("agentlock marker missing on statusLine: %+v", sl)
+	}
+
+	// User-defined statusLine should be preserved.
+	existing := `{"statusLine":{"type":"command","command":"/my/own/status"}}`
+	op2 := claudeCodePlan(
+		"http://127.0.0.1:7878",
+		filepath.Dir(abs),
+		"",
+		"/usr/local/oal/bin/agentlock-status",
+		nil,
+		map[string]string{abs: existing},
+	)
+	var parsed2 map[string]any
+	if err := json.Unmarshal([]byte(op2.Content), &parsed2); err != nil {
+		t.Fatalf("parse2: %v", err)
+	}
+	sl2, _ := parsed2["statusLine"].(map[string]any)
+	if got := sl2["command"]; got != "/my/own/status" {
+		t.Fatalf("user statusLine clobbered: %v", got)
+	}
+}
+
+// stripClaudeSettings should remove an agentlock-tagged statusLine so
+// uninstall reverts the file cleanly.
+func TestStripClaudeSettings_RemovesStatusLine(t *testing.T) {
+	in := []byte(`{
+		"hooks": {"PreToolUse": [{"_agentlock": true}]},
+		"statusLine": {"_agentlock": true, "type": "command", "command": "/x"}
+	}`)
+	out, removed, err := stripClaudeSettings(in)
+	if err != nil {
+		t.Fatalf("strip: %v", err)
+	}
+	if removed < 2 {
+		t.Fatalf("expected at least 2 removed (hook + statusLine), got %d", removed)
+	}
+	var parsed map[string]any
+	_ = json.Unmarshal(out, &parsed)
+	if _, has := parsed["statusLine"]; has {
+		t.Fatalf("statusLine not stripped: %s", out)
 	}
 }
 

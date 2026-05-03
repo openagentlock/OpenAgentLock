@@ -1,10 +1,13 @@
-// E2E test for the `agentlock hook codex <event>` shim. Spawns a mock
+// E2E test for the `agentlock hook cursor <event>` shim. Spawns a mock
 // daemon over Bun.serve, runs the shim binary with stdin piped JSON,
-// and asserts the shim exits 0 (allow) or 2 (deny) and forwards the
-// payload verbatim to /v1/hooks/codex/<event>.
+// and asserts the shim emits Cursor's expected
+// {permission, agent_message?} envelope on stdout, plus the right exit
+// code. Mirrors the claude-code/codex test shape.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 interface MockExpect {
@@ -58,7 +61,7 @@ function runShim(
 ): Promise<ShimResult> {
   return new Promise((resolve, reject) => {
     const entry = join(import.meta.dir, "..", "src", "index.ts");
-    const proc = spawn("bun", ["run", entry, "hook", "codex", ...args], {
+    const proc = spawn("bun", ["run", entry, "hook", "cursor", ...args], {
       env: {
         ...process.env,
         AGENTLOCK_DAEMON_URL: daemonUrl,
@@ -82,18 +85,18 @@ function runShim(
   });
 }
 
-describe("hook codex shim", () => {
+describe("hook cursor shim", () => {
   let server: ReturnType<typeof Bun.serve> | null = null;
   afterEach(() => {
     server?.stop(true);
     server = null;
   });
 
-  test("allow → exit 0", async () => {
+  test("allow → exit 0 with permission:allow", async () => {
     const recorded: RecordedRequest[] = [];
     const m = startMockDaemon(
       {
-        "/v1/hooks/codex/pre-tool-use": {
+        "/v1/hooks/cursor/pre-tool-use": {
           status: 200,
           body: {
             continue: true,
@@ -109,24 +112,22 @@ describe("hook codex shim", () => {
     server = m.server;
 
     const payload = JSON.stringify({
-      session_id: "sess_x",
-      hook_event_name: "PreToolUse",
+      conversation_id: "conv_x",
+      hook_event_name: "preToolUse",
       tool_name: "Bash",
-      tool_use_id: "t_01",
       tool_input: { command: "ls" },
     });
     const r = await runShim(["pre-tool-use"], payload, m.url);
     expect(r.code).toBe(0);
-    expect(recorded).toHaveLength(1);
-    expect(recorded[0].path).toBe("/v1/hooks/codex/pre-tool-use");
-    expect(recorded[0].body).toMatchObject({ tool_name: "Bash" });
+    expect(JSON.parse(r.stdout)).toEqual({ permission: "allow" });
+    expect(recorded[0].path).toBe("/v1/hooks/cursor/pre-tool-use");
   });
 
-  test("deny → exit 2 with reason on stderr", async () => {
+  test("deny → exit 2 with reason on stderr and stdout", async () => {
     const recorded: RecordedRequest[] = [];
     const m = startMockDaemon(
       {
-        "/v1/hooks/codex/pre-tool-use": {
+        "/v1/hooks/cursor/pre-tool-use": {
           status: 200,
           body: {
             continue: false,
@@ -144,33 +145,34 @@ describe("hook codex shim", () => {
     server = m.server;
 
     const payload = JSON.stringify({
-      session_id: "sess_y",
-      hook_event_name: "PreToolUse",
+      conversation_id: "conv_y",
+      hook_event_name: "preToolUse",
       tool_name: "Bash",
-      tool_use_id: "t_02",
       tool_input: { command: "rm -rf /tmp/x" },
     });
     const r = await runShim(["pre-tool-use"], payload, m.url);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("rogue.destructive-bash");
-    // stdout carries the JSON for harnesses that prefer it.
-    expect(r.stdout).toContain('"permissionDecision":"deny"');
+    expect(r.stdout).toContain('"permission":"deny"');
+    expect(r.stdout).toContain("rogue.destructive-bash");
   });
 
-  test("daemon unreachable → silent fail-open on every event", async () => {
-    // Codex hides hook stderr on exit-0 and renders any non-zero exit
-    // as a "(failed)" banner that looks like a real error. Neither is
-    // an acceptable channel for a status nudge, so we stay completely
-    // silent — empty stdout, empty stderr, exit 0.
-    for (const event of ["session-start", "pre-tool-use", "post-tool-use", "stop"]) {
+  test("daemon unreachable → silent fail-open with plain allow envelope on every event", async () => {
+    // Cursor has no UI surface outside the model's input stream that we
+    // can write to (no statusLine, no safe agent_message). On a transport
+    // failure we just emit a plain {permission:allow} so Cursor doesn't
+    // surface a hook error and the user's tool call goes through.
+    const home = mkdtempSync(join(tmpdir(), "agentlock-test-"));
+    for (const event of ["session-start", "pre-tool-use", "post-tool-use"]) {
       const r = await runShim(
         [event],
-        JSON.stringify({ session_id: "sess_q", hook_event_name: event }),
+        JSON.stringify({ conversation_id: "conv_x", hook_event_name: event }),
         "http://127.0.0.1:1",
+        { AGENTLOCK_HOME: home },
       );
       expect(r.code).toBe(0);
-      expect(r.stdout).toBe("");
       expect(r.stderr).toBe("");
+      expect(JSON.parse(r.stdout)).toEqual({ permission: "allow" });
     }
   });
 

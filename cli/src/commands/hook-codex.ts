@@ -15,8 +15,17 @@
 // daemon outage from soft-bricking the user's coding session. The
 // daemon-side ledger is the source of truth; if it can't be reached,
 // monitor mode is the safer default than blocking everything.
-
-import { clearDaemonDownMarker, warnDaemonDownOnce } from "../util/daemon-warn.ts";
+//
+// Codex has no `statusLine` analog (Claude's persistent UI element under
+// the chat) and no chat-injection field that's safe from prompt-injection
+// flags. Empirically Codex also hides hook stderr on exit-0 — it only
+// surfaces hook output as a "(failed)" banner when the hook exits non-
+// zero. Which means there's no in-Codex surface we can write a live or
+// once-per-session OAL status indicator into without making it look like
+// an error. We stay silent here; users wanting a live indicator wire the
+// `agentlock-status` script into their shell prompt (visible when they
+// start/stop a Codex session) or rely on Claude Code's statusLine in
+// parallel chats.
 
 const ALLOWED_EVENTS = new Set([
   "session-start",
@@ -68,8 +77,6 @@ export async function runHookCodex(argv: string[]): Promise<void> {
     process.exit(0);
   }
 
-  // Validate JSON locally so a malformed body doesn't waste a daemon
-  // round trip. Pass through verbatim if it parses.
   try {
     JSON.parse(raw);
   } catch (e) {
@@ -88,13 +95,13 @@ export async function runHookCodex(argv: string[]): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: raw,
     });
-  } catch (e) {
-    warnDaemonDownOnce("codex", url, e as Error);
-    process.exit(0); // fail-open
+  } catch {
+    // Daemon unreachable — silent fail-open. No stdout (would land in
+    // model input). No stderr (Codex would render exit-0 stderr as a
+    // failed-hook banner if it surfaced it at all, and on success it's
+    // hidden — so the line would either be alarming or invisible).
+    process.exit(0);
   }
-
-  // Successful round-trip — re-arm the nudge for the next outage.
-  clearDaemonDownMarker();
 
   if (!res.ok) {
     process.stderr.write(

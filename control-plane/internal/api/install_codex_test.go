@@ -95,8 +95,8 @@ func TestInstallPlan_CodexProducesWriteOpAndWarning(t *testing.T) {
 		t.Fatalf("expected hooks.json path, got %q", path)
 	}
 	content, _ := op["content"].(string)
-	if !strings.Contains(content, "/usr/local/bin/agentlock hook codex pre-tool-use") {
-		t.Fatalf("expected shim command in content, got: %s", content)
+	if !strings.Contains(content, "'/usr/local/bin/agentlock' hook codex pre-tool-use") {
+		t.Fatalf("expected shell-quoted shim command in content, got: %s", content)
 	}
 	if !strings.Contains(content, `"AGENTLOCK_DAEMON_URL": "http://127.0.0.1:7878"`) {
 		t.Fatalf("expected daemon URL env, got: %s", content)
@@ -277,7 +277,7 @@ func TestInstallApply_CodexWritesHooksJson(t *testing.T) {
 		`"PostToolUse"`,
 		`"Stop"`,
 		`"type": "command"`,
-		`/usr/local/bin/agentlock hook codex pre-tool-use`,
+		`'/usr/local/bin/agentlock' hook codex pre-tool-use`,
 		`"AGENTLOCK_DAEMON_URL"`,
 	} {
 		if !strings.Contains(s, want) {

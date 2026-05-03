@@ -91,7 +91,7 @@ func codexHookConfig(daemonURL, agentlockBinary string) map[string]any {
 			"hooks": []any{
 				map[string]any{
 					"type":    "command",
-					"command": fmt.Sprintf("%s hook codex %s", bin, event),
+					"command": fmt.Sprintf("%s hook codex %s", shellQuote(bin), event),
 					"env": map[string]any{
 						"AGENTLOCK_DAEMON_URL": strings.TrimRight(daemonURL, "/"),
 					},

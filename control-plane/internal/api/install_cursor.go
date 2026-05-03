@@ -97,7 +97,7 @@ func cursorHookConfig(daemonURL, agentlockBinary string) map[string]any {
 			"_agentlock": true,
 			"matcher":    "*",
 			"type":       "command",
-			"command":    fmt.Sprintf("%s hook cursor %s", bin, event),
+			"command":    fmt.Sprintf("%s hook cursor %s", shellQuote(bin), event),
 			"env": map[string]any{
 				"AGENTLOCK_DAEMON_URL": strings.TrimRight(daemonURL, "/"),
 			},

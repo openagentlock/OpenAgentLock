@@ -1,6 +1,6 @@
 {
   "name": "@openagentlock/cli",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "description": "OpenAgentLock CLI — a firewall for AI coding agents. Detects local agent harnesses (Claude Code, Codex CLI, Cursor, OpenCode, Cline, Gemini CLI, Continue, Copilot), gates risky tool calls via a Go control plane, anchors decisions in a Rust Merkle ledger.",
@@ -43,7 +43,8 @@
     "detect": "bun run src/index.ts detect",
     "install-into": "bun run src/index.ts install",
     "typecheck": "tsc --noEmit",
-    "build": "bun build src/index.ts --target=bun --outdir=dist"
+    "build": "bun build src/index.ts --target=bun --outdir=dist",
+    "prepublishOnly": "test -x ./agentlock && npm pack --dry-run --json | node -e \"const m=JSON.parse(require('fs').readFileSync(0,'utf8'));if(!m[0].files.some(f=>f.path==='agentlock'))throw new Error('agentlock wrapper missing from tarball — see 0.1.12 regression');\""
   },
   "dependencies": {
     "@noble/ed25519": "^3.1.0",

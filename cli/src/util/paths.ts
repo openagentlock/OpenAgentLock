@@ -44,6 +44,11 @@ export function agentlockHome(): string {
   return process.env.AGENTLOCK_HOME ?? join(appSupport(), "OpenAgentLock");
 }
 
+/** Stable wrapper-script home; survives package upgrades that move node_modules. */
+export function binDir(): string {
+  return join(agentlockHome(), "bin");
+}
+
 /** VS Code user dir (extension globalStorage lives under this). */
 export function vscodeUserDir(): string | null {
   if (isMac()) return join(home(), "Library", "Application Support", "Code", "User");

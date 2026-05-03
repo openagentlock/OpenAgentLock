@@ -16,12 +16,15 @@
 // a fixed reason pointing at the dashboard.
 //
 // Failure modes are fail-open (exit 0). The daemon's ledger is the source
-// of truth; a missing daemon should not soft-brick the user's IDE.
+// of truth; a missing daemon should not soft-brick the user's IDE. On a
+// transport failure we keep stdout to a plain `{permission: "allow"}`
+// envelope — Cursor's hook spec offers no UI surface that's outside the
+// model's input stream (no statusLine equivalent), so users wanting a
+// live "daemon offline" indicator should rely on Claude Code's statusLine
+// or a shell-prompt integration of <agentlockHome>/bin/agentlock-status.
 // Operators who want fail-closed semantics can install with
 // `failClosed: true` in the wired hook entries — Cursor will then treat
 // any exit-code error as a deny regardless of what we write to stdout.
-
-import { clearDaemonDownMarker, warnDaemonDownOnce } from "../util/daemon-warn.ts";
 
 const ALLOWED_EVENTS = new Set([
   "session-start",
@@ -89,8 +92,6 @@ export async function runHookCursor(argv: string[]): Promise<void> {
     process.exit(0);
   }
 
-  // Validate JSON locally so a malformed body doesn't waste a daemon
-  // round trip. Pass through verbatim if it parses.
   try {
     JSON.parse(raw);
   } catch (e) {
@@ -110,13 +111,11 @@ export async function runHookCursor(argv: string[]): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: raw,
     });
-  } catch (e) {
-    warnDaemonDownOnce("cursor", url, e as Error);
-    process.exit(0); // fail-open
+  } catch {
+    // Daemon unreachable — silent fail-open. Cursor has no UI surface
+    // outside the model's input stream we can write to safely.
+    emitAllow();
   }
-
-  // Successful round-trip — re-arm the nudge for the next outage.
-  clearDaemonDownMarker();
 
   if (!res.ok) {
     process.stderr.write(

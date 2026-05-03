@@ -23,7 +23,17 @@ Claude Code uses **command hooks**. The installer adds entries to `~/.claude/set
 }
 ```
 
-The shim POSTs to `/v1/hooks/claude-code/<event>` and translates the response into Claude's exit-code / JSON contract. Routing through a shim — instead of Claude's native HTTP hooks — lets the harness fail-open silently on a daemon outage instead of surfacing a red "PreToolUse hook error / ECONNREFUSED" banner on every tool call. The first failed round-trip per outage emits a one-line stderr nudge ("daemon isn't running — running unprotected"), then stays silent until the daemon is back.
+The shim POSTs to `/v1/hooks/claude-code/<event>` and translates the response into Claude's exit-code / JSON contract. Routing through a shim — instead of Claude's native HTTP hooks — lets the harness fail-open silently on a daemon outage instead of surfacing a red "PreToolUse hook error / ECONNREFUSED" banner on every tool call.
+
+### Daemon-down UX
+
+When the daemon is unreachable, the shim never writes user-visible text into stdout — anything that reaches Claude's `additionalContext` / Cursor's `agent_message` lands in the model's input stream and registers as a prompt-injection attempt, regardless of wording. We surface daemon health through channels that bypass the model entirely, with a different surface per harness based on what each one's hook spec actually exposes:
+
+- **Claude Code — live `statusLine`** (best UX). The installer writes a `statusLine` entry in `~/.claude/settings.json` pointing at a tiny health-check script at `<agentlockHome>/bin/agentlock-status`. Claude Code re-runs that script on every UI render and shows the result as a persistent element under the chat: `OpenAgentLock ✓` when the daemon is up, `OpenAgentLock ⚠ daemon offline` when it's not. The output is pure UI — never seen by the model.
+- **Codex CLI — silent fail-open**. Codex has no `statusLine` analog and hides hook stderr on exit-0 (it only surfaces hook output as a red `(failed)` banner when the hook exits non-zero, which is the wrong channel for a status nudge). There is no in-Codex UI surface available for an indicator that won't either look like an error or pollute the model's input. The shim stays silent on every event when the daemon is unreachable.
+- **Cursor — silent fail-open**. Cursor's hook spec has no UI surface that's outside the model's input stream and no statusLine equivalent. On daemon failures the shim emits a plain `{"permission":"allow"}` envelope and stays silent. A live indicator for Cursor would need a real Cursor extension; tracked separately.
+
+All three harnesses share the wrapper-stability fix: the hook command Claude Code / Codex / Cursor spawn points at `<agentlockHome>/bin/agentlock` (e.g. `~/Library/Application Support/OpenAgentLock/bin/agentlock` on macOS), written by `agentlock install`. The path lives in our state dir, not in the package manager's `node_modules` tree, so package upgrades don't strand the wired path. The same applies to `agentlock-status`. Both paths are shell-quoted in the wired command string so spaces (`Application Support`) survive `/bin/sh -c` parsing.
 
 ## Codex CLI
 
@@ -41,9 +51,17 @@ command = ["agentlock", "hook", "codex", "pre-tool"]
 
 Codex command hooks are bash-only today; MCP coverage at the hook layer is a tracked upstream gap, not something we can paper over.
 
+Daemon-down behavior is documented in the **Daemon-down UX** section above — Codex stays silent (it has no UI surface that renders on exit-0 hooks).
+
+## Cursor
+
+Cursor (≥1.7) uses **command hooks** in `~/.cursor/hooks.json`. The installer wires the `agentlock hook cursor <event>` shim for `sessionStart`, `preToolUse`, `beforeShellExecution`, `beforeMCPExecution`, `afterMCPExecution`, `postToolUse`, and `sessionEnd`. The shim emits Cursor's `{permission, agent_message?}` shape on stdout.
+
+Daemon-down behavior is documented in the **Daemon-down UX** section above — Cursor gets silent fail-open on transport errors. We never set `agent_message` on those, since that field lands in the model's input stream and would register as a prompt-injection attempt.
+
 ## Other harnesses
 
-Cursor, OpenCode, Cline, Gemini CLI, Continue.dev all expose a hook surface but **the installer does not yet write to them**. The detectors find the harness, the picker shows it, and the install plan flags it as not yet implemented. Wiring is a follow-up tracked in the public roadmap.
+OpenCode, Cline, Gemini CLI, Continue.dev all expose a hook surface but **the installer does not yet write to them**. The detectors find the harness, the picker shows it, and the install plan flags it as not yet implemented. Wiring is a follow-up tracked in the public roadmap.
 
 VS Code Copilot has no general-purpose pre-tool hook surface; we cannot harden it from outside.
 
