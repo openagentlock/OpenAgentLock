@@ -215,3 +215,67 @@ func TestGateCheck_MissingRequiredFieldReturns400(t *testing.T) {
 		t.Fatalf("status = %d, want 400", res.StatusCode)
 	}
 }
+
+const nudgePolicyYAML = `
+version: 1
+mode: enforce
+defaults:
+  bash: allow
+gates:
+  - id: safety.rm-suggest-trash
+    match:
+      tool: Bash
+      any_command_regex:
+        - '\brm\s+(-[rRfF]+\s+)+\S+'
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "use trash instead"
+`
+
+// A policy rule with `nudge:` must surface that hint in the JSON
+// response from /v1/gates/check on a deny verdict, so harness shims and
+// the dashboard can show concrete remediation guidance.
+func TestGateCheck_DenyResponseCarriesNudge(t *testing.T) {
+	fx := newGateFixture(t, nudgePolicyYAML)
+
+	body := fmt.Sprintf(`{
+		"session_id": %q,
+		"source": "claude-code",
+		"tool": "Bash",
+		"input": {"command": "rm -rf /tmp/demo"}
+	}`, fx.sessionID)
+	res, out := postGateCheck(t, fx.srv, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "deny" {
+		t.Fatalf("verdict = %v", out["verdict"])
+	}
+	if out["nudge"] != "use trash instead" {
+		t.Fatalf("nudge = %v, want %q", out["nudge"], "use trash instead")
+	}
+}
+
+// Backward compat: rules without a nudge produce a response that omits
+// the field entirely (omitempty). Existing API consumers see no change.
+func TestGateCheck_AllowResponseOmitsNudgeField(t *testing.T) {
+	fx := newGateFixture(t, nudgePolicyYAML)
+
+	body := fmt.Sprintf(`{
+		"session_id": %q,
+		"source": "claude-code",
+		"tool": "Bash",
+		"input": {"command": "ls -la"}
+	}`, fx.sessionID)
+	res, out := postGateCheck(t, fx.srv, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "allow" {
+		t.Fatalf("verdict = %v", out["verdict"])
+	}
+	if _, present := out["nudge"]; present {
+		t.Fatalf("nudge field present on allow response: %v", out["nudge"])
+	}
+}

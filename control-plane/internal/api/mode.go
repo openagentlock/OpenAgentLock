@@ -82,6 +82,9 @@ func applyDaemonModeOverride(r policy.EvalResult) (policy.EvalResult, string, st
 			r.MonitorMatch = true
 			r.Verdict = "allow"
 			r.Reason = "deny suppressed by daemon monitor mode"
+			// Suppress the nudge: the agent is being allowed to proceed,
+			// so a "use trash instead" hint would be misleading.
+			r.Nudge = ""
 		}
 	case daemonModeFirewall:
 		if r.MonitorMatch && r.OriginalVerdict == "deny" {

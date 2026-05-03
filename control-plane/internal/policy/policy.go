@@ -69,6 +69,10 @@ type rawEval struct {
 	OnUnknown          string `yaml:"on_unknown,omitempty"`
 	OnChanged          string `yaml:"on_changed,omitempty"`
 	Store              string `yaml:"store,omitempty"`
+	// Nudge is an optional human-readable hint surfaced alongside a deny
+	// verdict so the agent gets concrete remediation guidance ("use trash
+	// instead") rather than a bare block. Ignored on allow / skip.
+	Nudge string `yaml:"nudge,omitempty"`
 }
 
 // Policy is the compiled form of a YAML policy.
@@ -89,6 +93,12 @@ type Gate struct {
 	Disabled   bool   // true = skip this gate during evaluation
 	Match      Matcher
 	Evaluators []Evaluator
+	// EvalNudges is a parallel slice to Evaluators carrying the optional
+	// `nudge:` string from each evaluate[] entry. Same length as
+	// Evaluators; entries are "" when the corresponding rawEval omitted
+	// the field. Evaluate uses the firing index to pull the matching
+	// nudge into the result without changing the Evaluator interface.
+	EvalNudges []string
 }
 
 // Evaluator is a step in a gate's `evaluate` pipeline. Each returns
@@ -381,6 +391,11 @@ type EvalResult struct {
 	// can re-apply the original deny without re-running the gate.
 	// Equal to Verdict when MonitorMatch is false.
 	OriginalVerdict string
+	// Nudge is the optional human-readable hint propagated from the
+	// firing evaluate clause. Only populated when the final verdict is
+	// "deny" — allow verdicts and monitor-downgraded matches leave it
+	// empty (the agent is proceeding, no need to nudge).
+	Nudge string
 }
 
 // Load parses YAML into a compiled Policy. Returns an error for unknown
@@ -408,12 +423,14 @@ func Load(r io.Reader) (*Policy, error) {
 			return nil, fmt.Errorf("gate %q: missing evaluate", rg.ID)
 		}
 		evaluators := make([]Evaluator, 0, len(rg.Evaluate))
+		nudges := make([]string, 0, len(rg.Evaluate))
 		for i, e := range rg.Evaluate {
 			ev, err := compileEvaluator(e)
 			if err != nil {
 				return nil, fmt.Errorf("gate %q: evaluate[%d]: %w", rg.ID, i, err)
 			}
 			evaluators = append(evaluators, ev)
+			nudges = append(nudges, e.Nudge)
 		}
 		m, err := compileMatch(rg.Match)
 		if err != nil {
@@ -428,6 +445,7 @@ func Load(r io.Reader) (*Policy, error) {
 			Disabled:   rg.Disabled,
 			Match:      m,
 			Evaluators: evaluators,
+			EvalNudges: nudges,
 		})
 	}
 
@@ -453,12 +471,14 @@ func (p *Policy) Evaluate(req EvalRequest) EvalResult {
 			continue
 		}
 		verdict := "skip"
-		for _, ev := range g.Evaluators {
+		firingIdx := -1
+		for i, ev := range g.Evaluators {
 			v := ev.Evaluate(req)
 			if v == "skip" {
 				continue
 			}
 			verdict = v
+			firingIdx = i
 			break
 		}
 		if verdict == "skip" {
@@ -471,7 +491,16 @@ func (p *Policy) Evaluate(req EvalRequest) EvalResult {
 			effectiveMode = p.Mode
 		}
 		reason := fmt.Sprintf("matched rule %s (%s)", g.ID, verdict)
+		// Pull the nudge from the firing evaluator's parallel-slice
+		// entry. Bounds-checked because EvalNudges may be nil/short on
+		// hand-built Gate values from tests.
+		var nudge string
+		if firingIdx >= 0 && firingIdx < len(g.EvalNudges) {
+			nudge = g.EvalNudges[firingIdx]
+		}
 		if effectiveMode == "monitor" {
+			// Monitor-downgraded matches let the agent proceed, so
+			// suppress the nudge — there is no block to remediate.
 			return EvalResult{
 				Verdict:         "allow",
 				RuleID:          g.ID,
@@ -480,11 +509,18 @@ func (p *Policy) Evaluate(req EvalRequest) EvalResult {
 				OriginalVerdict: verdict,
 			}
 		}
+		// Only carry the nudge through on a deny verdict; an allow
+		// outcome means the agent is proceeding and doesn't need a hint.
+		var resultNudge string
+		if verdict == "deny" {
+			resultNudge = nudge
+		}
 		return EvalResult{
 			Verdict:         verdict,
 			RuleID:          g.ID,
 			Reason:          reason,
 			OriginalVerdict: verdict,
+			Nudge:           resultNudge,
 		}
 	}
 	return EvalResult{

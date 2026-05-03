@@ -27,6 +27,7 @@ type gateCheckResponse struct {
 	Reason    string `json:"reason"`
 	LedgerSeq uint64 `json:"ledger_seq"`
 	Monitor   bool   `json:"monitor,omitempty"`
+	Nudge     string `json:"nudge,omitempty"`
 }
 
 func gateCheckHandler(d Deps) http.HandlerFunc {
@@ -118,6 +119,7 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 			Reason:    result.Reason,
 			LedgerSeq: entry.Seq,
 			Monitor:   result.MonitorMatch,
+			Nudge:     result.Nudge,
 		})
 	}
 }

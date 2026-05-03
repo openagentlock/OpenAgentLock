@@ -46,6 +46,11 @@ type GateCheckResponse struct {
 	LedgerSeq     uint64  `json:"ledger_seq"`
 	ApprovalID    string  `json:"approval_id,omitempty"` // present when verdict=ask
 	RequireRotate bool    `json:"require_rotate,omitempty"`
+	// Nudge is an optional human-readable hint propagated from the firing
+	// rule's evaluate clause. Only set on deny verdicts where the policy
+	// author supplied guidance ("use trash instead"). omitempty keeps the
+	// field absent for existing rules that don't define a nudge.
+	Nudge string `json:"nudge,omitempty"`
 }
 
 type Approval struct {
