@@ -164,18 +164,20 @@ export async function runInstall(argv: string[] = []): Promise<void> {
         "claude-code": flags.configDirOverride,
         codex: flags.configDirOverride,
         cursor: flags.configDirOverride,
+        gemini: flags.configDirOverride,
       }
     : {
         "claude-code": resolve(join(home(), ".claude")),
         codex: resolve(join(home(), ".codex")),
         cursor: resolve(join(home(), ".cursor")),
+        gemini: resolve(join(home(), ".gemini")),
       };
 
   // 1. Detection ---------------------------------------------------------
   const devMode = !!process.env.AGENTLOCK_DEV_HOME;
   const results = await detectAll();
   const isMvpEnabled = (id: HarnessId): boolean =>
-    id === "claude-code" || id === "codex" || id === "cursor";
+    id === "claude-code" || id === "codex" || id === "cursor" || id === "gemini";
   const options = results.map((r) => {
     const enabled = devMode || isMvpEnabled(r.id);
     let sub: string;
@@ -337,6 +339,10 @@ export async function runInstall(argv: string[] = []): Promise<void> {
         uninstallPaths.push(resolve(join(dir, "settings.json")));
       } else if (id === "codex" || id === "cursor") {
         uninstallPaths.push(resolve(join(dir, "hooks.json")));
+      } else if (id === "gemini") {
+        // Gemini stuffs hook entries into the same settings.json as
+        // every other CLI setting — no separate hooks.json file.
+        uninstallPaths.push(resolve(join(dir, "settings.json")));
       }
     }
     const uninstallExisting = await readExistingFiles(uninstallPaths);
@@ -385,11 +391,15 @@ export async function runInstall(argv: string[] = []): Promise<void> {
   const codexHooks = resolve(join(hostConfigDirs["codex"], "hooks.json"));
   const codexConfig = resolve(join(hostConfigDirs["codex"], "config.toml"));
   const cursorHooks = resolve(join(hostConfigDirs["cursor"], "hooks.json"));
+  const geminiSettings = resolve(
+    join(hostConfigDirs["gemini"], "settings.json"),
+  );
   const existingFiles = await readExistingFiles([
     claudeSettings,
     codexHooks,
     codexConfig,
     cursorHooks,
+    geminiSettings,
   ]);
 
   // Write the status-line script alongside the binary wrapper. Daemon
@@ -477,7 +487,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
   } catch (err) {
     process.stderr.write(`\n${(err as Error).message}\n`);
     process.stderr.write(
-      "use --config-dir ./dev/.claude (or ./dev/.codex, ./dev/.cursor) for dev runs.\n",
+      "use --config-dir ./dev/.claude (or ./dev/.codex, ./dev/.cursor, ./dev/.gemini) for dev runs.\n",
     );
     process.exitCode = 2;
     return;

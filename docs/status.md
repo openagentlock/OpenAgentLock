@@ -7,15 +7,15 @@ Live status of every component shipped to the public repo. <span class="md-statu
 | Surface | Status |
 |---|---|
 | `agentlock detect` | <span class="md-status-pill shipped">Shipped</span> |
-| `agentlock install` (Claude Code, Codex CLI, Cursor) | <span class="md-status-pill shipped">Shipped</span> |
-| `agentlock install` (OpenCode, Cline, Gemini CLI, Continue, VS Code Copilot) | <span class="md-status-pill not-yet">Not yet implemented</span> — detected but disabled in selector |
+| `agentlock install` (Claude Code, Codex CLI, Cursor, Gemini CLI) | <span class="md-status-pill shipped">Shipped</span> |
+| `agentlock install` (OpenCode, Cline, Continue, VS Code Copilot) | <span class="md-status-pill not-yet">Not yet implemented</span> — detected but disabled in selector |
 | `agentlock install --tier {unattested,software,totp}` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock status` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock signer enroll --tier totp` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock signer enroll --tier os-keychain` (macOS, optional `--ttl`) | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock signer enroll --tier yubikey` (PIV / FIDO2) | <span class="md-status-pill not-yet">Not yet implemented</span> |
 | `agentlock session create / rotate / end` (software, totp) | <span class="md-status-pill shipped">Shipped</span> |
-| `agentlock hook claude-code / codex / cursor <event>` shims | <span class="md-status-pill shipped">Shipped</span> |
+| `agentlock hook claude-code / codex / cursor / gemini <event>` shims | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock ledger root / verify` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock fake-hook` (eval / scenario harness) | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock dashboard` (open local web dashboard) | <span class="md-status-pill shipped">Shipped</span> |
@@ -36,6 +36,7 @@ Live status of every component shipped to the public repo. <span class="md-statu
 | `/v1/hooks/claude-code/*` | <span class="md-status-pill shipped">Shipped</span> |
 | `/v1/hooks/codex/*` | <span class="md-status-pill shipped">Shipped</span> |
 | `/v1/hooks/cursor/*` | <span class="md-status-pill shipped">Shipped</span> |
+| `/v1/hooks/gemini/*` | <span class="md-status-pill shipped">Shipped</span> |
 | `/v1/auth` (password) | <span class="md-status-pill shipped">Shipped</span> |
 | `/v1/auth` (OIDC) | <span class="md-status-pill not-yet">Not yet implemented</span> — stub returns mode hint |
 | `/v1/auth` (LDAP) | <span class="md-status-pill not-yet">Not yet implemented</span> — stub returns mode hint |

@@ -83,6 +83,10 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"POST", "/v1/hooks/cursor/after-mcp-execution", cursorAfterMCPHandler(d)},
 		{"POST", "/v1/hooks/cursor/post-tool-use", cursorPostToolUseHandler(d)},
 		{"POST", "/v1/hooks/cursor/stop", cursorStopHandler(d)},
+		{"POST", "/v1/hooks/gemini/session-start", geminiSessionStartHandler(d)},
+		{"POST", "/v1/hooks/gemini/pre-tool-use", geminiPreToolUseHandler(d)},
+		{"POST", "/v1/hooks/gemini/post-tool-use", geminiPostToolUseHandler(d)},
+		{"POST", "/v1/hooks/gemini/stop", geminiStopHandler(d)},
 
 		// MCP TOFU pinning.
 		{"POST", "/v1/mcp/pin/check", mcpPinCheckHandler(d)},

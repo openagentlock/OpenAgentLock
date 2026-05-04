@@ -194,7 +194,7 @@ func TestInstallPlan_UnknownHarness_Skipped(t *testing.T) {
 
 	body := fmt.Sprintf(`{
 		"session_id": %q,
-		"harnesses": ["cline","gemini"],
+		"harnesses": ["cline","opencode"],
 		"daemon_url": "http://127.0.0.1:7878"
 	}`, fx.sessionID)
 	res, err := http.Post(fx.srv.URL+"/v1/install/plan", "application/json", strings.NewReader(body))

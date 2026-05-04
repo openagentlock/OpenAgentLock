@@ -140,6 +140,10 @@ func buildPlanOps(req installPlanRequest) ([]fileOp, []string, []string) {
 			op, ws := cursorPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
 			ops = append(ops, op)
 			warnings = append(warnings, ws...)
+		case "gemini":
+			op, ws := geminiPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
+			ops = append(ops, op)
+			warnings = append(warnings, ws...)
 		default:
 			if devHome == "" || !knownHarnessID(h) {
 				skipped = append(skipped, h)
@@ -474,6 +478,11 @@ func harnessForPath(path string) string {
 	dir := filepath.Base(filepath.Dir(path))
 	switch {
 	case strings.HasSuffix(path, "settings.json"):
+		// Gemini also writes settings.json (in ~/.gemini); disambiguate
+		// by parent directory. Anything else is Claude Code.
+		if dir == ".gemini" {
+			return "gemini"
+		}
 		return "claude-code"
 	case strings.HasSuffix(path, ".agentlock-dev.json"):
 		// devStubDir is "<devHome>/.<harness>", so base of dir = ".harness"
@@ -664,6 +673,8 @@ func installUninstallHandler(d Deps) http.HandlerFunc {
 				newBytes, removed, stripErr = stripCodexHooks(existing)
 			case "cursor":
 				newBytes, removed, stripErr = stripCursorHooks(existing)
+			case "gemini":
+				newBytes, removed, stripErr = stripGeminiSettings(existing)
 			default:
 				// Default to Claude's settings.json shape. Older manifests
 				// without a Harness field land here, which is the right
@@ -842,6 +853,27 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 					failures++
 					op.Error = stripErr.Error()
 					log.Printf("install.uninstall_harnesses: strip cursor %s: %v", p, stripErr)
+				} else {
+					op.EntriesRemoved = removed
+					if removed > 0 {
+						op.Content = string(newBytes)
+					}
+				}
+				ops = append(ops, op)
+			case "gemini":
+				p, err := geminiSettingsPath(req.ConfigDirOverride, req.HarnessConfigDirs)
+				if err != nil {
+					failures++
+					ops = append(ops, uninstallOp{Op: "strip", Path: "<unresolved>", Error: err.Error()})
+					continue
+				}
+				existing := []byte(req.ExistingFiles[p])
+				newBytes, removed, stripErr := stripGeminiSettings(existing)
+				op := uninstallOp{Op: "strip", Path: p}
+				if stripErr != nil {
+					failures++
+					op.Error = stripErr.Error()
+					log.Printf("install.uninstall_harnesses: strip gemini %s: %v", p, stripErr)
 				} else {
 					op.EntriesRemoved = removed
 					if removed > 0 {
