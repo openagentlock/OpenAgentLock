@@ -18,6 +18,8 @@ jobs:
   publish:
     name: publish @openagentlock/cli
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v6
 
@@ -41,45 +43,125 @@ jobs:
         working-directory: cli
         run: bun test
 
+      - id: ver
+        name: Resolve version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
       - name: Publish
         working-directory: cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
 
-      - name: Open Homebrew formula PR
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ github.ref_name }}
+  formula:
+    name: open Homebrew formula PR
+    needs: publish
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Wait for tarball + compute sha256
+        id: tarball
         run: |
           set -euo pipefail
-          v="${VERSION#v}"
-          tarball="https://registry.npmjs.org/@openagentlock/cli/-/cli-${v}.tgz"
-          for i in 1 2 3 4 5 6; do
-            if curl -sfI "$tarball" >/dev/null; then break; fi
-            sleep 5
+          v="${VERSION}"
+          pkg="@openagentlock/cli"
+
+          deadline=$(( $(date +%s) + 300 ))
+          tarball=""
+          integrity=""
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            tarball=$(npm view "${pkg}@${v}" dist.tarball 2>/dev/null || true)
+            integrity=$(npm view "${pkg}@${v}" dist.integrity 2>/dev/null || true)
+            if [ -n "$tarball" ] && [ -n "$integrity" ]; then
+              if curl -fLsS --retry 3 --retry-delay 3 --max-time 30 \
+                   -o /tmp/cli.tgz "$tarball"; then
+                break
+              fi
+            fi
+            echo "tarball not ready yet; retrying in 15s..."
+            sleep 15
+            tarball=""
           done
-          sha=$(curl -sfL "$tarball" | shasum -a 256 | awk '{print $1}')
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          branch="formula/v${v}"
-          git checkout -B "$branch" origin/main
+
+          if [ -z "$tarball" ] || [ ! -s /tmp/cli.tgz ]; then
+            echo "::error::Tarball for ${pkg}@${v} not available after 5 minutes" >&2
+            exit 1
+          fi
+
+          want_sha512=$(printf '%s' "$integrity" | sed -E 's|^sha512-||' \
+            | base64 -d 2>/dev/null | xxd -p -c 256 | tr -d '\n')
+          got_sha512=$(shasum -a 512 /tmp/cli.tgz | awk '{print $1}')
+          if [ "$want_sha512" != "$got_sha512" ]; then
+            echo "::error::Integrity mismatch: registry=${want_sha512} got=${got_sha512}" >&2
+            exit 1
+          fi
+
+          sha256=$(shasum -a 256 /tmp/cli.tgz | awk '{print $1}')
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Tarball"
+            echo ""
+            echo "- url: \`$tarball\`"
+            echo "- sha256: \`$sha256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Edit Formula
+        env:
+          SHA256: ${{ steps.tarball.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          v="${VERSION}"
           sed -i -E \
             -e "s|cli-[0-9]+\.[0-9]+\.[0-9]+\.tgz|cli-${v}.tgz|" \
-            -e "s|sha256 \"[^\"]+\"|sha256 \"${sha}\"|" \
+            -e "s|sha256 \"[^\"]+\"|sha256 \"${SHA256}\"|" \
             -e "s|version \"[^\"]+\"|version \"${v}\"|" \
             Formula/agentlock.rb
           if git diff --quiet -- Formula/agentlock.rb; then
-            echo "Formula already at v${v}"
-            exit 0
+            echo "Formula already at v${v}; nothing to do." \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "NO_CHANGES=1" >> "$GITHUB_ENV"
           fi
+
+      - name: Open PR
+        if: env.NO_CHANGES != '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          v="${VERSION}"
+          branch="formula/v${v}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Recreate the branch cleanly (delete any stale remote copy first).
+          git push origin --delete "$branch" 2>/dev/null || true
+          git checkout -B "$branch"
           git add Formula/agentlock.rb
           git commit -m "Formula: pin v${v} sha256"
-          git push -f origin "$branch"
-          gh pr create \
-            --base main \
-            --head "$branch" \
-            --title "Formula: pin v${v} sha256" \
-            --body "Automated formula bump after publishing \`@openagentlock/cli@${v}\` to npm." \
-            || gh pr edit "$branch" --title "Formula: pin v${v} sha256"
+          git push -u origin "$branch"
+
+          existing=$(gh pr list --head "$branch" --state open \
+            --json number --jq '.[0].number' || true)
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already open for $branch" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "Formula: pin v${v} sha256" \
+              --body "Automated formula bump after publishing \`@openagentlock/cli@${v}\` to npm."
+          fi
