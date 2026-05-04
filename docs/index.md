@@ -118,12 +118,12 @@ curl -O https://raw.githubusercontent.com/openagentlock/openagentlock/main/docke
 docker compose up -d
 
 # 3. Install the CLI and wire up your agents
-brew install openagentlock/tap/agentlock
+npm i -g @openagentlock/cli
 agentlock detect
 agentlock install
 ```
 
-See [Installation](guide/installation.md) for npm, source builds, and platform notes.
+See [Installation](guide/installation.md) for source builds and platform notes.
 
 ## Status
 

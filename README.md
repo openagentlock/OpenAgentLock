@@ -34,7 +34,6 @@ docker run -d --name agentlock \
 # 2. Install the CLI
 npm i -g @openagentlock/cli
 # or: bun add -g @openagentlock/cli
-# or: brew install openagentlock/tap/agentlock
 
 # 3. Enroll a signer (TOTP — recommended for prod)
 agentlock signer enroll --tier totp --passphrase 'your-passphrase-here'
@@ -137,7 +136,6 @@ ledger/                     Rust crate (lib + cdylib + staticlib)     — openag
 policies/default.yaml       baseline policy shipped with every install
 docs/                       MkDocs Material site (deployed to openagentlock.github.io/OpenAgentLock)
 assets/                     logo, favicon, social card
-Formula/agentlock.rb        Homebrew tap formula
 docker-compose.yml          one-command control-plane bring-up
 scripts/install.sh          one-shot installer
 .github/workflows/          ci · docker-publish · npm-publish · pages
