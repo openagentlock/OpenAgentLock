@@ -41,12 +41,6 @@ curl -s http://127.0.0.1:7878/v1/health
 
 ## 2. Install the CLI
 
-=== "Homebrew"
-
-    ```bash
-    brew install openagentlock/tap/agentlock
-    ```
-
 === "npm / Bun"
 
     ```bash
