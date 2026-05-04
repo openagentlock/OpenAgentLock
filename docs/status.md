@@ -9,6 +9,7 @@ Live status of every component shipped to the public repo. <span class="md-statu
 | `agentlock detect` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock install` (Claude Code, Codex CLI, Cursor, Gemini CLI) | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock install` (OpenCode, Cline, Continue, VS Code Copilot) | <span class="md-status-pill not-yet">Not yet implemented</span> — detected but disabled in selector |
+| `agentlock install` (Claude Desktop, Cursor Desktop, Codex Desktop, Openclaw, Nemoclaw, Hermesagent, Pi) | <span class="md-status-pill not-yet">Not yet implemented</span> — roadmap; awaiting per-app hook/config investigation |
 | `agentlock install --tier {unattested,software,totp}` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock status` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock signer enroll --tier totp` | <span class="md-status-pill shipped">Shipped</span> |
