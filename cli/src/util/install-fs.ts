@@ -27,7 +27,7 @@ export function checkSafeTarget(
 ): void {
   if (opts.bypass) return;
   const home = homedir();
-  const allowed = [".claude", ".codex", ".cursor"].map((d) =>
+  const allowed = [".claude", ".codex", ".cursor", ".gemini"].map((d) =>
     resolve(home, d),
   );
   const target = resolve(absPath);
@@ -35,7 +35,7 @@ export function checkSafeTarget(
     if (target === root || target.startsWith(root + sep)) return;
   }
   throw new Error(
-    `unsafe target: ${absPath} does not resolve under ~/.claude, ~/.codex, or ~/.cursor`,
+    `unsafe target: ${absPath} does not resolve under ~/.claude, ~/.codex, ~/.cursor, or ~/.gemini`,
   );
 }
 

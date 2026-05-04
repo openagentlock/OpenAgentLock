@@ -23,6 +23,7 @@ import { runFakeHook } from "./commands/fake-hook.ts";
 import { runHookClaudeCode } from "./commands/hook-claude-code.ts";
 import { runHookCodex } from "./commands/hook-codex.ts";
 import { runHookCursor } from "./commands/hook-cursor.ts";
+import { runHookGemini } from "./commands/hook-gemini.ts";
 import { runLedgerRoot, runLedgerVerify } from "./commands/ledger.ts";
 import { runSignerEnroll } from "./commands/signer-enroll.ts";
 import {
@@ -509,6 +510,17 @@ const hookCursor = hook
     await runHookCursor([event]);
   });
 void hookCursor;
+
+const hookGemini = hook
+  .command("gemini <event>")
+  .description(
+    "Gemini CLI shim. Reads stdin hook payload, forwards to /v1/hooks/gemini/<event>, maps allow/deny → exit 0/2 (deny also writes {decision,reason} JSON to stdout).",
+  )
+  .allowUnknownOption()
+  .action(async (event: string) => {
+    await runHookGemini([event]);
+  });
+void hookGemini;
 
 const hookClaudeCode = hook
   .command("claude-code <event>")
