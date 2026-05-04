@@ -1,10 +1,10 @@
 class Agentlock < Formula
   desc "Locally-hosted, open-source firewall for AI coding agents"
   homepage "https://openagentlock.github.io/OpenAgentLock"
-  url "https://registry.npmjs.org/@openagentlock/cli/-/cli-0.1.11.tgz"
-  sha256 "9faed2e48da9c38adec8775a6d9747a98a5a26a32e48aea18c53d384830009b7"
+  url "https://registry.npmjs.org/@openagentlock/cli/-/cli-0.1.17.tgz"
+  sha256 "9a00959fcb8e74b23d0bbdb7883eb090db9e7fcdc2739c879f32fe9245837b2f"
   license "FSL-1.1-Apache-2.0"
-  version "0.1.11"
+  version "0.1.17"
 
   depends_on "bun"
 
