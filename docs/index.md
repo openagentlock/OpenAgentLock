@@ -40,10 +40,10 @@ Interactive multi-select. Posts to `/v1/install/plan`, renders the diff, applies
 </div>
 
 <div class="gate-card" markdown>
-#### Five baseline gates
-<span class="gate-id">`policies/default.yaml`</span>
+#### Registry-first policy
+<span class="gate-id">`agentlock rules install`</span>
 
-Package install, untrusted MCP, secret reads, network egress, destructive bash. Ship in monitor mode by default.
+First-boot policy is intentionally minimal (one `rogue.destructive-bash` gate in monitor mode). Real coverage comes from the [openagentlock/rules](https://openagentlock.github.io/rules/) registry — `agentlock rules sync && agentlock rules install <id>` lands gates in the live policy with a fresh hash.
 </div>
 
 <div class="gate-card" markdown>
