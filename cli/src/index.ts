@@ -461,10 +461,11 @@ rules
     "Install a rule into the local policy. Accepts a bare id or 'registryId:ruleId' to disambiguate.",
   )
   .option("--replace", "Overwrite an existing gate with the same id.")
+  .option("--repo", "Write the rule into the current repo's .agentlock.yaml instead of daemon policy.")
   .option("--url <url>", "Control-plane base URL.")
   .option("--json", "Emit JSON instead of human output.", false)
-  .action(async (ruleId: string, opts: { replace?: boolean; url?: string; json: boolean }) => {
-    await runRulesInstall({ spec: ruleId, replace: opts.replace, url: opts.url, json: opts.json });
+  .action(async (ruleId: string, opts: { replace?: boolean; repo?: boolean; url?: string; json: boolean }) => {
+    await runRulesInstall({ spec: ruleId, replace: opts.replace, repo: opts.repo, url: opts.url, json: opts.json });
   });
 
 rules

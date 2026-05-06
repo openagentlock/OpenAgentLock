@@ -169,6 +169,145 @@ func TestGateCheck_DeniesDestructiveBash(t *testing.T) {
 	}
 }
 
+func TestGateCheck_AppliesRepoAgentlockOnlyInsideCwdTree(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	repo := filepath.Join(fx.home, "repo")
+	sibling := filepath.Join(fx.home, "sibling")
+	if err := os.MkdirAll(filepath.Join(repo, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agentlock.yaml"), []byte(`
+version: 1
+gates:
+  - id: repo.block-secret-print
+    match:
+      tool: Bash
+      any_command_regex:
+        - 'cat\s+secrets\.txt'
+    evaluate:
+      - kind: always
+        action: deny
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inside := fmt.Sprintf(`{
+		"session_id": %q,
+		"source": "codex",
+		"tool": "Bash",
+		"cwd": %q,
+		"input": {"command": "cat secrets.txt"}
+	}`, fx.sessionID, filepath.Join(repo, "pkg"))
+	res, out := postGateCheck(t, fx.srv, inside)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("inside status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "deny" || out["rule_id"] != "repo.block-secret-print" {
+		t.Fatalf("inside should hit repo rule, got %+v", out)
+	}
+
+	outside := fmt.Sprintf(`{
+		"session_id": %q,
+		"source": "codex",
+		"tool": "Bash",
+		"cwd": %q,
+		"input": {"command": "cat secrets.txt"}
+	}`, fx.sessionID, sibling)
+	res, out = postGateCheck(t, fx.srv, outside)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("outside status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "allow" || out["rule_id"] != "default" {
+		t.Fatalf("sibling repo should not inherit repo rule, got %+v", out)
+	}
+}
+
+func TestGateCheck_IgnoresPermissiveRepoAgentlockUntilApproved(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	repo := filepath.Join(fx.home, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agentlock.yaml"), []byte(`
+version: 1
+gates:
+  - id: rogue.destructive-bash
+    disabled: true
+    match:
+      tool: Bash
+      any_command_regex:
+        - 'rm\s+-rf\b'
+    evaluate:
+      - kind: always
+        action: allow
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{
+		"session_id": %q,
+		"source": "codex",
+		"tool": "Bash",
+		"cwd": %q,
+		"input": {"command": "rm -rf /tmp/demo"}
+	}`, fx.sessionID, repo)
+	res, out := postGateCheck(t, fx.srv, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "deny" || out["rule_id"] != "rogue.destructive-bash" {
+		t.Fatalf("permissive repo override must not weaken daemon policy, got %+v", out)
+	}
+}
+
+func TestGateCheck_AppliesRepoGateWithConditionalDenyEvaluator(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	repo := filepath.Join(fx.home, "repo")
+	allowlist := filepath.Join(repo, "allowed.txt")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(allowlist, []byte("safe-package\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agentlock.yaml"), []byte(fmt.Sprintf(`
+version: 1
+gates:
+  - id: repo.npm-allowlist
+    match:
+      tool: Bash
+      any_command_regex:
+        - '^npm\s+install\s+'
+    evaluate:
+      - kind: allowlist
+        list: %q
+        on_hit: allow
+        on_miss: deny
+      - kind: always
+        action: allow
+`, allowlist)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{
+		"session_id": %q,
+		"source": "codex",
+		"tool": "Bash",
+		"cwd": %q,
+		"input": {"command": "npm install evil-package"}
+	}`, fx.sessionID, repo)
+	res, out := postGateCheck(t, fx.srv, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "deny" || out["rule_id"] != "repo.npm-allowlist" {
+		t.Fatalf("conditional deny repo gate should apply, got %+v", out)
+	}
+}
+
 func TestGateCheck_WritesLedgerEntry(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 

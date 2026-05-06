@@ -84,6 +84,7 @@ function RulesTab() {
                   <th style={{ width: 48 }}>on</th>
                   <th>id</th>
                   <th>mode</th>
+                  <th>source</th>
                   <th>tool</th>
                   <th>match</th>
                   <th style={{ width: 96 }}>actions</th>
@@ -110,6 +111,7 @@ function RulesTab() {
                       <td>
                         <span className="oal-chip">{g.mode || "inherit"}</span>
                       </td>
+                      <td className="font-mono text-muted text-[11px]">{g.source || "daemon"}</td>
                       <td className="font-mono">{g.tool || g.tool_prefix || "—"}</td>
                       <td className="font-mono text-muted text-[11px]">
                         {g.any_command_regex && g.any_command_regex.length > 0
@@ -134,7 +136,7 @@ function RulesTab() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="text-center text-muted py-4">
+                    <td colSpan={7} className="text-center text-muted py-4">
                       no rules
                     </td>
                   </tr>

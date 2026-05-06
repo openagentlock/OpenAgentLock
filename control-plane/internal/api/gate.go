@@ -66,7 +66,7 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 
 		// Resolve the policy pinned to this session's hash; falls back to
 		// live when the hash is unknown (e.g. registry not yet seeded).
-		evalPolicy := resolvePolicy(d, sess.PolicyHash)
+		evalPolicy := resolvePolicyForCwd(d, sess.PolicyHash, req.Cwd)
 		if evalPolicy == nil {
 			writeError(w, http.StatusServiceUnavailable, "policy_unavailable", "no policy loaded")
 			return

@@ -38,12 +38,35 @@ agentlock rules search bash
 agentlock rules install exfil.curl-with-env
 agentlock rules install rogue.secret-read
 
+# Or commit the rule to the current repo only. This writes the registry
+# rule's gate block into .agentlock.yaml instead of the daemon policy.
+agentlock rules install rogue.secret-read --repo
+
 # Remove later — by gate id, the same /v1/policy/gates/{id} DELETE
 # handler the dashboard uses.
 agentlock rules uninstall exfil.curl-with-env
 ```
 
 `agentlock rules` is wired through to the same daemon endpoint the [local web dashboard](dashboard.md) uses, so installs are immediately visible at `http://127.0.0.1:7879/rules`.
+
+## Repo-local `.agentlock.yaml`
+
+Repos can commit a root `.agentlock.yaml` for policy that applies only when a request `cwd` is inside that tree:
+
+```yaml
+version: 1
+gates:
+  - id: repo.block-prod-env
+    match:
+      tool: Bash
+      any_command_regex:
+        - 'cat\s+\.env\.production'
+    evaluate:
+      - kind: always
+        action: deny
+```
+
+The daemon walks upward from `cwd` and uses the nearest `.agentlock.yaml`. Sibling repos are unaffected. Because cloned repos are not trusted, repo-local policy is additive by default: new deny-producing gates apply immediately, but disabled gates, same-id overrides, and `always: allow` content cannot weaken daemon policy without an operator approval flow. See [Per-Repo Policy](../architecture/per-repo-policy.md) for the full trust model and precedence chain.
 
 ### Pin a private registry too
 

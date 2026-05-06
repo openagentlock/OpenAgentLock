@@ -61,6 +61,12 @@ interface RuleYAML {
   gate?: Record<string, unknown>;
 }
 
+interface RepoAgentlockYAML {
+  version?: number;
+  extends?: string[];
+  gates?: Record<string, unknown>[];
+}
+
 function registriesPath(): string {
   return join(agentlockHome(), "registries.json");
 }
@@ -340,7 +346,7 @@ export async function runRulesSearch(opts: { query?: string } & RulesCommonOptio
 }
 
 export async function runRulesInstall(
-  opts: { spec: string; replace?: boolean } & RulesCommonOptions,
+  opts: { spec: string; replace?: boolean; repo?: boolean } & RulesCommonOptions,
 ) {
   const resolved = resolveRule(opts.spec);
   if (!resolved.rule.gate) {
@@ -355,7 +361,23 @@ export async function runRulesInstall(
   const gateBlock = {
     ...(resolved.rule.gate as Record<string, unknown>),
     id: resolved.rule.id,
+    source: `registry:${resolved.registryId}`,
   };
+  if (opts.repo) {
+    installGateIntoRepoAgentlock(gateBlock, opts.replace);
+    if (opts.json) {
+      process.stdout.write(
+        JSON.stringify(
+          { installed: resolved.ruleId, registry: resolved.registryId, file: ".agentlock.yaml" },
+          null,
+          2,
+        ) + "\n",
+      );
+      return;
+    }
+    process.stdout.write(`installed ${resolved.ruleId} into .agentlock.yaml\n`);
+    return;
+  }
   const yamlBody = dumpYAML(gateBlock);
   const client = apiClient(opts.url);
   const res = await client.installGateYAML(yamlBody, !!opts.replace);
@@ -368,6 +390,43 @@ export async function runRulesInstall(
       `  policy hash: ${res.hash}\n` +
       `  total gates: ${res.gates}\n`,
   );
+}
+
+function installGateIntoRepoAgentlock(gateBlock: Record<string, unknown>, replace?: boolean): void {
+  const path = join(process.cwd(), ".agentlock.yaml");
+  let doc: RepoAgentlockYAML = { version: 1, gates: [] };
+  if (existsSync(path)) {
+    const loaded = loadRuleLikeDocument(readFileSync(path, "utf8"));
+    doc = {
+      version: typeof loaded.version === "number" ? loaded.version : 1,
+      extends: Array.isArray(loaded.extends) ? loaded.extends : undefined,
+      gates: Array.isArray(loaded.gates) ? loaded.gates : [],
+    };
+  }
+  if (!doc.version) doc.version = 1;
+  if (!doc.gates) doc.gates = [];
+  const id = String(gateBlock.id ?? "");
+  const existing = doc.gates.findIndex((g) => g.id === id);
+  if (existing >= 0 && !replace) {
+    throw new Error(`gate ${id} already exists in .agentlock.yaml (use --replace to overwrite)`);
+  }
+  if (existing >= 0) {
+    doc.gates[existing] = gateBlock;
+  } else {
+    doc.gates.push(gateBlock);
+  }
+  writeFileSync(path, dumpYAML(doc), { mode: 0o644 });
+}
+
+function loadRuleLikeDocument(body: string): Record<string, unknown> {
+  try {
+    return requireYAML().parse(body) as Record<string, unknown>;
+  } catch (err) {
+    if ((err as { code?: string }).code === "MODULE_NOT_FOUND") {
+      return JSON.parse(body) as Record<string, unknown>;
+    }
+    throw err;
+  }
 }
 
 export async function runRulesUninstall(opts: { id: string } & RulesCommonOptions) {
