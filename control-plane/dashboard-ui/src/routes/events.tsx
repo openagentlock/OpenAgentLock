@@ -47,6 +47,14 @@ function EventsTab() {
   const [ruleFilter, setRuleFilter] = useState("");
   const [showInternal, setShowInternal] = useState(false);
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+
+  // Reset to page 0 when filter inputs or page size change so the user
+  // never lands on an empty page after narrowing the result set.
+  useEffect(() => {
+    setPage(0);
+  }, [sourceFilter, verdictFilter, ruleFilter, showInternal, pageSize]);
 
   const sources = useMemo(() => {
     const set = new Set<string>();
@@ -75,6 +83,15 @@ function EventsTab() {
       .slice()
       .sort((a, b) => b.seq - a.seq);
   }, [entries, sourceFilter, verdictFilter, ruleFilter, showInternal]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageStart = safePage * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, filtered.length);
+  const paged = useMemo(
+    () => filtered.slice(pageStart, pageEnd),
+    [filtered, pageStart, pageEnd],
+  );
 
   return (
     <div className="space-y-4">
@@ -177,14 +194,14 @@ function EventsTab() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {paged.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="text-center text-muted py-4">
                     no events
                   </td>
                 </tr>
               ) : (
-                filtered.map((e) => (
+                paged.map((e) => (
                   <tr
                     key={`${e.seq}-${e.leaf_hash}`}
                     onClick={() => setSelectedSeq(e.seq)}
@@ -228,6 +245,46 @@ function EventsTab() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap mt-3 text-[11px] text-muted">
+          <div>
+            {filtered.length === 0
+              ? "0 events"
+              : `showing ${pageStart + 1}-${pageEnd} of ${filtered.length}`}
+          </div>
+          <label className="flex items-center gap-1 ml-auto">
+            page size
+            <select
+              className="oal-input"
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+            >
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={200}>200</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="oal-btn-link disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={safePage <= 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
+            prev
+          </button>
+          <span className="font-mono">
+            {safePage + 1} / {pageCount}
+          </span>
+          <button
+            type="button"
+            className="oal-btn-link disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={safePage >= pageCount - 1}
+            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+          >
+            next
+          </button>
         </div>
       </section>
 
