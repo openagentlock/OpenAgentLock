@@ -73,6 +73,7 @@ func geminiPreToolUseHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid_request", "session_id, tool_name required")
 			return
 		}
+		in.ToolInput = normalizeMCPHTTPURLInput(in.ToolName, in.ToolInput, in.MCPContext)
 
 		sess, err := ensureGeminiSession(r, d, in.SessionID)
 		if err != nil {

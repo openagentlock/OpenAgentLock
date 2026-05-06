@@ -89,6 +89,8 @@ The control plane normalizes hook payloads into a single shape regardless of har
 
 Ledger leaves use the same shape plus `verdict`, `reason`, `policy_rule_id`, and `signer`.
 
+For MCP-shaped tool names (`mcp__...` or `mcp_...`), pre-tool handlers also normalize HTTP MCP transport metadata into `tool.args.url` before policy evaluation when the harness exposes it. Candidate metadata keys are `url`, `server_url`, `mcp_server_url`, `transport_url`, and `base_url`; native `tool.args.url` takes precedence.
+
 ## Nudges in deny replies
 
 When a matched rule carries a `nudge:` hint (see [Policies → Nudges](../guide/policies.md#nudges)) and the final verdict is `deny`, every harness shim — Claude Code, Codex, Cursor, Gemini — appends the hint to the deny reason it forwards to the model. The format is the literal string `"<reason>\n\n→ Suggested: <nudge>"` — arrow `→`, capital `S`, colon-space — and is intentionally stable so external tools can grep for `→ Suggested: ` to spot the hint. Allow, monitor-suppressed, and non-matching paths drop the field; the reason flows through unchanged.
