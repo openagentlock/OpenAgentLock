@@ -196,6 +196,7 @@ func cursorGateHandler(d Deps, eventName string, kind cursorDedupeKind) http.Han
 				"conversation_id, tool_name required")
 			return
 		}
+		in.ToolInput = normalizeMCPHTTPURLInput(in.ToolName, in.ToolInput)
 
 		if cached, ok := cursorDedupe.lookup(in.ToolUseID, cursorDedupePre); ok {
 			// Second event in the pair — return the cached verdict.
