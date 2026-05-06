@@ -6,6 +6,13 @@ export interface ApiClient {
   token: string | null;
   setToken(token: string | null): void;
   ledgerTailUrl(): string;
+  // Tail the ledger SSE stream. Uses fetch + ReadableStream so it works
+  // under runtimes that don't expose a global EventSource (e.g. Bun).
+  // Auto-reconnects with a 2s backoff until the returned cancel is called.
+  tailLedger(opts: {
+    onEntry: (entry: unknown) => void;
+    onStatus?: (status: "connecting" | "open" | "closed") => void;
+  }): () => void;
   authMode(): Promise<AuthModeResponse>;
   authLogin(username: string, password: string): Promise<AuthLoginResponse>;
   authBootstrap(username: string, password: string): Promise<AuthBootstrapResponse>;
@@ -37,7 +44,53 @@ export interface ApiClient {
   patchMode(mode: "firewall" | "monitor" | ""): Promise<ModeResponse>;
   policyView(): Promise<PolicyViewResponse>;
   installGateYAML(yaml: string, replace?: boolean): Promise<InstallGateYAMLResponse>;
+  addGate(req: AddGateRequest): Promise<InstallGateYAMLResponse>;
+  patchGate(id: string, req: PatchGateRequest): Promise<InstallGateYAMLResponse>;
   deleteGate(id: string): Promise<DeleteGateResponse>;
+  ledgerInsights(window?: InsightWindow, top?: number): Promise<LedgerInsightsResponse>;
+}
+
+export type InsightWindow = "1h" | "24h" | "7d" | "all";
+
+export interface AddGateRequest {
+  id: string;
+  tool?: string;
+  tool_prefix?: string;
+  any_command_regex?: string[];
+  any_path_regex?: string[];
+  any_url_regex?: string[];
+  path_glob?: string;
+  action: "deny" | "allow";
+  mode?: string;
+}
+
+export interface PatchGateRequest {
+  disabled?: boolean;
+  any_command_regex?: string[];
+  mode?: string;
+}
+
+export interface InsightCount {
+  key: string;
+  count: number;
+}
+
+export interface InsightBucket {
+  ts: string;
+  allow: number;
+  deny: number;
+}
+
+export interface LedgerInsightsResponse {
+  window: InsightWindow;
+  now: string;
+  bucket_seconds: number;
+  total: number;
+  by_verdict: Record<string, number>;
+  by_source: Record<string, number>;
+  top_rules_deny: InsightCount[];
+  top_tools_deny: InsightCount[];
+  buckets: InsightBucket[];
 }
 
 export interface InstallGateYAMLResponse {
@@ -271,6 +324,34 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
       // token rides as a query param. The daemon accepts both.
       const base = `${url}/v1/ledger/tail`;
       return client.token ? `${base}?token=${encodeURIComponent(client.token)}` : base;
+    },
+
+    tailLedger(opts): () => void {
+      const ctrl = new AbortController();
+      void (async () => {
+        while (!ctrl.signal.aborted) {
+          opts.onStatus?.("connecting");
+          try {
+            const res = await fetch(client.ledgerTailUrl(), {
+              headers: { Accept: "text/event-stream" },
+              signal: ctrl.signal,
+            });
+            if (!res.ok || !res.body) {
+              opts.onStatus?.("closed");
+            } else {
+              opts.onStatus?.("open");
+              await readSSE(res.body, opts.onEntry, ctrl.signal);
+              opts.onStatus?.("closed");
+            }
+          } catch {
+            if (ctrl.signal.aborted) return;
+            opts.onStatus?.("closed");
+          }
+          if (ctrl.signal.aborted) return;
+          await sleepUnlessAborted(2000, ctrl.signal);
+        }
+      })();
+      return () => ctrl.abort();
     },
 
     async authMode(): Promise<AuthModeResponse> {
@@ -549,7 +630,107 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
       }
       return (await res.json()) as DeleteGateResponse;
     },
+
+    async addGate(req: AddGateRequest): Promise<InstallGateYAMLResponse> {
+      const res = await fetch(`${url}/v1/policy/gates`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify(req),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`policy.add_gate: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as InstallGateYAMLResponse;
+    },
+
+    async patchGate(id: string, req: PatchGateRequest): Promise<InstallGateYAMLResponse> {
+      const res = await fetch(`${url}/v1/policy/gates/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify(req),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`policy.patch_gate: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as InstallGateYAMLResponse;
+    },
+
+    async ledgerInsights(
+      window: InsightWindow = "24h",
+      top?: number,
+    ): Promise<LedgerInsightsResponse> {
+      const qs = new URLSearchParams({ window });
+      if (top !== undefined) qs.set("top", String(top));
+      const res = await fetch(`${url}/v1/ledger/insights?${qs}`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`ledger.insights: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as LedgerInsightsResponse;
+    },
   };
 
   return client;
+}
+
+// readSSE consumes a Server-Sent Events stream and invokes onEntry for
+// each `data:` frame parsed as JSON. Comment frames (keepalives) and
+// non-JSON payloads are skipped silently. Returns when the stream ends
+// or the signal aborts.
+async function readSSE(
+  body: ReadableStream<Uint8Array>,
+  onEntry: (entry: unknown) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const reader = body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  try {
+    while (!signal.aborted) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buf += dec.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const data = frame
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).replace(/^ /, ""))
+          .join("\n");
+        if (!data) continue;
+        try {
+          onEntry(JSON.parse(data));
+        } catch {
+          // skip malformed frame
+        }
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // best-effort
+    }
+  }
+}
+
+function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }

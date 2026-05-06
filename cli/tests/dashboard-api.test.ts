@@ -23,6 +23,9 @@ interface MockOpts {
   patch?: { status?: number; body?: unknown; echo?: boolean };
   sessions?: { status?: number; body?: unknown };
   policy?: { status?: number; body?: unknown };
+  insights?: { status?: number; body?: unknown };
+  gateAdd?: { status?: number; body?: unknown };
+  gatePatch?: { status?: number; body?: unknown };
 }
 
 function json(status: number, body: unknown): Response {
@@ -102,6 +105,55 @@ function startMock(opts: MockOpts, recorded: Recorded[]): { url: string; stop: (
                 evaluators: ["*policy.RegexEvaluator"],
               },
             ],
+          },
+        );
+      }
+      if (u.pathname === "/v1/ledger/insights" && req.method === "GET") {
+        const c = opts.insights ?? {};
+        return json(
+          c.status ?? 200,
+          c.body ?? {
+            window: u.searchParams.get("window") || "24h",
+            now: new Date().toISOString(),
+            bucket_seconds: 3600,
+            total: 4,
+            by_verdict: { allow: 3, deny: 1 },
+            by_source: { "claude-code": 4 },
+            top_rules_deny: [{ key: "rogue.destructive-bash", count: 1 }],
+            top_tools_deny: [{ key: "tu_abc", count: 1 }],
+            buckets: Array.from({ length: 24 }, (_, i) => ({
+              ts: new Date(Date.now() - (24 - i) * 3600_000).toISOString(),
+              allow: i % 2,
+              deny: 0,
+            })),
+          },
+        );
+      }
+      if (u.pathname === "/v1/policy/gates" && req.method === "POST") {
+        const c = opts.gateAdd ?? {};
+        return json(
+          c.status ?? 200,
+          c.body ?? {
+            hash: "sha256:after-add",
+            gates: 5,
+            id: (body as { id?: string })?.id ?? "",
+            needs_reload: false,
+          },
+        );
+      }
+      // PATCH /v1/policy/gates/{id}
+      if (
+        u.pathname.startsWith("/v1/policy/gates/") &&
+        req.method === "PATCH"
+      ) {
+        const c = opts.gatePatch ?? {};
+        return json(
+          c.status ?? 200,
+          c.body ?? {
+            hash: "sha256:after-patch",
+            gates: 5,
+            id: u.pathname.split("/").pop() ?? "",
+            needs_reload: false,
           },
         );
       }
@@ -209,5 +261,94 @@ describe("dashboard API contract", () => {
     stopFn = stop;
     const api = apiClient(url);
     await expect(api.getMode()).rejects.toThrow(/500/);
+  });
+
+  test("ledgerInsights sends window query param and decodes the response", async () => {
+    const recorded: Recorded[] = [];
+    const { url, stop } = startMock({}, recorded);
+    stopFn = stop;
+    const api = apiClient(url);
+    const r = await api.ledgerInsights("1h", 3);
+    expect(r.window).toBe("1h");
+    expect(r.total).toBe(4);
+    expect(r.by_verdict.allow).toBe(3);
+    expect(r.by_verdict.deny).toBe(1);
+    expect(r.top_rules_deny[0]?.key).toBe("rogue.destructive-bash");
+    expect(r.buckets).toHaveLength(24);
+    const last = recorded.at(-1)!;
+    expect(last.method).toBe("GET");
+    expect(last.path).toBe("/v1/ledger/insights");
+  });
+
+  test("ledgerInsights defaults to 24h", async () => {
+    const recorded: Recorded[] = [];
+    const { url, stop } = startMock({}, recorded);
+    stopFn = stop;
+    const api = apiClient(url);
+    const r = await api.ledgerInsights();
+    expect(r.window).toBe("24h");
+  });
+
+  test("addGate POSTs to /v1/policy/gates with the request body", async () => {
+    const recorded: Recorded[] = [];
+    const { url, stop } = startMock({}, recorded);
+    stopFn = stop;
+    const api = apiClient(url);
+    const r = await api.addGate({
+      id: "test.rule",
+      tool: "Bash",
+      any_command_regex: ["rm -rf"],
+      action: "deny",
+      mode: "monitor",
+    });
+    expect(r.id).toBe("test.rule");
+    expect(r.gates).toBe(5);
+    const last = recorded.at(-1)!;
+    expect(last.method).toBe("POST");
+    expect(last.path).toBe("/v1/policy/gates");
+    expect(last.body).toEqual({
+      id: "test.rule",
+      tool: "Bash",
+      any_command_regex: ["rm -rf"],
+      action: "deny",
+      mode: "monitor",
+    });
+  });
+
+  test("patchGate PATCHes the gate id and forwards disabled/mode", async () => {
+    const recorded: Recorded[] = [];
+    const { url, stop } = startMock({}, recorded);
+    stopFn = stop;
+    const api = apiClient(url);
+    const r = await api.patchGate("rogue.destructive-bash", {
+      disabled: true,
+      mode: "enforce",
+    });
+    expect(r.id).toBe("rogue.destructive-bash");
+    const last = recorded.at(-1)!;
+    expect(last.method).toBe("PATCH");
+    expect(last.path).toBe("/v1/policy/gates/rogue.destructive-bash");
+    expect(last.body).toEqual({ disabled: true, mode: "enforce" });
+  });
+
+  test("patchGate URL-encodes ids that contain special chars", async () => {
+    const recorded: Recorded[] = [];
+    const { url, stop } = startMock({}, recorded);
+    stopFn = stop;
+    const api = apiClient(url);
+    await api.patchGate("namespace/with slash", { disabled: false });
+    const last = recorded.at(-1)!;
+    expect(last.path).toBe("/v1/policy/gates/namespace%2Fwith%20slash");
+  });
+
+  test("ledgerInsights surfaces 4xx as an Error", async () => {
+    const recorded: Recorded[] = [];
+    const { url, stop } = startMock(
+      { insights: { status: 400, body: { error: "bad_window" } } },
+      recorded,
+    );
+    stopFn = stop;
+    const api = apiClient(url);
+    await expect(api.ledgerInsights("1h")).rejects.toThrow(/bad_window/);
   });
 });
