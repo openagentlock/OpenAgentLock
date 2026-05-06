@@ -101,6 +101,7 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 			TS:           time.Now().UTC(),
 			Source:       req.Source,
 			ToolUseID:    "gate.check",
+			Tool:         req.Tool,
 			Signer:       sess.Signer,
 			RuleID:       result.RuleID,
 			Verdict:      origVerdict,

@@ -47,6 +47,10 @@ type AppendInput struct {
 	TS          time.Time
 	Source      string
 	ToolUseID   string
+	// Tool is the tool name (Bash, Read, Write, mcp__X__Y) the harness
+	// invoked. Distinct from ToolUseID, which is the per-call correlation
+	// id. Empty for non-decision events (session lifecycle).
+	Tool        string
 	Signer      string
 	RuleID      string
 	Verdict     string
@@ -65,6 +69,7 @@ type LedgerEntry struct {
 	TS           time.Time `json:"ts"`
 	Source       string    `json:"source"`
 	ToolUseID    string    `json:"tool_use_id"`
+	Tool         string    `json:"tool,omitempty"`
 	Signer       string    `json:"signer"`
 	RuleID       string    `json:"rule_id,omitempty"`
 	Verdict      string    `json:"verdict,omitempty"`
@@ -363,6 +368,7 @@ func (m *Memory) AppendLedger(_ context.Context, in AppendInput) (LedgerEntry, e
 		TS:           in.TS,
 		Source:       in.Source,
 		ToolUseID:    in.ToolUseID,
+		Tool:         in.Tool,
 		Signer:       in.Signer,
 		RuleID:       in.RuleID,
 		Verdict:      in.Verdict,
