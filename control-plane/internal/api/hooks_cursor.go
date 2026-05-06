@@ -252,12 +252,13 @@ func cursorGateHandler(d Deps, eventName string, kind cursorDedupeKind) http.Han
 		if _, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
 			TS:           time.Now().UTC(),
 			Source:       "cursor",
+			Tool:         in.ToolName,
 			ToolUseID:    toolUseID,
-			Tool:    in.ToolName,
 			Signer:       sess.Signer,
 			RuleID:       result.RuleID,
 			Verdict:      origVerdict,
 			MonitorMatch: monitorMatch,
+			MatcherInput: ledgerMatcherInput(in.ToolInput),
 			PayloadHash:  payloadHash[:],
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "ledger_error", err.Error())
@@ -369,7 +370,7 @@ func cursorOutcomeHandler(d Deps, eventName string) http.HandlerFunc {
 			TS:          time.Now().UTC(),
 			Source:      "cursor",
 			ToolUseID:   toolUseID,
-			Tool:   in.ToolName,
+			Tool:        in.ToolName,
 			Signer:      sess.Signer,
 			Verdict:     verdict,
 			PayloadHash: payloadHash[:],

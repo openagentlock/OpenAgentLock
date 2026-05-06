@@ -44,42 +44,44 @@ type Session struct {
 }
 
 type AppendInput struct {
-	TS          time.Time
-	Source      string
-	ToolUseID   string
+	TS        time.Time
+	Source    string
+	ToolUseID string
 	// Tool is the tool name (Bash, Read, Write, mcp__X__Y) the harness
 	// invoked. Distinct from ToolUseID, which is the per-call correlation
 	// id. Empty for non-decision events (session lifecycle).
-	Tool        string
-	Signer      string
-	RuleID      string
-	Verdict     string
+	Tool    string
+	Signer  string
+	RuleID  string
+	Verdict string
 	// MonitorMatch is true when the matched gate's verdict was deny but
 	// the daemon was in monitor mode at decision time, so the runtime
 	// returned allow. The ledger keeps the original deny under Verdict
 	// for audit, and dashboards render this flag as "alert" rather than
 	// a hard "deny" so monitor mode looks like an IDS, not an IPS.
 	MonitorMatch bool
+	MatcherInput map[string]string
 	PayloadHash  []byte
 	Sig          []byte
 }
 
 type LedgerEntry struct {
-	Seq          uint64    `json:"seq"`
-	TS           time.Time `json:"ts"`
-	Source       string    `json:"source"`
-	ToolUseID    string    `json:"tool_use_id"`
-	Tool         string    `json:"tool,omitempty"`
-	Signer       string    `json:"signer"`
-	RuleID       string    `json:"rule_id,omitempty"`
-	Verdict      string    `json:"verdict,omitempty"`
-	MonitorMatch bool      `json:"monitor_match,omitempty"`
-	PayloadHash  string    `json:"payload_hash"`
-	Sig          string    `json:"sig"`
-	LeafHash     [32]byte  `json:"-"`
-	PrevLeaf     [32]byte  `json:"-"`
-	LeafHashHex  string    `json:"leaf_hash"`
-	PrevLeafHex  string    `json:"prev_leaf"`
+	Seq          uint64            `json:"seq"`
+	TS           time.Time         `json:"ts"`
+	Source       string            `json:"source"`
+	Tool         string            `json:"tool,omitempty"`
+	ToolUseID    string            `json:"tool_use_id"`
+	Signer       string            `json:"signer"`
+	Input        map[string]string `json:"input,omitempty"`
+	RuleID       string            `json:"rule_id,omitempty"`
+	Verdict      string            `json:"verdict,omitempty"`
+	MonitorMatch bool              `json:"monitor_match,omitempty"`
+	PayloadHash  string            `json:"payload_hash"`
+	Sig          string            `json:"sig"`
+	LeafHash     [32]byte          `json:"-"`
+	PrevLeaf     [32]byte          `json:"-"`
+	LeafHashHex  string            `json:"leaf_hash"`
+	PrevLeafHex  string            `json:"prev_leaf"`
 }
 
 type Memory struct {
@@ -370,6 +372,7 @@ func (m *Memory) AppendLedger(_ context.Context, in AppendInput) (LedgerEntry, e
 		ToolUseID:    in.ToolUseID,
 		Tool:         in.Tool,
 		Signer:       in.Signer,
+		Input:        in.MatcherInput,
 		RuleID:       in.RuleID,
 		Verdict:      in.Verdict,
 		MonitorMatch: in.MonitorMatch,

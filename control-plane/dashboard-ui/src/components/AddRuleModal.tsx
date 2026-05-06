@@ -15,13 +15,13 @@
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { apiSend } from "@/lib/api";
+import type { AddRuleInitialPreset, RuleType } from "@/lib/rulePresetTypes";
 
 interface AddRuleModalProps {
   onClose: () => void;
   onCreated: (id: string) => void;
+  initialPreset?: AddRuleInitialPreset;
 }
-
-type RuleType = "bash" | "pkg-install" | "destructive" | "secret-read" | "net-egress-url" | "custom";
 
 interface Preset {
   label: string;
@@ -110,28 +110,50 @@ const TOOL_OPTIONS = [
   "Task",
 ] as const;
 
-export function AddRuleModal({ onClose, onCreated }: AddRuleModalProps) {
-  const [ruleType, setRuleType] = useState<RuleType>("destructive");
+export function AddRuleModal({ onClose, onCreated, initialPreset }: AddRuleModalProps) {
+  const initialRuleType = initialPreset?.ruleType ?? "destructive";
+  const initialBasePreset = PRESETS[initialRuleType];
+  const [ruleType, setRuleType] = useState<RuleType>(initialRuleType);
   const preset = PRESETS[ruleType];
 
-  const [id, setId] = useState(preset.idSuggestion);
-  const [tool, setTool] = useState(preset.tool);
-  const [commandRegexes, setCommandRegexes] = useState("");
-  const [pathRegexes, setPathRegexes] = useState("");
-  const [urlRegexes, setUrlRegexes] = useState("");
-  const [action, setAction] = useState<"deny" | "allow">(preset.action);
-  const [mode, setMode] = useState<"inherit" | "monitor" | "enforce">("inherit");
+  const [id, setId] = useState(initialPreset?.id ?? initialBasePreset.idSuggestion);
+  const [tool, setTool] = useState(initialPreset?.tool ?? initialBasePreset.tool);
+  const [commandRegexes, setCommandRegexes] = useState(initialPreset?.commandRegexes ?? "");
+  const [pathRegexes, setPathRegexes] = useState(initialPreset?.pathRegexes ?? "");
+  const [urlRegexes, setUrlRegexes] = useState(initialPreset?.urlRegexes ?? "");
+  const [action, setAction] = useState<"deny" | "allow">(initialPreset?.action ?? initialBasePreset.action);
+  const [mode, setMode] = useState<"inherit" | "monitor" | "enforce">(initialPreset?.mode ?? "inherit");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset id / tool / action whenever the user picks a different preset
-  // so they always see a sane starting point for the rule type.
+  // Re-apply caller-owned presets if the same modal instance is reused for
+  // a different ledger event.
   useEffect(() => {
-    setId(preset.idSuggestion);
-    setTool(preset.tool);
-    setAction(preset.action);
+    if (!initialPreset) return;
+    const nextRuleType = initialPreset.ruleType ?? "destructive";
+    const nextBasePreset = PRESETS[nextRuleType];
+    setRuleType(nextRuleType);
+    setId(initialPreset.id ?? nextBasePreset.idSuggestion);
+    setTool(initialPreset.tool ?? nextBasePreset.tool);
+    setCommandRegexes(initialPreset.commandRegexes ?? "");
+    setPathRegexes(initialPreset.pathRegexes ?? "");
+    setUrlRegexes(initialPreset.urlRegexes ?? "");
+    setAction(initialPreset.action ?? nextBasePreset.action);
+    setMode(initialPreset.mode ?? "inherit");
     setError(null);
-  }, [ruleType, preset]);
+  }, [initialPreset]);
+
+  const onRuleTypeChange = (nextRuleType: RuleType) => {
+    const nextPreset = PRESETS[nextRuleType];
+    setRuleType(nextRuleType);
+    setId(nextPreset.idSuggestion);
+    setTool(nextPreset.tool);
+    setCommandRegexes("");
+    setPathRegexes("");
+    setUrlRegexes("");
+    setAction(nextPreset.action);
+    setError(null);
+  };
 
   const showCommand = useMemo(
     () => preset.fields.includes("command") || preset.fields.includes("all"),
@@ -206,7 +228,7 @@ export function AddRuleModal({ onClose, onCreated }: AddRuleModalProps) {
             <select
               className="oal-input w-full"
               value={ruleType}
-              onChange={(e) => setRuleType(e.target.value as RuleType)}
+              onChange={(e) => onRuleTypeChange(e.target.value as RuleType)}
             >
               {(Object.keys(PRESETS) as RuleType[]).map((k) => (
                 <option key={k} value={k}>
