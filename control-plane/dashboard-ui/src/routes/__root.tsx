@@ -14,6 +14,7 @@ function RootLayout() {
           { to: "/events", label: "Events" },
           { to: "/rules", label: "Rules" },
           { to: "/sessions", label: "Sessions" },
+          { to: "/mcp", label: "MCP" },
         ]}
       />
       <main className="p-5">
