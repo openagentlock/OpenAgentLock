@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiJSON, apiSend } from "@/lib/api";
-import type { ModeInfo, PolicyView, RootInfo, SessionsResponse } from "@/lib/types";
+import type { MCPPinsResponse, ModeInfo, PolicyView, RootInfo, SessionsResponse } from "@/lib/types";
 
 export function usePoll(fn: () => void | Promise<void>, intervalMs: number, paused = false): void {
   const fnRef = useRef(fn);
@@ -133,6 +133,29 @@ export function useSessions(active: boolean): {
   }, []);
 
   usePoll(refresh, 4000, !active);
+
+  return { data, error, refresh };
+}
+
+export function useMCPPins(active: boolean): {
+  data: MCPPinsResponse | null;
+  error: string | null;
+  refresh: () => Promise<void>;
+} {
+  const [data, setData] = useState<MCPPinsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const pins = await apiJSON<MCPPinsResponse>("/v1/mcp/pins");
+      setData(pins);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  usePoll(refresh, 5000, !active);
 
   return { data, error, refresh };
 }
