@@ -63,8 +63,20 @@ export interface MCPPinRow {
   fingerprint: string;
 }
 
+export interface PendingMCPPinRow {
+  id: string;
+  server: string;
+  fingerprint: string;
+  known_fingerprint?: string;
+  status: "unknown" | "changed";
+  server_info?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface MCPPinsResponse {
   pins: MCPPinRow[];
+  pending: PendingMCPPinRow[];
 }
 
 export interface RootInfo {

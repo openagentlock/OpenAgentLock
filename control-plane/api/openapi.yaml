@@ -135,6 +135,18 @@ paths:
         "200":
           description: pinned
 
+  /v1/mcp/pin/refuse:
+    post:
+      summary: Refuse a pending MCP fingerprint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/McpPinAccept' }
+      responses:
+        "200":
+          description: refused
+
   /v1/ledger/tail:
     get:
       summary: Server-sent events stream of ledger appends.
@@ -344,11 +356,27 @@ components:
 
     McpPinsResponse:
       type: object
-      required: [pins]
+      required: [pins, pending]
       properties:
         pins:
           type: array
           items: { $ref: '#/components/schemas/McpPin' }
+        pending:
+          type: array
+          items: { $ref: '#/components/schemas/PendingMcpPin' }
+
+    PendingMcpPin:
+      type: object
+      required: [id, server, fingerprint, status, created_at, updated_at]
+      properties:
+        id: { type: string }
+        server: { type: string }
+        fingerprint: { type: string }
+        known_fingerprint: { type: string }
+        status: { type: string, enum: [unknown, changed] }
+        server_info: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     LedgerRoot:
       type: object
