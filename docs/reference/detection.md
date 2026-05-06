@@ -27,7 +27,7 @@ The result is a small struct with `name`, `present`, `surfaces`, `configPaths`, 
 
 ## Wiring vs detection
 
-A harness being **detected** is independent of whether the installer will **wire it up**. Today, `agentlock install` wires Claude Code, Codex CLI, and Cursor. The other detectors land in the picker but the installer flags them as not yet implemented and skips writing hook entries.
+A harness being **detected** is independent of whether the installer will **wire it up**. Today, `agentlock install` wires Claude Code, Codex CLI, Cursor, and Gemini CLI. The other detectors land in the picker but the installer flags them as not yet implemented and skips writing hook entries.
 
 ## Adding a new harness detector
 

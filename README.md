@@ -69,14 +69,15 @@ For agents that need to **author** new rules from natural-language intent, see [
 | Surface | Status |
 |---|---|
 | `agentlock detect` | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| `agentlock install` (Claude Code, Codex CLI, Cursor) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
+| `agentlock install` (Claude Code, Codex CLI, Cursor, Gemini CLI) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | `agentlock install --tier {unattested,software,totp}` | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| `agentlock install` (OpenCode, Cline, Gemini CLI, Continue, VS Code Copilot) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
+| `agentlock install` (OpenCode, Cline, Continue, VS Code Copilot) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | Five baseline gates in monitor mode | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Tamper-evident Merkle ledger | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Local web dashboard | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Software + TOTP signers (with `signer enroll` + session mint) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| OS keychain signer, hardware-key (YubiKey PIV / FIDO2) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
+| OS keychain signer (macOS) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
+| Hardware-key signer (YubiKey PIV / FIDO2) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | OIDC SSO + RBAC + LDAP | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | Signed PDF audit report | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 
@@ -87,7 +88,7 @@ The complete shipped/not-yet matrix lives at <https://openagentlock.github.io/Op
 ```mermaid
 flowchart LR
     subgraph host["Your host"]
-      H["Agent harness<br/><i>Claude Code · Codex CLI · Cursor</i>"]
+      H["Agent harness<br/><i>Claude Code · Codex CLI · Cursor · Gemini CLI</i>"]
       CLI["agentlock CLI<br/><i>owns long-lived signing key</i>"]
     end
     subgraph docker["Docker (127.0.0.1)"]
