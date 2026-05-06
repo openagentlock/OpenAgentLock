@@ -190,8 +190,7 @@ func TestCodexPostToolUse_RecordsOutcome(t *testing.T) {
 		"tool_use_id": "t_post_001",
 		"turn_id": "turn_p1",
 		"tool_input": {"command": "ls"},
-		"tool_response": "total 0",
-		"success": true
+		"tool_response": "total 0"
 	}`
 	res, err := http.Post(
 		fx.srv.URL+"/v1/hooks/codex/post-tool-use",

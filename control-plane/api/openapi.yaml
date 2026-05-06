@@ -111,7 +111,17 @@ paths:
           description: verdict
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GateCheckResponse' }
+              schema: { $ref: '#/components/schemas/McpPinCheckResponse' }
+
+  /v1/mcp/pins:
+    get:
+      summary: List pinned MCP server fingerprints.
+      responses:
+        "200":
+          description: current pins
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McpPinsResponse' }
 
   /v1/mcp/pin/accept:
     post:
@@ -121,7 +131,9 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/McpPinAccept' }
-      responses: { "204": { description: pinned } }
+      responses:
+        "200":
+          description: pinned
 
   /v1/ledger/tail:
     get:
@@ -300,19 +312,43 @@ components:
 
     McpPinCheck:
       type: object
-      required: [server_label, fingerprint]
+      required: [server, fingerprint]
       properties:
-        server_label: { type: string }
+        server: { type: string }
         fingerprint: { type: string }
+
+    McpPinCheckResponse:
+      type: object
+      required: [status, server, fingerprint]
+      properties:
+        status: { type: string, enum: [unknown, known, changed] }
+        server: { type: string }
+        fingerprint: { type: string }
+        known_fingerprint: { type: string }
 
     McpPinAccept:
       type: object
-      required: [server_label, fingerprint, server_info, signature]
+      required: [server, fingerprint]
       properties:
-        server_label: { type: string }
+        server: { type: string }
         fingerprint: { type: string }
         server_info: { type: object, additionalProperties: true }
         signature: { type: string }
+
+    McpPin:
+      type: object
+      required: [server, fingerprint]
+      properties:
+        server: { type: string }
+        fingerprint: { type: string }
+
+    McpPinsResponse:
+      type: object
+      required: [pins]
+      properties:
+        pins:
+          type: array
+          items: { $ref: '#/components/schemas/McpPin' }
 
     LedgerRoot:
       type: object
