@@ -157,8 +157,13 @@ func splitHostPort(addr string) (host, port string, ok bool) {
 }
 
 // loadPolicy reads $AGENTLOCK_POLICY if set; otherwise returns a built-in
-// safe default (monitor mode, destructive-bash only) so the daemon always
-// starts with *some* policy bound to session attestations.
+// minimal default (monitor mode, single destructive-bash gate) so the
+// daemon always starts with *some* policy bound to session attestations.
+// The first-boot expectation is that operators run
+// `agentlock rules sync && agentlock rules install <id>` against the
+// openagentlock/rules registry to populate real coverage. The bundled
+// `policies/default.yaml` was deprecated and removed — registry-first
+// is the new shape (see docs/guide/policies.md).
 func loadPolicy(path string) (*policy.Policy, error) {
 	if path == "" {
 		return policy.LoadBytes([]byte(defaultPolicyYAML))
@@ -171,6 +176,9 @@ func loadPolicy(path string) (*policy.Policy, error) {
 	return policy.Load(f)
 }
 
+// defaultPolicyYAML is the minimal first-boot policy. It exists only so
+// every session has a non-empty policy hash to attest against. Operators
+// are expected to layer real coverage from openagentlock/rules on top.
 const defaultPolicyYAML = `
 version: 1
 mode: monitor
