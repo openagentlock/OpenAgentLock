@@ -25,7 +25,7 @@ func newMCPFixture(t *testing.T) (*httptest.Server, string) {
 
 func TestMCPPin_Check_UnknownOnFirstQuery(t *testing.T) {
 	srv, _ := newMCPFixture(t)
-	body := `{"server":"filesystem","fingerprint":"sha256:aaaa"}`
+	body := `{"server":"filesystem","fingerprint":"sha256:aaaa","server_info":{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem"]}}`
 	res, err := http.Post(srv.URL+"/v1/mcp/pin/check", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -38,6 +38,20 @@ func TestMCPPin_Check_UnknownOnFirstQuery(t *testing.T) {
 	_ = json.NewDecoder(res.Body).Decode(&out)
 	if out["status"] != "unknown" {
 		t.Fatalf("status = %v", out["status"])
+	}
+
+	pending := listPendingMCPPins(t, srv)
+	if len(pending) != 1 {
+		t.Fatalf("pending len = %d", len(pending))
+	}
+	if pending[0].Server != "filesystem" || pending[0].Fingerprint != "sha256:aaaa" || pending[0].Status != "unknown" {
+		t.Fatalf("pending row = %+v", pending[0])
+	}
+	if pending[0].ID == "" || pending[0].CreatedAt == "" || pending[0].UpdatedAt == "" {
+		t.Fatalf("pending timestamps/id not set: %+v", pending[0])
+	}
+	if pending[0].ServerInfo["command"] != "npx" {
+		t.Fatalf("server_info = %+v", pending[0].ServerInfo)
 	}
 }
 
@@ -63,6 +77,13 @@ func TestMCPPin_Accept_PersistsToFile(t *testing.T) {
 
 func TestMCPPin_CheckAfterAccept_Known(t *testing.T) {
 	srv, _ := newMCPFixture(t)
+	checkPending := `{"server":"slack","fingerprint":"sha256:cccc"}`
+	pRes, err := http.Post(srv.URL+"/v1/mcp/pin/check", "application/json", strings.NewReader(checkPending))
+	if err != nil {
+		t.Fatalf("pending check: %v", err)
+	}
+	_ = pRes.Body.Close()
+
 	accept := `{"server":"slack","fingerprint":"sha256:cccc"}`
 	aRes, err := http.Post(srv.URL+"/v1/mcp/pin/accept", "application/json", strings.NewReader(accept))
 	if err != nil {
@@ -82,6 +103,9 @@ func TestMCPPin_CheckAfterAccept_Known(t *testing.T) {
 	}
 	if out["status"] != "known" {
 		t.Fatalf("status = %v", out["status"])
+	}
+	if pending := listPendingMCPPins(t, srv); len(pending) != 0 {
+		t.Fatalf("pending len after known check = %d: %+v", len(pending), pending)
 	}
 }
 
@@ -109,6 +133,65 @@ func TestMCPPin_CheckAfterAccept_ChangedFingerprint(t *testing.T) {
 	}
 	if out["known_fingerprint"] != "sha256:dddd" {
 		t.Fatalf("known_fingerprint = %v", out["known_fingerprint"])
+	}
+
+	pending := listPendingMCPPins(t, srv)
+	if len(pending) != 1 {
+		t.Fatalf("pending len = %d", len(pending))
+	}
+	if pending[0].Status != "changed" || pending[0].KnownFingerprint != "sha256:dddd" {
+		t.Fatalf("pending changed row = %+v", pending[0])
+	}
+}
+
+func TestMCPPin_Accept_RemovesMatchingPendingPin(t *testing.T) {
+	srv, _ := newMCPFixture(t)
+	check := `{"server":"linear","fingerprint":"sha256:pending"}`
+	cRes, err := http.Post(srv.URL+"/v1/mcp/pin/check", "application/json", strings.NewReader(check))
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	_ = cRes.Body.Close()
+
+	accept := `{"server":"linear","fingerprint":"sha256:pending"}`
+	aRes, err := http.Post(srv.URL+"/v1/mcp/pin/accept", "application/json", strings.NewReader(accept))
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	_ = aRes.Body.Close()
+
+	if pending := listPendingMCPPins(t, srv); len(pending) != 0 {
+		t.Fatalf("pending len after accept = %d: %+v", len(pending), pending)
+	}
+}
+
+func TestMCPPin_Refuse_RemovesPendingPin(t *testing.T) {
+	srv, _ := newMCPFixture(t)
+	check := `{"server":"notion","fingerprint":"sha256:refuse"}`
+	cRes, err := http.Post(srv.URL+"/v1/mcp/pin/check", "application/json", strings.NewReader(check))
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	_ = cRes.Body.Close()
+
+	refuse := `{"server":"notion","fingerprint":"sha256:refuse"}`
+	res, err := http.Post(srv.URL+"/v1/mcp/pin/refuse", "application/json", strings.NewReader(refuse))
+	if err != nil {
+		t.Fatalf("refuse: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out["refused"] != true || out["server"] != "notion" {
+		t.Fatalf("refuse response = %+v", out)
+	}
+	if pending := listPendingMCPPins(t, srv); len(pending) != 0 {
+		t.Fatalf("pending len after refuse = %d: %+v", len(pending), pending)
 	}
 }
 
@@ -187,4 +270,34 @@ func TestMCPPin_BadBody400(t *testing.T) {
 			}
 		})
 	}
+}
+
+type pendingMCPPinForTest struct {
+	ID               string         `json:"id"`
+	Server           string         `json:"server"`
+	Fingerprint      string         `json:"fingerprint"`
+	KnownFingerprint string         `json:"known_fingerprint,omitempty"`
+	Status           string         `json:"status"`
+	ServerInfo       map[string]any `json:"server_info,omitempty"`
+	CreatedAt        string         `json:"created_at"`
+	UpdatedAt        string         `json:"updated_at"`
+}
+
+func listPendingMCPPins(t *testing.T, srv *httptest.Server) []pendingMCPPinForTest {
+	t.Helper()
+	res, err := http.Get(srv.URL + "/v1/mcp/pins")
+	if err != nil {
+		t.Fatalf("GET pins: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var out struct {
+		Pending []pendingMCPPinForTest `json:"pending"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return out.Pending
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -27,8 +28,9 @@ type ledgerInputForPin struct {
 var pinFileMu sync.Mutex
 
 type pinRequest struct {
-	Server      string `json:"server"`
-	Fingerprint string `json:"fingerprint"`
+	Server      string         `json:"server"`
+	Fingerprint string         `json:"fingerprint"`
+	ServerInfo  map[string]any `json:"server_info,omitempty"`
 }
 
 type pinCheckResponse struct {
@@ -43,8 +45,20 @@ type mcpPinRow struct {
 	Fingerprint string `json:"fingerprint"`
 }
 
+type pendingMCPPinRow struct {
+	ID               string         `json:"id"`
+	Server           string         `json:"server"`
+	Fingerprint      string         `json:"fingerprint"`
+	KnownFingerprint string         `json:"known_fingerprint,omitempty"`
+	Status           string         `json:"status"`
+	ServerInfo       map[string]any `json:"server_info,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+}
+
 type mcpPinsResponse struct {
-	Pins []mcpPinRow `json:"pins"`
+	Pins    []mcpPinRow        `json:"pins"`
+	Pending []pendingMCPPinRow `json:"pending"`
 }
 
 func mcpPinCheckHandler(d Deps) http.HandlerFunc {
@@ -57,6 +71,9 @@ func mcpPinCheckHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid_request", "server + fingerprint required")
 			return
 		}
+		pinFileMu.Lock()
+		defer pinFileMu.Unlock()
+
 		pins, err := readPins(d.PinStorePath)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
@@ -73,6 +90,25 @@ func mcpPinCheckHandler(d Deps) http.HandlerFunc {
 			resp.Status = "changed"
 			resp.KnownFingerprint = known
 		}
+		if resp.Status == "known" {
+			if err := removePendingMCPPin(d.PinStorePath, req.Server, req.Fingerprint); err != nil {
+				writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+				return
+			}
+		} else {
+			row := pendingMCPPinRow{
+				ID:               pendingMCPPinID(req.Server, req.Fingerprint),
+				Server:           req.Server,
+				Fingerprint:      req.Fingerprint,
+				KnownFingerprint: resp.KnownFingerprint,
+				Status:           resp.Status,
+				ServerInfo:       req.ServerInfo,
+			}
+			if err := upsertPendingMCPPin(d.PinStorePath, row, time.Now().UTC()); err != nil {
+				writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, resp)
 	}
 }
@@ -82,7 +118,15 @@ func mcpPinsListHandler(d Deps) http.HandlerFunc {
 		return todo("mcp.pins.list")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
+		pinFileMu.Lock()
+		defer pinFileMu.Unlock()
+
 		pins, err := readPins(d.PinStorePath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+			return
+		}
+		pending, err := readPendingMCPPins(d.PinStorePath)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 			return
@@ -99,7 +143,7 @@ func mcpPinsListHandler(d Deps) http.HandlerFunc {
 				Fingerprint: pins[server],
 			})
 		}
-		writeJSON(w, http.StatusOK, mcpPinsResponse{Pins: rows})
+		writeJSON(w, http.StatusOK, mcpPinsResponse{Pins: rows, Pending: pending})
 	}
 }
 
@@ -125,6 +169,10 @@ func mcpPinAcceptHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 			return
 		}
+		if err := removePendingMCPPin(d.PinStorePath, req.Server, req.Fingerprint); err != nil {
+			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+			return
+		}
 
 		// Record the accept in the ledger so there's an audit trail of
 		// human-driven pin changes. The pin file is already persisted;
@@ -144,6 +192,29 @@ func mcpPinAcceptHandler(d Deps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"accepted": true,
 			"server":   req.Server,
+		})
+	}
+}
+
+func mcpPinRefuseHandler(d Deps) http.HandlerFunc {
+	if d.PinStorePath == "" {
+		return todo("mcp.pin.refuse")
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req pinRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Server == "" || req.Fingerprint == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "server + fingerprint required")
+			return
+		}
+		pinFileMu.Lock()
+		defer pinFileMu.Unlock()
+		if err := removePendingMCPPin(d.PinStorePath, req.Server, req.Fingerprint); err != nil {
+			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"refused": true,
+			"server":  req.Server,
 		})
 	}
 }
@@ -187,6 +258,99 @@ func writePins(path string, pins map[string]string) error {
 	}
 	b = append(b, '}')
 	return policy.AtomicWriteFile(path, b, 0o600)
+}
+
+func pendingMCPPinsPath(pinStorePath string) string {
+	return filepath.Join(filepath.Dir(pinStorePath), "pending-mcp-pins.json")
+}
+
+func pendingMCPPinID(server, fingerprint string) string {
+	sum := sha256.Sum256([]byte(server + "\x00" + fingerprint))
+	return hex.EncodeToString(sum[:16])
+}
+
+func readPendingMCPPins(pinStorePath string) ([]pendingMCPPinRow, error) {
+	path := pendingMCPPinsPath(pinStorePath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []pendingMCPPinRow{}, nil
+		}
+		return nil, err
+	}
+	if len(data) == 0 {
+		return []pendingMCPPinRow{}, nil
+	}
+	var rows []pendingMCPPinRow
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return nil, err
+	}
+	sortPendingMCPPins(rows)
+	return rows, nil
+}
+
+func writePendingMCPPins(pinStorePath string, rows []pendingMCPPinRow) error {
+	path := pendingMCPPinsPath(pinStorePath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	sortPendingMCPPins(rows)
+	if rows == nil {
+		rows = []pendingMCPPinRow{}
+	}
+	data, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+	return policy.AtomicWriteFile(path, data, 0o600)
+}
+
+func upsertPendingMCPPin(pinStorePath string, row pendingMCPPinRow, now time.Time) error {
+	rows, err := readPendingMCPPins(pinStorePath)
+	if err != nil {
+		return err
+	}
+	if row.ID == "" {
+		row.ID = pendingMCPPinID(row.Server, row.Fingerprint)
+	}
+	row.UpdatedAt = now
+	for i := range rows {
+		if rows[i].Server == row.Server && rows[i].Fingerprint == row.Fingerprint {
+			row.CreatedAt = rows[i].CreatedAt
+			rows[i] = row
+			return writePendingMCPPins(pinStorePath, rows)
+		}
+	}
+	row.CreatedAt = now
+	rows = append(rows, row)
+	return writePendingMCPPins(pinStorePath, rows)
+}
+
+func removePendingMCPPin(pinStorePath, server, fingerprint string) error {
+	rows, err := readPendingMCPPins(pinStorePath)
+	if err != nil {
+		return err
+	}
+	out := rows[:0]
+	for _, row := range rows {
+		if row.Server == server && row.Fingerprint == fingerprint {
+			continue
+		}
+		out = append(out, row)
+	}
+	return writePendingMCPPins(pinStorePath, out)
+}
+
+func sortPendingMCPPins(rows []pendingMCPPinRow) {
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Server != rows[j].Server {
+			return rows[i].Server < rows[j].Server
+		}
+		if rows[i].Fingerprint != rows[j].Fingerprint {
+			return rows[i].Fingerprint < rows[j].Fingerprint
+		}
+		return rows[i].ID < rows[j].ID
+	})
 }
 
 // fakePinLedgerInput builds a minimal AppendInput describing a pin accept.
