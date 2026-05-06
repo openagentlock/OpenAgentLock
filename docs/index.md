@@ -9,7 +9,7 @@ hide:
 ![OpenAgentLock](assets/banner.svg){ .oal-banner .no-zoom }
 
 <p class="lede" markdown>
-Detect local agent harnesses, gate risky tool calls with a deterministic YAML policy, and anchor every decision in a tamper-evident Merkle ledger. Install once and keep working in **Claude Code, Codex CLI, and Cursor** as normal — your workflow does not change.
+Detect local agent harnesses, gate risky tool calls with a deterministic YAML policy, and anchor every decision in a tamper-evident Merkle ledger. Install once and keep working in **Claude Code, Codex CLI, Cursor, and Gemini CLI** as normal — your workflow does not change.
 </p>
 
 [Get started](guide/getting-started.md){ .oal-cta .primary }
@@ -36,14 +36,14 @@ Eight harness detectors registered: Claude Code, Codex CLI, Cursor, OpenCode, Cl
 #### Install plan / apply
 <span class="gate-id">`agentlock install`</span>
 
-Interactive multi-select. Posts to `/v1/install/plan`, renders the diff, applies on confirm. Real install paths live for **Claude Code** (HTTP hooks) and **Codex CLI** (TOML hooks).
+Interactive multi-select. Posts to `/v1/install/plan`, renders the diff, applies on confirm. Real install paths live for **Claude Code**, **Codex CLI**, **Cursor**, and **Gemini CLI**.
 </div>
 
 <div class="gate-card" markdown>
-#### Five baseline gates
-<span class="gate-id">`policies/default.yaml`</span>
+#### Registry-first policy
+<span class="gate-id">`agentlock rules install`</span>
 
-Package install, untrusted MCP, secret reads, network egress, destructive bash. Ship in monitor mode by default.
+First-boot policy is intentionally minimal (one `rogue.destructive-bash` gate in monitor mode). Real coverage comes from the [openagentlock/rules](https://openagentlock.github.io/rules/) registry — `agentlock rules sync && agentlock rules install <id>` lands gates in the live policy with a fresh hash.
 </div>
 
 <div class="gate-card" markdown>
@@ -118,12 +118,12 @@ curl -O https://raw.githubusercontent.com/openagentlock/openagentlock/main/docke
 docker compose up -d
 
 # 3. Install the CLI and wire up your agents
-brew install openagentlock/tap/agentlock
+npm i -g @openagentlock/cli
 agentlock detect
 agentlock install
 ```
 
-See [Installation](guide/installation.md) for npm, source builds, and platform notes.
+See [Installation](guide/installation.md) for source builds and platform notes.
 
 ## Status
 

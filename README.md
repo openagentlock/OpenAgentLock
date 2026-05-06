@@ -34,7 +34,6 @@ docker run -d --name agentlock \
 # 2. Install the CLI
 npm i -g @openagentlock/cli
 # or: bun add -g @openagentlock/cli
-# or: brew install openagentlock/tap/agentlock
 
 # 3. Enroll a signer (TOTP — recommended for prod)
 agentlock signer enroll --tier totp --passphrase 'your-passphrase-here'
@@ -70,14 +69,15 @@ For agents that need to **author** new rules from natural-language intent, see [
 | Surface | Status |
 |---|---|
 | `agentlock detect` | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| `agentlock install` (Claude Code, Codex CLI, Cursor) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
+| `agentlock install` (Claude Code, Codex CLI, Cursor, Gemini CLI) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | `agentlock install --tier {unattested,software,totp}` | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| `agentlock install` (OpenCode, Cline, Gemini CLI, Continue, VS Code Copilot) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
+| `agentlock install` (OpenCode, Cline, Continue, VS Code Copilot) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | Five baseline gates in monitor mode | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Tamper-evident Merkle ledger | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Local web dashboard | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Software + TOTP signers (with `signer enroll` + session mint) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
-| OS keychain signer, hardware-key (YubiKey PIV / FIDO2) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
+| OS keychain signer (macOS) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
+| Hardware-key signer (YubiKey PIV / FIDO2) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | OIDC SSO + RBAC + LDAP | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 | Signed PDF audit report | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
 
@@ -88,7 +88,7 @@ The complete shipped/not-yet matrix lives at <https://openagentlock.github.io/Op
 ```mermaid
 flowchart LR
     subgraph host["Your host"]
-      H["Agent harness<br/><i>Claude Code · Codex CLI · Cursor</i>"]
+      H["Agent harness<br/><i>Claude Code · Codex CLI · Cursor · Gemini CLI</i>"]
       CLI["agentlock CLI<br/><i>owns long-lived signing key</i>"]
     end
     subgraph docker["Docker (127.0.0.1)"]
@@ -111,19 +111,25 @@ Three languages, one repo:
 
 See [Architecture overview](https://openagentlock.github.io/OpenAgentLock/architecture/overview/) for the why behind the split.
 
-## The five gates
+## Policy — registry-first
 
-Every install ships [`policies/default.yaml`](policies/default.yaml) with five gates in monitor mode:
+OpenAgentLock ships with a minimal first-boot policy (a single `rogue.destructive-bash` gate in monitor mode) so every session has *some* policy hash to attest against. Real coverage comes from the [openagentlock/rules](https://github.com/openagentlock/rules) registry — install whichever rules match your threat model:
 
-| Gate | What it catches |
-|---|---|
-| `supply-chain.pkg-install` | `pip install`, `npm install`, `brew install`, `cargo install` |
-| `supply-chain.untrusted-mcp` | MCP server with an unpinned public key |
-| `rogue.secret-read` | reads of `.env`, `~/.ssh`, `~/.aws/credentials`, anywhere a secret-shaped path appears |
-| `rogue.net-egress` | `curl`, `wget`, MCP HTTP tools |
-| `rogue.destructive-bash` | `rm -rf`, `git push --force`, `DROP TABLE`, `kubectl delete` |
+```bash
+agentlock rules sync                                 # tap the upstream registry
+agentlock rules search exfil                         # browse by keyword
+agentlock rules install rogue.destructive-bash       # land a gate in the live policy
+agentlock rules install exfil.curl-with-env
+agentlock rules install rogue.secret-read
+```
 
-See [Policies and the five gates](https://openagentlock.github.io/OpenAgentLock/guide/policies/) for the rule schema and authoring rules.
+You can also tap a private registry (any Git repo with the same layout) for org-internal rules:
+
+```bash
+agentlock rules add https://github.com/your-org/your-rules.git
+```
+
+See [Policies and rules](https://openagentlock.github.io/OpenAgentLock/guide/policies/) for the schema and authoring guide.
 
 ## Repository layout
 
@@ -134,10 +140,8 @@ control-plane/              Go HTTP service in Docker                 — ghcr.i
   Dockerfile, docker-compose.yml
   dashboard-ui/             Vite SPA embedded into the Go binary
 ledger/                     Rust crate (lib + cdylib + staticlib)     — openagentlock-ledger
-policies/default.yaml       baseline policy shipped with every install
 docs/                       MkDocs Material site (deployed to openagentlock.github.io/OpenAgentLock)
 assets/                     logo, favicon, social card
-Formula/agentlock.rb        Homebrew tap formula
 docker-compose.yml          one-command control-plane bring-up
 scripts/install.sh          one-shot installer
 .github/workflows/          ci · docker-publish · npm-publish · pages

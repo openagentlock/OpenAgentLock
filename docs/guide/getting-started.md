@@ -41,12 +41,6 @@ curl -s http://127.0.0.1:7878/v1/health
 
 ## 2. Install the CLI
 
-=== "Homebrew"
-
-    ```bash
-    brew install openagentlock/tap/agentlock
-    ```
-
 === "npm / Bun"
 
     ```bash
@@ -76,7 +70,7 @@ agentlock --help
 agentlock detect
 ```
 
-This prints a table of every agent harness it found on your machine. Today, end-to-end hooks are wired for **Claude Code**, **Codex CLI**, and **Cursor**; other harnesses are detected but the installer flags them as not yet implemented. See [Status](../status.md).
+This prints a table of every agent harness it found on your machine. Today, end-to-end hooks are wired for **Claude Code**, **Codex CLI**, **Cursor**, and **Gemini CLI**; other harnesses are detected but the installer flags them as not yet implemented. See [Status](../status.md).
 
 Then pick a signer tier and run `install`. Two recommended paths:
 
@@ -130,4 +124,4 @@ Open the dashboard at <http://127.0.0.1:7879/> to watch live activity.
 
 Out of the box, the control plane runs in **monitor mode**: every tool call is logged but nothing is blocked. Use the dashboard to review activity, then flip rules to enforce when you're confident. See [Policies and the five gates](policies.md).
 
-OS-keychain and hardware-key (YubiKey) signers are stronger than TOTP and are on the roadmap; today TOTP is the strongest signer that ships. See [Signers](signers.md).
+For stronger local signing, macOS can use the shipped OS-keychain signer. Hardware-key signers (YubiKey PIV / FIDO2), Linux Secret Service, and Windows DPAPI remain roadmap. See [Signers](signers.md).

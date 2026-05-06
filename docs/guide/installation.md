@@ -9,14 +9,6 @@ Both are required. The CLI on its own can probe for harnesses but cannot evaluat
 
 ## CLI
 
-### Homebrew (macOS, Linux)
-
-```bash
-brew install openagentlock/tap/agentlock
-```
-
-The tap also installs `bun` as a dependency since the CLI runs on Bun.
-
 ### npm / Bun
 
 ```bash
