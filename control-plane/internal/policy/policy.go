@@ -24,9 +24,9 @@ import (
 )
 
 type rawPolicy struct {
-	Version  int      `yaml:"version"`
-	Mode     string   `yaml:"mode"`
-	Defaults rawDef   `yaml:"defaults"`
+	Version  int       `yaml:"version"`
+	Mode     string    `yaml:"mode"`
+	Defaults rawDef    `yaml:"defaults"`
 	Gates    []rawGate `yaml:"gates"`
 }
 
@@ -38,6 +38,7 @@ type rawDef struct {
 
 type rawGate struct {
 	ID       string    `yaml:"id"`
+	Source   string    `yaml:"source,omitempty"`
 	Mode     string    `yaml:"mode,omitempty"`
 	Severity string    `yaml:"severity,omitempty"`
 	Disabled bool      `yaml:"disabled,omitempty"`
@@ -60,15 +61,15 @@ type rawEval struct {
 	Kind   string `yaml:"kind"`
 	Action string `yaml:"action,omitempty"`
 	// Other fields belong to future evaluator kinds; yaml lets them through.
-	Reference          string `yaml:"reference,omitempty"`
-	List               string `yaml:"list,omitempty"`
-	ActionOnNearMiss   string `yaml:"action_on_near_miss,omitempty"`
-	OnHit              string `yaml:"on_hit,omitempty"`
-	OnMiss             string `yaml:"on_miss,omitempty"`
-	OnKnown            string `yaml:"on_known,omitempty"`
-	OnUnknown          string `yaml:"on_unknown,omitempty"`
-	OnChanged          string `yaml:"on_changed,omitempty"`
-	Store              string `yaml:"store,omitempty"`
+	Reference        string `yaml:"reference,omitempty"`
+	List             string `yaml:"list,omitempty"`
+	ActionOnNearMiss string `yaml:"action_on_near_miss,omitempty"`
+	OnHit            string `yaml:"on_hit,omitempty"`
+	OnMiss           string `yaml:"on_miss,omitempty"`
+	OnKnown          string `yaml:"on_known,omitempty"`
+	OnUnknown        string `yaml:"on_unknown,omitempty"`
+	OnChanged        string `yaml:"on_changed,omitempty"`
+	Store            string `yaml:"store,omitempty"`
 	// Nudge is an optional human-readable hint surfaced alongside a deny
 	// verdict so the agent gets concrete remediation guidance ("use trash
 	// instead") rather than a bare block. Ignored on allow / skip.
@@ -100,6 +101,7 @@ type Gate struct {
 	ID       string
 	Mode     string // monitor | enforce — inherits Policy.Mode if empty
 	Disabled bool   // true = skip this gate during evaluation
+	Source   string // daemon | registry | per-repo:<path>
 	Match    Matcher
 	// Evals is the compiled evaluate[] pipeline. Each entry carries the
 	// evaluator plus its optional `nudge:` hint; the firing entry's nudge
@@ -175,11 +177,11 @@ func (e hostAllowlistEvaluator) Evaluate(req EvalRequest) string {
 // server and then enforces it on subsequent calls (Trust On First Use).
 // State lives in a JSON file so pins survive daemon restart.
 type pinTofuEvaluator struct {
-	storePath  string
-	mu         sync.Mutex
-	OnUnknown  string
-	OnKnown    string
-	OnChanged  string
+	storePath string
+	mu        sync.Mutex
+	OnUnknown string
+	OnKnown   string
+	OnChanged string
 }
 
 func (e *pinTofuEvaluator) Evaluate(req EvalRequest) string {
@@ -394,13 +396,13 @@ func extractHost(cmd string) string {
 // A Matcher with no criteria set matches nothing — a policy with that
 // shape was broken at parse.
 type Matcher struct {
-	Tool         string
-	ToolPrefix   string
-	PathGlobRE   *regexp.Regexp
-	Regexes      []*regexp.Regexp // compiled from command_regex + any_command_regex
-	PathRegexes  []*regexp.Regexp // compiled from any_path_regex — matched against input.file_path / input.path
-	URLRegexes   []*regexp.Regexp // compiled from any_url_regex — matched against input.url
-	AnyOf        []Matcher
+	Tool        string
+	ToolPrefix  string
+	PathGlobRE  *regexp.Regexp
+	Regexes     []*regexp.Regexp // compiled from command_regex + any_command_regex
+	PathRegexes []*regexp.Regexp // compiled from any_path_regex — matched against input.file_path / input.path
+	URLRegexes  []*regexp.Regexp // compiled from any_url_regex — matched against input.url
+	AnyOf       []Matcher
 }
 
 type EvalRequest struct {
@@ -412,7 +414,7 @@ type EvalResult struct {
 	Verdict      string // allow | deny
 	RuleID       string // "default" if no gate matched
 	Reason       string
-	MonitorMatch bool   // true when a rule matched but mode=monitor forced allow
+	MonitorMatch bool // true when a rule matched but mode=monitor forced allow
 	// OriginalVerdict is the verdict the matched evaluator returned
 	// before any monitor downgrade. Carries the truth across the
 	// monitor-suppressed boundary so a daemon-level firewall override
@@ -436,9 +438,16 @@ func Load(r io.Reader) (*Policy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read policy: %w", err)
 	}
+	return loadBytesWithSource(buf, "daemon", "")
+}
+
+func loadBytesWithSource(buf []byte, source, defaultMode string) (*Policy, error) {
 	var raw rawPolicy
 	if err := yaml.Unmarshal(buf, &raw); err != nil {
 		return nil, fmt.Errorf("yaml: %w", err)
+	}
+	if raw.Mode == "" {
+		raw.Mode = defaultMode
 	}
 	if raw.Mode == "" {
 		raw.Mode = "monitor"
@@ -467,10 +476,15 @@ func Load(r io.Reader) (*Policy, error) {
 		if !matcherIsUseful(m) {
 			return nil, fmt.Errorf("gate %q: match has no criteria", rg.ID)
 		}
+		gateSource := rg.Source
+		if gateSource == "" {
+			gateSource = source
+		}
 		gates = append(gates, Gate{
 			ID:       rg.ID,
 			Mode:     rg.Mode,
 			Disabled: rg.Disabled,
+			Source:   gateSource,
 			Match:    m,
 			Evals:    evals,
 		})
@@ -487,6 +501,66 @@ func Load(r io.Reader) (*Policy, error) {
 
 func LoadBytes(b []byte) (*Policy, error) {
 	return Load(bytes.NewReader(b))
+}
+
+// MergeRestrictiveExtension overlays a repo-local policy file onto the live
+// daemon policy. Repo files are intentionally additive until their content hash
+// is approved: only gates that can produce a deny are appended, while disabled
+// gates, always-allow gates, and same-id overrides are ignored so an untrusted
+// checkout cannot weaken daemon policy.
+func MergeRestrictiveExtension(base *Policy, extension []byte, source string) (*Policy, error) {
+	if base == nil || len(bytes.TrimSpace(extension)) == 0 {
+		return base, nil
+	}
+	repo, err := loadBytesWithSource(extension, source, base.Mode)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	for _, g := range base.Gates {
+		seen[g.ID] = struct{}{}
+	}
+	merged := *base
+	merged.Gates = append([]Gate(nil), base.Gates...)
+	for _, g := range repo.Gates {
+		if _, exists := seen[g.ID]; exists {
+			continue
+		}
+		if !gateIsRestrictive(g) {
+			continue
+		}
+		merged.Gates = append(merged.Gates, g)
+	}
+	sum := sha256.Sum256([]byte(base.Hash + "\n" + source + "\n" + string(extension)))
+	merged.Hash = "sha256:" + hex.EncodeToString(sum[:])
+	merged.RawYAML = append(append([]byte(nil), base.RawYAML...), extension...)
+	return &merged, nil
+}
+
+func gateIsRestrictive(g Gate) bool {
+	if g.Disabled {
+		return false
+	}
+	for _, e := range g.Evals {
+		if e.eval.Evaluate(EvalRequest{Tool: "__agentlock_probe__", Input: map[string]any{}}) == "deny" {
+			return true
+		}
+	}
+	allAlwaysAllow := len(g.Evals) > 0
+	for _, e := range g.Evals {
+		ae, ok := e.eval.(alwaysEvaluator)
+		if !ok || ae.Action != "allow" {
+			allAlwaysAllow = false
+			break
+		}
+	}
+	if allAlwaysAllow {
+		return false
+	}
+	// Non-constant evaluators such as allowlist / typosquat can deny for
+	// matching inputs, so keep them additive unless the gate is disabled or
+	// a known always-allow override.
+	return len(g.Evals) > 0
 }
 
 func (p *Policy) Evaluate(req EvalRequest) EvalResult {

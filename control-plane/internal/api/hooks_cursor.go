@@ -214,7 +214,7 @@ func cursorGateHandler(d Deps, eventName string, kind cursorDedupeKind) http.Han
 			return
 		}
 
-		evalPolicy := resolvePolicy(d, sess.PolicyHash)
+		evalPolicy := resolvePolicyForCwd(d, sess.PolicyHash, in.Cwd)
 		if evalPolicy == nil {
 			writeError(w, http.StatusServiceUnavailable, "policy_unavailable", "no policy loaded")
 			return
@@ -500,7 +500,7 @@ func cursorBeforeShellHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		evalPolicy := resolvePolicy(d, sess.PolicyHash)
+		evalPolicy := resolvePolicyForCwd(d, sess.PolicyHash, in.Cwd)
 		if evalPolicy == nil {
 			// No policy → can't evaluate, fail-open. preToolUse already
 			// landed (or also failed-open), so this is a safe default.

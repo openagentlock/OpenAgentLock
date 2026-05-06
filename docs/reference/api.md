@@ -41,6 +41,10 @@ Response fields:
 - `nudge` — optional, string. Present only when the matched rule defined a `nudge:` hint **and** the final verdict is `deny`. Allow / monitor-suppressed paths drop it. See [Policies → Nudges](../guide/policies.md#nudges).
 - `ledger_seq` — sequence number of the corresponding ledger leaf
 
+`GET /v1/policy/view`
+
+Returns the live policy as dashboard-friendly gates. Each gate includes `source`: `daemon` for built-in or direct policy-file gates, `registry:<id>` for rules installed from a rules registry, or `per-repo:<path>` for repo-local gates.
+
 ## Install
 
 `POST /v1/install/plan` — render a diff of what would change in the harness configs

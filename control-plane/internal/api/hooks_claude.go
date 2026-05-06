@@ -66,7 +66,7 @@ func claudePreToolUseHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		evalPolicy := resolvePolicy(d, sess.PolicyHash)
+		evalPolicy := resolvePolicyForCwd(d, sess.PolicyHash, in.Cwd)
 		if evalPolicy == nil {
 			writeError(w, http.StatusServiceUnavailable, "policy_unavailable", "no policy loaded")
 			return

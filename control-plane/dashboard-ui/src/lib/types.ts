@@ -29,6 +29,7 @@ export interface GateView {
   id: string;
   mode: string;
   disabled: boolean;
+  source: string;
   tool?: string;
   tool_prefix?: string;
   any_command_regex?: string[];

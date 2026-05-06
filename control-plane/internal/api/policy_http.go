@@ -18,6 +18,7 @@ type gateView struct {
 	ID              string   `json:"id"`
 	Mode            string   `json:"mode"`
 	Disabled        bool     `json:"disabled"`
+	Source          string   `json:"source"`
 	Tool            string   `json:"tool,omitempty"`
 	ToolPrefix      string   `json:"tool_prefix,omitempty"`
 	AnyCommandRegex []string `json:"any_command_regex,omitempty"`
@@ -36,6 +37,7 @@ func policyViewHandler(d Deps) http.HandlerFunc {
 				ID:              g.ID,
 				Mode:            effectiveGateMode(p, g),
 				Disabled:        g.Disabled,
+				Source:          g.Source,
 				Tool:            g.Match.Tool,
 				ToolPrefix:      g.Match.ToolPrefix,
 				AnyCommandRegex: regexStrings(g.Match.Regexes),
