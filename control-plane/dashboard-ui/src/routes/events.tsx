@@ -1,12 +1,15 @@
 import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { AddRuleModal } from "@/components/AddRuleModal";
 import { useRootInfo } from "@/hooks/usePoll";
 import { useSSELedger } from "@/hooks/useSSE";
 import type { LedgerEntry } from "@/lib/types";
 import { INTERNAL_SOURCES } from "@/lib/filters";
 import { fullLocal, shortTime } from "@/lib/time";
 import { shortHash } from "@/lib/filters";
+import { rulePresetFromLedgerEntry } from "@/lib/eventRulePreset";
+import type { AddRuleInitialPreset } from "@/lib/rulePresetTypes";
 
 // verdictDisplay maps a ledger row to a (label, color-class) pair.
 //
@@ -49,12 +52,34 @@ function EventsTab() {
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    preset: AddRuleInitialPreset;
+  } | null>(null);
+  const [addRulePreset, setAddRulePreset] = useState<AddRuleInitialPreset | null>(null);
 
   // Reset to page 0 when filter inputs or page size change so the user
   // never lands on an empty page after narrowing the result set.
   useEffect(() => {
     setPage(0);
   }, [sourceFilter, verdictFilter, ruleFilter, showInternal, pageSize]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [contextMenu]);
 
   const sources = useMemo(() => {
     const set = new Set<string>();
@@ -92,6 +117,17 @@ function EventsTab() {
     () => filtered.slice(pageStart, pageEnd),
     [filtered, pageStart, pageEnd],
   );
+
+  const onRowContextMenu = (ev: React.MouseEvent, entry: LedgerEntry) => {
+    const preset = rulePresetFromLedgerEntry(entry);
+    if (!preset) return;
+    ev.preventDefault();
+    setContextMenu({
+      x: Math.min(ev.clientX, window.innerWidth - 220),
+      y: Math.min(ev.clientY, window.innerHeight - 64),
+      preset,
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -205,6 +241,7 @@ function EventsTab() {
                   <tr
                     key={`${e.seq}-${e.leaf_hash}`}
                     onClick={() => setSelectedSeq(e.seq)}
+                    onContextMenu={(ev) => onRowContextMenu(ev, e)}
                     className="cursor-pointer hover:bg-chip"
                   >
                     <td className="font-mono">{e.seq}</td>
@@ -292,6 +329,35 @@ function EventsTab() {
         <EventDetail
           entry={entries.find((e) => e.seq === selectedSeq) ?? null}
           onClose={() => setSelectedSeq(null)}
+        />
+      )}
+
+      {contextMenu && (
+        <div
+          className="fixed z-50 min-w-[200px] rounded-md border border-border bg-panel py-1 shadow-lg"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+          role="menu"
+        >
+          <button
+            type="button"
+            className="block w-full px-3 py-2 text-left text-xs hover:bg-chip focus:bg-chip focus:outline-none"
+            onClick={() => {
+              setAddRulePreset(contextMenu.preset);
+              setContextMenu(null);
+            }}
+            role="menuitem"
+          >
+            Block this next time
+          </button>
+        </div>
+      )}
+
+      {addRulePreset && (
+        <AddRuleModal
+          initialPreset={addRulePreset}
+          onClose={() => setAddRulePreset(null)}
+          onCreated={() => setAddRulePreset(null)}
         />
       )}
     </div>

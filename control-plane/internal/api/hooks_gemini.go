@@ -115,12 +115,13 @@ func geminiPreToolUseHandler(d Deps) http.HandlerFunc {
 		if _, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
 			TS:           time.Now().UTC(),
 			Source:       "gemini",
+			Tool:         in.ToolName,
 			ToolUseID:    toolUseID,
-			Tool:    in.ToolName,
 			Signer:       sess.Signer,
 			RuleID:       result.RuleID,
 			Verdict:      origVerdict,
 			MonitorMatch: monitorMatch,
+			MatcherInput: ledgerMatcherInput(in.ToolInput),
 			PayloadHash:  payloadHash[:],
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "ledger_error", err.Error())
@@ -198,7 +199,7 @@ func geminiPostToolUseHandler(d Deps) http.HandlerFunc {
 			TS:          time.Now().UTC(),
 			Source:      "gemini",
 			ToolUseID:   toolUseID,
-			Tool:   in.ToolName,
+			Tool:        in.ToolName,
 			Signer:      sess.Signer,
 			Verdict:     verdict,
 			PayloadHash: payloadHash[:],

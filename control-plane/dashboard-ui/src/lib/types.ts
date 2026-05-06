@@ -2,8 +2,11 @@ export interface LedgerEntry {
   seq: number;
   ts: string;
   source: string;
+  tool?: string;
   tool_use_id: string;
   signer: string;
+  input?: Record<string, unknown>;
+  tool_input?: Record<string, unknown>;
   rule_id?: string;
   verdict?: string;
   // True when the original verdict was deny but the daemon's monitor
@@ -53,6 +56,15 @@ export interface SessionRow {
 export interface SessionsResponse {
   live_policy_hash: string;
   sessions: SessionRow[];
+}
+
+export interface MCPPinRow {
+  server: string;
+  fingerprint: string;
+}
+
+export interface MCPPinsResponse {
+  pins: MCPPinRow[];
 }
 
 export interface RootInfo {

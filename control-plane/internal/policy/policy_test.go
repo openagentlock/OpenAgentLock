@@ -237,6 +237,28 @@ gates:
         on_miss: deny
 `
 
+const netEgressURLYAML = `
+version: 1
+mode: enforce
+gates:
+  - id: rogue.net-egress
+    match:
+      any_of:
+        - tool: Bash
+          command_regex: '\b(curl|wget)\b'
+        - tool: WebFetch
+          any_url_regex:
+            - '^https?://'
+        - tool: WebSearch
+          any_url_regex:
+            - '^https?://'
+    evaluate:
+      - kind: host-allowlist
+        list: __INLINE__:api.anthropic.com,api.openai.com
+        on_hit: allow
+        on_miss: deny
+`
+
 const typosquatYAML = `
 version: 1
 mode: enforce
@@ -476,6 +498,45 @@ func TestEvaluate_HostAllowlist_NoURLDoesNotMatch(t *testing.T) {
 		Input: map[string]any{"command": "curl --help"},
 	})
 	// No URL in command — evaluator can't decide. Should skip (allow by default).
+	if v.Verdict != "allow" {
+		t.Fatalf("got %+v", v)
+	}
+}
+
+func TestEvaluate_HostAllowlist_WebFetchURLHitAllows(t *testing.T) {
+	p, err := Load(strings.NewReader(netEgressURLYAML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	v := p.Evaluate(EvalRequest{
+		Tool:  "WebFetch",
+		Input: map[string]any{"url": "https://api.openai.com/v1/responses"},
+	})
+	if v.Verdict != "allow" || v.RuleID != "rogue.net-egress" {
+		t.Fatalf("got %+v", v)
+	}
+}
+
+func TestEvaluate_HostAllowlist_WebSearchURLMissDenies(t *testing.T) {
+	p, _ := Load(strings.NewReader(netEgressURLYAML))
+	v := p.Evaluate(EvalRequest{
+		Tool:  "WebSearch",
+		Input: map[string]any{"url": "https://evil.biz/search?q=secrets"},
+	})
+	if v.Verdict != "deny" || v.RuleID != "rogue.net-egress" {
+		t.Fatalf("got %+v", v)
+	}
+}
+
+func TestEvaluate_HostAllowlist_PrefersURLFieldOverCommand(t *testing.T) {
+	p, _ := Load(strings.NewReader(netEgressURLYAML))
+	v := p.Evaluate(EvalRequest{
+		Tool: "WebFetch",
+		Input: map[string]any{
+			"url":     "https://api.openai.com/v1/responses",
+			"command": "curl https://evil.biz/pwn",
+		},
+	})
 	if v.Verdict != "allow" {
 		t.Fatalf("got %+v", v)
 	}

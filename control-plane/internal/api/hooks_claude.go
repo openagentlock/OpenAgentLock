@@ -85,14 +85,14 @@ func claudePreToolUseHandler(d Deps) http.HandlerFunc {
 		}
 
 		payloadBytes, err := json.Marshal(map[string]any{
-			"session_id":     in.SessionID,
-			"source":         "claude-code",
-			"tool":           in.ToolName,
-			"input":          in.ToolInput,
-			"verdict":        origVerdict,
-			"rule_id":        result.RuleID,
-			"daemon_mode":    mode,
-			"monitor_match":  monitorMatch,
+			"session_id":    in.SessionID,
+			"source":        "claude-code",
+			"tool":          in.ToolName,
+			"input":         in.ToolInput,
+			"verdict":       origVerdict,
+			"rule_id":       result.RuleID,
+			"daemon_mode":   mode,
+			"monitor_match": monitorMatch,
 		})
 		if err != nil {
 			log.Printf("claude pre-tool-use: marshal: %v", err)
@@ -103,12 +103,13 @@ func claudePreToolUseHandler(d Deps) http.HandlerFunc {
 		if _, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
 			TS:           time.Now().UTC(),
 			Source:       "claude-code",
+			Tool:         in.ToolName,
 			ToolUseID:    toolUseID,
-			Tool:    in.ToolName,
 			Signer:       sess.Signer,
 			RuleID:       result.RuleID,
 			Verdict:      origVerdict,
 			MonitorMatch: monitorMatch,
+			MatcherInput: ledgerMatcherInput(in.ToolInput),
 			PayloadHash:  payloadHash[:],
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "ledger_error", err.Error())
@@ -221,7 +222,7 @@ func claudePostToolUseHandler(d Deps) http.HandlerFunc {
 			TS:          time.Now().UTC(),
 			Source:      "claude-code",
 			ToolUseID:   toolUseID,
-			Tool:   in.ToolName,
+			Tool:        in.ToolName,
 			Signer:      sess.Signer,
 			Verdict:     verdict,
 			PayloadHash: payloadHash[:],
