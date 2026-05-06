@@ -105,6 +105,7 @@ func NewRouter(deps ...Deps) http.Handler {
 		// Ledger.
 		{"GET", "/v1/ledger/tail", ledgerTailHandler(d)},
 		{"GET", "/v1/ledger/root", ledgerRootHandler(d)},
+		{"GET", "/v1/ledger/insights", ledgerInsightsHandler(d)},
 		{"GET", "/v1/ledger/proof/{seq}", todo("ledger.proof")},
 		{"POST", "/v1/ledger/verify", ledgerVerifyHandler(d)},
 
