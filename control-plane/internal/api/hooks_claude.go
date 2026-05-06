@@ -58,6 +58,7 @@ func claudePreToolUseHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid_request", "session_id, tool_name required")
 			return
 		}
+		in.ToolInput = normalizeMCPHTTPURLInput(in.ToolName, in.ToolInput)
 
 		sess, err := ensureClaudeSession(r, d, in.SessionID)
 		if err != nil {
@@ -148,9 +149,13 @@ type claudePostToolInput struct {
 	ToolUseID     string         `json:"tool_use_id"`
 	// Claude Code populates `tool_response` with whatever the tool
 	// returned. We don't mirror the full payload into the ledger
-	// (potential secret-leak), just its success flag + a size hint.
-	ToolResponse any  `json:"tool_response"`
-	Success      bool `json:"success"`
+	// (potential secret-leak), just a derived success flag + a size
+	// hint. The success flag is derived from `tool_response.is_error`
+	// because Claude Code's hook spec doesn't emit a top-level
+	// success bool — a stray `Success bool json:"success"` field here
+	// used to default to false on every call and tag every completed
+	// tool as a failure in the ledger.
+	ToolResponse any `json:"tool_response"`
 }
 
 // claudePostToolUseHandler records the completion outcome of each tool
@@ -189,21 +194,14 @@ func claudePostToolUseHandler(d Deps) http.HandlerFunc {
 		// to distinguish "tool ran" from "tool timed out returning
 		// nothing" without risking that a curl response with a secret
 		// in it lands in the Merkle-hashed payload.
-		respSize := 0
-		if in.ToolResponse != nil {
-			if s, ok := in.ToolResponse.(string); ok {
-				respSize = len(s)
-			} else if b, mErr := json.Marshal(in.ToolResponse); mErr == nil {
-				respSize = len(b)
-			}
-		}
+		respSize, success := summarizeToolResponse(in.ToolResponse)
 
 		toolUseID := in.ToolUseID
 		if toolUseID == "" {
 			toolUseID = "claude.post-tool-use"
 		}
 		verdict := "complete"
-		if !in.Success {
+		if !success {
 			verdict = "failure"
 		}
 
@@ -213,7 +211,7 @@ func claudePostToolUseHandler(d Deps) http.HandlerFunc {
 			"tool":          in.ToolName,
 			"tool_use_id":   toolUseID,
 			"response_size": respSize,
-			"success":       in.Success,
+			"success":       success,
 		})
 		if err != nil {
 			log.Printf("claude post-tool-use: marshal: %v", err)

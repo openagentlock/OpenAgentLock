@@ -36,6 +36,26 @@ gates:
         action: deny
 `
 
+const mcpNetEgressPolicyYAML = `
+version: 1
+mode: enforce
+gates:
+  - id: rogue.net-egress
+    match:
+      any_of:
+        - tool_prefix: "mcp__"
+          any_url_regex:
+            - '^https?://'
+        - tool_prefix: "mcp_"
+          any_url_regex:
+            - '^https?://'
+    evaluate:
+      - kind: host-allowlist
+        list: __INLINE__:api.openai.com,api.github.com
+        on_hit: allow
+        on_miss: deny
+`
+
 type gateFixture struct {
 	srv       *httptest.Server
 	store     *storage.Memory

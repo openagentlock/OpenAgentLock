@@ -16,7 +16,7 @@ func newMCPFixture(t *testing.T) (*httptest.Server, string) {
 	pinPath := filepath.Join(home, "pinned-mcp.json")
 	store := mustNewMemoryStore(t, home)
 	srv := httptest.NewServer(NewRouter(Deps{
-		Store:       store,
+		Store:        store,
 		PinStorePath: pinPath,
 	}))
 	t.Cleanup(srv.Close)
@@ -109,6 +109,66 @@ func TestMCPPin_CheckAfterAccept_ChangedFingerprint(t *testing.T) {
 	}
 	if out["known_fingerprint"] != "sha256:dddd" {
 		t.Fatalf("known_fingerprint = %v", out["known_fingerprint"])
+	}
+}
+
+func TestMCPPin_List_ReturnsCurrentPinsSortedByServer(t *testing.T) {
+	srv, pinPath := newMCPFixture(t)
+	raw := []byte(`{"slack":"sha256:cccc","github":"sha256:bbbb"}`)
+	if err := os.WriteFile(pinPath, raw, 0o600); err != nil {
+		t.Fatalf("write pin file: %v", err)
+	}
+
+	res, err := http.Get(srv.URL + "/v1/mcp/pins")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var out struct {
+		Pins []struct {
+			Server      string `json:"server"`
+			Fingerprint string `json:"fingerprint"`
+		} `json:"pins"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Pins) != 2 {
+		t.Fatalf("pins len = %d", len(out.Pins))
+	}
+	if out.Pins[0].Server != "github" || out.Pins[0].Fingerprint != "sha256:bbbb" {
+		t.Fatalf("first pin = %+v", out.Pins[0])
+	}
+	if out.Pins[1].Server != "slack" || out.Pins[1].Fingerprint != "sha256:cccc" {
+		t.Fatalf("second pin = %+v", out.Pins[1])
+	}
+}
+
+func TestMCPPin_List_MissingFileReturnsEmptyPins(t *testing.T) {
+	srv, _ := newMCPFixture(t)
+
+	res, err := http.Get(srv.URL + "/v1/mcp/pins")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var out struct {
+		Pins []struct {
+			Server      string `json:"server"`
+			Fingerprint string `json:"fingerprint"`
+		} `json:"pins"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Pins) != 0 {
+		t.Fatalf("pins len = %d", len(out.Pins))
 	}
 }
 

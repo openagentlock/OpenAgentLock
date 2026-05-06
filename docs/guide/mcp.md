@@ -30,6 +30,12 @@ Decisions land in the ledger with `source: <harness>` and the MCP server's pinne
 
 The dashboard shows MCP coverage per session so you know whether a given run had MCP visibility.
 
+## HTTP transport URLs
+
+When a hook exposes an MCP server or transport URL, the control plane normalizes that value into the tool input as `url` before policy evaluation and ledger matcher capture. This lets `rogue.net-egress` and dashboard rule creation use the same canonical field for native URL tools and MCP-mediated HTTP calls.
+
+Supported hook metadata keys include `url`, `server_url`, `mcp_server_url`, `transport_url`, and `base_url`, including nested Gemini `mcp_context` objects. An existing `tool_input.url` wins over metadata.
+
 ## Pinning
 
 The first time a new MCP server is observed, we record its self-reported public key fingerprint and queue a pin request. Until you accept the pin from the dashboard, calls to that server count as "untrusted MCP" and trigger the `supply-chain.untrusted-mcp` gate.
