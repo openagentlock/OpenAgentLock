@@ -135,8 +135,10 @@ type codexPostToolInput struct {
 	ToolInput     map[string]any `json:"tool_input"`
 	ToolUseID     string         `json:"tool_use_id"`
 	TurnID        string         `json:"turn_id"`
-	ToolResponse  any            `json:"tool_response"`
-	Success       bool           `json:"success"`
+	// Codex hook payloads don't carry a reliable top-level success
+	// boolean; we derive it from tool_response so the ledger reflects
+	// what the tool actually did. See hooks_common.go.
+	ToolResponse any `json:"tool_response"`
 }
 
 func codexPostToolUseHandler(d Deps) http.HandlerFunc {
@@ -161,21 +163,14 @@ func codexPostToolUseHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		respSize := 0
-		if in.ToolResponse != nil {
-			if s, ok := in.ToolResponse.(string); ok {
-				respSize = len(s)
-			} else if b, mErr := json.Marshal(in.ToolResponse); mErr == nil {
-				respSize = len(b)
-			}
-		}
+		respSize, success := summarizeToolResponse(in.ToolResponse)
 
 		toolUseID := in.ToolUseID
 		if toolUseID == "" {
 			toolUseID = "codex.post-tool-use"
 		}
 		verdict := "complete"
-		if !in.Success {
+		if !success {
 			verdict = "failure"
 		}
 
@@ -186,7 +181,7 @@ func codexPostToolUseHandler(d Deps) http.HandlerFunc {
 			"tool_use_id":   toolUseID,
 			"turn_id":       in.TurnID,
 			"response_size": respSize,
-			"success":       in.Success,
+			"success":       success,
 		})
 		if err != nil {
 			log.Printf("codex post-tool-use: marshal: %v", err)

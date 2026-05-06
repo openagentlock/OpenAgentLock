@@ -173,7 +173,7 @@ func geminiPostToolUseHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		respSize, success := summarizeGeminiToolResponse(in.ToolResponse)
+		respSize, success := summarizeToolResponse(in.ToolResponse)
 		toolUseID := "gemini.post-tool-use"
 		verdict := "complete"
 		if !success {
@@ -210,42 +210,6 @@ func geminiPostToolUseHandler(d Deps) http.HandlerFunc {
 
 		writeJSON(w, http.StatusOK, map[string]any{"continue": true})
 	}
-}
-
-// summarizeGeminiToolResponse extracts a size hint and a success flag from
-// the heterogeneous `tool_response` payload Gemini sends. Strings count as
-// successful (no error field). Objects with a non-empty `error` member are
-// treated as failures. We never hash the response body itself — keeping
-// large outputs (and any secrets they might contain) out of the Merkle
-// chain is the same posture as Claude/Codex post-tool-use.
-func summarizeGeminiToolResponse(resp any) (int, bool) {
-	if resp == nil {
-		return 0, true
-	}
-	if s, ok := resp.(string); ok {
-		return len(s), true
-	}
-	if m, ok := resp.(map[string]any); ok {
-		size := 0
-		if b, err := json.Marshal(m); err == nil {
-			size = len(b)
-		}
-		if errVal, present := m["error"]; present {
-			switch v := errVal.(type) {
-			case nil:
-				return size, true
-			case string:
-				return size, v == ""
-			default:
-				return size, false
-			}
-		}
-		return size, true
-	}
-	if b, err := json.Marshal(resp); err == nil {
-		return len(b), true
-	}
-	return 0, true
 }
 
 type geminiSessionStartInput struct {
