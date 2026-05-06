@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SessionsRouteImport } from './routes/sessions'
 import { Route as RulesRouteImport } from './routes/rules'
+import { Route as McpRouteImport } from './routes/mcp'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as IndexRouteImport } from './routes/index'
 
@@ -22,6 +23,11 @@ const SessionsRoute = SessionsRouteImport.update({
 const RulesRoute = RulesRouteImport.update({
   id: '/rules',
   path: '/rules',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const McpRoute = McpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EventsRoute = EventsRouteImport.update({
@@ -38,12 +44,14 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/events': typeof EventsRoute
+  '/mcp': typeof McpRoute
   '/rules': typeof RulesRoute
   '/sessions': typeof SessionsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/events': typeof EventsRoute
+  '/mcp': typeof McpRoute
   '/rules': typeof RulesRoute
   '/sessions': typeof SessionsRoute
 }
@@ -51,20 +59,22 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/events': typeof EventsRoute
+  '/mcp': typeof McpRoute
   '/rules': typeof RulesRoute
   '/sessions': typeof SessionsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/events' | '/rules' | '/sessions'
+  fullPaths: '/' | '/events' | '/mcp' | '/rules' | '/sessions'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/events' | '/rules' | '/sessions'
-  id: '__root__' | '/' | '/events' | '/rules' | '/sessions'
+  to: '/' | '/events' | '/mcp' | '/rules' | '/sessions'
+  id: '__root__' | '/' | '/events' | '/mcp' | '/rules' | '/sessions'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   EventsRoute: typeof EventsRoute
+  McpRoute: typeof McpRoute
   RulesRoute: typeof RulesRoute
   SessionsRoute: typeof SessionsRoute
 }
@@ -83,6 +93,13 @@ declare module '@tanstack/react-router' {
       path: '/rules'
       fullPath: '/rules'
       preLoaderRoute: typeof RulesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mcp': {
+      id: '/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof McpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/events': {
@@ -105,6 +122,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   EventsRoute: EventsRoute,
+  McpRoute: McpRoute,
   RulesRoute: RulesRoute,
   SessionsRoute: SessionsRoute,
 }

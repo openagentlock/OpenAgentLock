@@ -149,6 +149,46 @@ func TestGeminiPreToolUse_MissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestGeminiPreToolUse_NormalizesNestedMCPContextURLAndDeniesDisallowedHost(t *testing.T) {
+	fx := newGateFixture(t, mcpNetEgressPolicyYAML)
+	body := `{
+		"session_id": "gemini-mcp-url-deny",
+		"hook_event_name": "BeforeTool",
+		"tool_name": "mcp_server_fetch",
+		"tool_input": {"query": "x"},
+		"mcp_context": {
+			"server": {
+				"transport_url": "https://evil.biz/mcp"
+			}
+		}
+	}`
+
+	res, out := postGeminiPre(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["continue"] != false {
+		t.Fatalf("continue should be false on disallowed MCP URL: %v", out)
+	}
+	if out["decision"] != "deny" {
+		t.Fatalf("decision = %v, want deny", out["decision"])
+	}
+
+	entries, _ := fx.store.ListLedger(context.Background())
+	for _, e := range entries {
+		if e.ToolUseID == "gemini.pre-tool-use" && e.Source == "gemini" {
+			if e.RuleID != "rogue.net-egress" || e.Verdict != "deny" {
+				t.Fatalf("ledger verdict = %s/%s, want rogue.net-egress/deny", e.RuleID, e.Verdict)
+			}
+			if e.Input["url"] != "https://evil.biz/mcp" {
+				t.Fatalf("ledger matcher url = %q, want normalized URL", e.Input["url"])
+			}
+			return
+		}
+	}
+	t.Fatalf("missing gemini pre-tool ledger entry: %+v", entries)
+}
+
 func TestGeminiStop_EndsSession(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 	pre := `{

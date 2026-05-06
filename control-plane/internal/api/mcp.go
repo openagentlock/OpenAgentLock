@@ -38,6 +38,15 @@ type pinCheckResponse struct {
 	KnownFingerprint string `json:"known_fingerprint,omitempty"`
 }
 
+type mcpPinRow struct {
+	Server      string `json:"server"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+type mcpPinsResponse struct {
+	Pins []mcpPinRow `json:"pins"`
+}
+
 func mcpPinCheckHandler(d Deps) http.HandlerFunc {
 	if d.Store == nil || d.PinStorePath == "" {
 		return todo("mcp.pin.check")
@@ -65,6 +74,32 @@ func mcpPinCheckHandler(d Deps) http.HandlerFunc {
 			resp.KnownFingerprint = known
 		}
 		writeJSON(w, http.StatusOK, resp)
+	}
+}
+
+func mcpPinsListHandler(d Deps) http.HandlerFunc {
+	if d.PinStorePath == "" {
+		return todo("mcp.pins.list")
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		pins, err := readPins(d.PinStorePath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
+			return
+		}
+		servers := make([]string, 0, len(pins))
+		for server := range pins {
+			servers = append(servers, server)
+		}
+		sort.Strings(servers)
+		rows := make([]mcpPinRow, 0, len(servers))
+		for _, server := range servers {
+			rows = append(rows, mcpPinRow{
+				Server:      server,
+				Fingerprint: pins[server],
+			})
+		}
+		writeJSON(w, http.StatusOK, mcpPinsResponse{Pins: rows})
 	}
 }
 
