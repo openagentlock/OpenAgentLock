@@ -9,7 +9,7 @@ hide:
 ![OpenAgentLock](assets/banner.svg){ .oal-banner .no-zoom }
 
 <p class="lede" markdown>
-Detect local agent harnesses, gate risky tool calls with a deterministic YAML policy, and anchor every decision in a tamper-evident Merkle ledger. Install once and keep working in **Claude Code, Codex CLI, and Cursor** as normal — your workflow does not change.
+Detect local agent harnesses, gate risky tool calls with a deterministic YAML policy, and anchor every decision in a tamper-evident Merkle ledger. Install once and keep working in **Claude Code, Codex CLI, Cursor, and Gemini CLI** as normal — your workflow does not change.
 </p>
 
 [Get started](guide/getting-started.md){ .oal-cta .primary }
@@ -36,7 +36,7 @@ Eight harness detectors registered: Claude Code, Codex CLI, Cursor, OpenCode, Cl
 #### Install plan / apply
 <span class="gate-id">`agentlock install`</span>
 
-Interactive multi-select. Posts to `/v1/install/plan`, renders the diff, applies on confirm. Real install paths live for **Claude Code** (HTTP hooks) and **Codex CLI** (TOML hooks).
+Interactive multi-select. Posts to `/v1/install/plan`, renders the diff, applies on confirm. Real install paths live for **Claude Code**, **Codex CLI**, **Cursor**, and **Gemini CLI**.
 </div>
 
 <div class="gate-card" markdown>

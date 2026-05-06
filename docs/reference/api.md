@@ -27,7 +27,7 @@ Returns the list of currently active gates with their per-gate status (matched c
 Synchronous verdict for a single tool call. Request body:
 
 - `session_id` — required, string. From `POST /v1/sessions/create`.
-- `source` — required, string. Harness id (`claude-code`, `codex`, `cursor`, `mcp-proxy`).
+- `source` — required, string. Harness id (`claude-code`, `codex`, `cursor`, `gemini`, `mcp-proxy`, or another detected source).
 - `tool` — required, string. The tool name being checked (`Bash`, `Read`, `Write`, `mcp__<server>__<method>`).
 - `input` — required, object. The tool's input shape (e.g. `{ "command": "rm -rf foo" }` for Bash).
 - `cwd` — optional, string. Working directory if relevant to the rule.
@@ -78,6 +78,10 @@ The first time a new MCP server fingerprint is seen, it's queued for pinning. Ac
 `POST /v1/hooks/claude-code/<event>`
 
 `POST /v1/hooks/codex/<event>`
+
+`POST /v1/hooks/cursor/<event>`
+
+`POST /v1/hooks/gemini/<event>`
 
 `POST /v1/hooks/<harness>/<event>` (other harnesses; not yet implemented in the installer)
 

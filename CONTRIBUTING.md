@@ -24,6 +24,12 @@ You'll need:
 3. `bun test`, `cargo test`, and `go test -race` must pass before review.
 4. Open a PR with a clear summary. CI runs `ci.yml` on each push.
 
+For changes that ship or unship a public surface, update the status contract in the same PR:
+
+- `README.md` "What ships today"
+- `docs/status.md`
+- Any affected guide/reference page under `docs/guide/` or `docs/reference/`
+
 ## Reporting issues
 
 - **Bugs / feature requests:** open a GitHub issue at <https://github.com/openagentlock/OpenAgentLock/issues>.
