@@ -240,7 +240,6 @@ func TestCursorAfterMCPExecution_DedupesAgainstPostToolUse(t *testing.T) {
 		"tool_use_id": "ct_mcp_post_1",
 		"tool_input": {"foo": "bar"},
 		"tool_response": "ok",
-		"success": true,
 		"mcp_server_name": "server",
 		"mcp_tool_name": "tool"
 	}`
@@ -305,8 +304,7 @@ func TestCursorPostToolUse_RecordsOutcome(t *testing.T) {
 		"tool_name": "Shell",
 		"tool_use_id": "ct_post_001",
 		"tool_input": {"command": "ls"},
-		"tool_response": "total 0",
-		"success": true
+		"tool_response": "total 0"
 	}`
 	res, err := http.Post(
 		fx.srv.URL+"/v1/hooks/cursor/post-tool-use",
