@@ -167,14 +167,16 @@ func TestClaudeStop_EndsSession(t *testing.T) {
 
 func TestClaudePostToolUse_RecordsOutcome(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
+	// tool_response as a plain string is the success shape Claude Code
+	// emits for read-style tools and well-behaved Bash. No is_error
+	// member, no error member -> verdict=complete.
 	body := `{
 		"session_id": "claude-post-001",
 		"hook_event_name": "PostToolUse",
 		"tool_name": "Bash",
 		"tool_use_id": "toolu_post_001",
 		"tool_input": {"command": "ls"},
-		"tool_response": "total 0",
-		"success": true
+		"tool_response": "total 0"
 	}`
 	res, err := http.Post(
 		fx.srv.URL+"/v1/hooks/claude-code/post-tool-use",
@@ -206,14 +208,15 @@ func TestClaudePostToolUse_RecordsOutcome(t *testing.T) {
 
 func TestClaudePostToolUse_RecordsFailure(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
+	// Anthropic-canonical tool_result failure shape: is_error: true
+	// inside tool_response. The handler reads it via summarizeToolResponse.
 	body := `{
 		"session_id": "claude-post-002",
 		"hook_event_name": "PostToolUse",
 		"tool_name": "Bash",
 		"tool_use_id": "toolu_post_002",
 		"tool_input": {"command": "false"},
-		"tool_response": "",
-		"success": false
+		"tool_response": {"content": "exit 1", "is_error": true}
 	}`
 	res, err := http.Post(
 		fx.srv.URL+"/v1/hooks/claude-code/post-tool-use",

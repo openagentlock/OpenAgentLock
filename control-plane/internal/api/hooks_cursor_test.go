@@ -230,6 +230,114 @@ func TestCursorBeforeMCPExecution_DedupesAgainstPreToolUse(t *testing.T) {
 	}
 }
 
+func TestCursorBeforeMCPExecution_NormalizesMCPServerURLAndDeniesDisallowedHost(t *testing.T) {
+	cursorResetDedupe()
+	fx := newGateFixture(t, mcpNetEgressPolicyYAML)
+	body := `{
+		"conversation_id": "cursor-mcp-url-deny",
+		"generation_id": "g_mcp_url_deny",
+		"hook_event_name": "beforeMCPExecution",
+		"tool_name": "mcp__server__fetch",
+		"tool_use_id": "ct_mcp_url_deny",
+		"tool_input": {"server_url": "https://evil.biz/mcp"},
+		"mcp_server_name": "server",
+		"mcp_tool_name": "fetch"
+	}`
+
+	res, out := postCursorBeforeMCP(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["continue"] != false {
+		t.Fatalf("continue should be false on disallowed MCP URL: %v", out)
+	}
+	spec, _ := out["hookSpecificOutput"].(map[string]any)
+	if spec["permissionDecision"] != "deny" {
+		t.Fatalf("decision = %v", spec)
+	}
+
+	entries, _ := fx.store.ListLedger(context.Background())
+	for _, e := range entries {
+		if e.ToolUseID == "ct_mcp_url_deny" {
+			if e.RuleID != "rogue.net-egress" || e.Verdict != "deny" {
+				t.Fatalf("ledger verdict = %s/%s, want rogue.net-egress/deny", e.RuleID, e.Verdict)
+			}
+			if e.Input["url"] != "https://evil.biz/mcp" {
+				t.Fatalf("ledger matcher url = %q, want normalized URL", e.Input["url"])
+			}
+			return
+		}
+	}
+	t.Fatalf("missing ledger entry: %+v", entries)
+}
+
+func TestCursorBeforeMCPExecution_NormalizedAllowedHostAllows(t *testing.T) {
+	cursorResetDedupe()
+	fx := newGateFixture(t, mcpNetEgressPolicyYAML)
+	body := `{
+		"conversation_id": "cursor-mcp-url-allow",
+		"generation_id": "g_mcp_url_allow",
+		"hook_event_name": "beforeMCPExecution",
+		"tool_name": "mcp__server__fetch",
+		"tool_use_id": "ct_mcp_url_allow",
+		"tool_input": {"mcp_server_url": "https://api.openai.com/mcp"},
+		"mcp_server_name": "server",
+		"mcp_tool_name": "fetch"
+	}`
+
+	res, out := postCursorBeforeMCP(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["continue"] != true {
+		t.Fatalf("continue should be true on allowed MCP URL: %v", out)
+	}
+	spec, _ := out["hookSpecificOutput"].(map[string]any)
+	if spec["permissionDecision"] != "allow" {
+		t.Fatalf("decision = %v", spec)
+	}
+}
+
+func TestCursorBeforeMCPExecution_ExistingURLWinsOverMCPMetadata(t *testing.T) {
+	cursorResetDedupe()
+	fx := newGateFixture(t, mcpNetEgressPolicyYAML)
+	body := `{
+		"conversation_id": "cursor-mcp-url-precedence",
+		"generation_id": "g_mcp_url_precedence",
+		"hook_event_name": "beforeMCPExecution",
+		"tool_name": "mcp__server__fetch",
+		"tool_use_id": "ct_mcp_url_precedence",
+		"tool_input": {
+			"url": "https://api.openai.com/v1/responses",
+			"server_url": "https://evil.biz/mcp"
+		},
+		"mcp_server_name": "server",
+		"mcp_tool_name": "fetch"
+	}`
+
+	res, out := postCursorBeforeMCP(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["continue"] != true {
+		t.Fatalf("existing allowed url should win over disallowed metadata: %v", out)
+	}
+
+	entries, _ := fx.store.ListLedger(context.Background())
+	for _, e := range entries {
+		if e.ToolUseID == "ct_mcp_url_precedence" {
+			if e.Verdict != "allow" {
+				t.Fatalf("verdict = %s, want allow", e.Verdict)
+			}
+			if e.Input["url"] != "https://api.openai.com/v1/responses" {
+				t.Fatalf("ledger matcher url = %q, want original input.url", e.Input["url"])
+			}
+			return
+		}
+	}
+	t.Fatalf("missing ledger entry: %+v", entries)
+}
+
 func TestCursorAfterMCPExecution_DedupesAgainstPostToolUse(t *testing.T) {
 	cursorResetDedupe()
 	fx := newGateFixture(t, enforcePolicyYAML)
@@ -240,7 +348,6 @@ func TestCursorAfterMCPExecution_DedupesAgainstPostToolUse(t *testing.T) {
 		"tool_use_id": "ct_mcp_post_1",
 		"tool_input": {"foo": "bar"},
 		"tool_response": "ok",
-		"success": true,
 		"mcp_server_name": "server",
 		"mcp_tool_name": "tool"
 	}`
@@ -305,8 +412,7 @@ func TestCursorPostToolUse_RecordsOutcome(t *testing.T) {
 		"tool_name": "Shell",
 		"tool_use_id": "ct_post_001",
 		"tool_input": {"command": "ls"},
-		"tool_response": "total 0",
-		"success": true
+		"tool_response": "total 0"
 	}`
 	res, err := http.Post(
 		fx.srv.URL+"/v1/hooks/cursor/post-tool-use",

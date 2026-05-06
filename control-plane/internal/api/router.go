@@ -18,7 +18,7 @@ import (
 
 type route struct {
 	method  string
-	pattern string   // plain path, exact unless it contains {param}
+	pattern string // plain path, exact unless it contains {param}
 	handler http.HandlerFunc
 }
 
@@ -89,6 +89,7 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"POST", "/v1/hooks/gemini/stop", geminiStopHandler(d)},
 
 		// MCP TOFU pinning.
+		{"GET", "/v1/mcp/pins", mcpPinsListHandler(d)},
 		{"POST", "/v1/mcp/pin/check", mcpPinCheckHandler(d)},
 		{"POST", "/v1/mcp/pin/accept", mcpPinAcceptHandler(d)},
 

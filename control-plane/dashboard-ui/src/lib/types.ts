@@ -58,6 +58,15 @@ export interface SessionsResponse {
   sessions: SessionRow[];
 }
 
+export interface MCPPinRow {
+  server: string;
+  fingerprint: string;
+}
+
+export interface MCPPinsResponse {
+  pins: MCPPinRow[];
+}
+
 export interface RootInfo {
   root: string;
   seq: number;
