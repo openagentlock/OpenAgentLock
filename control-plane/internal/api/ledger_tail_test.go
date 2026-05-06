@@ -54,6 +54,16 @@ func TestLedgerTail_SSEStreamsNewEntries(t *testing.T) {
 			continue
 		}
 		if entry["tool_use_id"] == "gate.check" {
+			if entry["tool"] != "Bash" {
+				t.Fatalf("tool = %v, want Bash", entry["tool"])
+			}
+			input, ok := entry["input"].(map[string]any)
+			if !ok {
+				t.Fatalf("input missing or wrong shape: %#v", entry["input"])
+			}
+			if input["command"] != "ls" {
+				t.Fatalf("input.command = %v, want ls", input["command"])
+			}
 			sawGate = true
 			break
 		}

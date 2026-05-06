@@ -13,12 +13,12 @@ import (
 )
 
 type gateCheckRequest struct {
-	SessionID string                 `json:"session_id"`
-	Source    string                 `json:"source"`
-	Tool      string                 `json:"tool"`
-	Input     map[string]any         `json:"input"`
-	Cwd       string                 `json:"cwd,omitempty"`
-	Meta      map[string]any         `json:"meta,omitempty"`
+	SessionID string         `json:"session_id"`
+	Source    string         `json:"source"`
+	Tool      string         `json:"tool"`
+	Input     map[string]any `json:"input"`
+	Cwd       string         `json:"cwd,omitempty"`
+	Meta      map[string]any `json:"meta,omitempty"`
 }
 
 type gateCheckResponse struct {
@@ -100,12 +100,13 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 		entry, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
 			TS:           time.Now().UTC(),
 			Source:       req.Source,
-			ToolUseID:    "gate.check",
 			Tool:         req.Tool,
+			ToolUseID:    "gate.check",
 			Signer:       sess.Signer,
 			RuleID:       result.RuleID,
 			Verdict:      origVerdict,
 			MonitorMatch: result.MonitorMatch,
+			MatcherInput: ledgerMatcherInput(req.Input),
 			PayloadHash:  payloadHash[:],
 			Sig:          nil,
 		})
