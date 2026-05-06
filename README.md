@@ -111,19 +111,25 @@ Three languages, one repo:
 
 See [Architecture overview](https://openagentlock.github.io/OpenAgentLock/architecture/overview/) for the why behind the split.
 
-## The five gates
+## Policy — registry-first
 
-Every install ships [`policies/default.yaml`](policies/default.yaml) with five gates in monitor mode:
+OpenAgentLock ships with a minimal first-boot policy (a single `rogue.destructive-bash` gate in monitor mode) so every session has *some* policy hash to attest against. Real coverage comes from the [openagentlock/rules](https://github.com/openagentlock/rules) registry — install whichever rules match your threat model:
 
-| Gate | What it catches |
-|---|---|
-| `supply-chain.pkg-install` | `pip install`, `npm install`, `brew install`, `cargo install` |
-| `supply-chain.untrusted-mcp` | MCP server with an unpinned public key |
-| `rogue.secret-read` | reads of `.env`, `~/.ssh`, `~/.aws/credentials`, anywhere a secret-shaped path appears |
-| `rogue.net-egress` | `curl`, `wget`, MCP HTTP tools |
-| `rogue.destructive-bash` | `rm -rf`, `git push --force`, `DROP TABLE`, `kubectl delete` |
+```bash
+agentlock rules sync                                 # tap the upstream registry
+agentlock rules search exfil                         # browse by keyword
+agentlock rules install rogue.destructive-bash       # land a gate in the live policy
+agentlock rules install exfil.curl-with-env
+agentlock rules install rogue.secret-read
+```
 
-See [Policies and the five gates](https://openagentlock.github.io/OpenAgentLock/guide/policies/) for the rule schema and authoring rules.
+You can also tap a private registry (any Git repo with the same layout) for org-internal rules:
+
+```bash
+agentlock rules add https://github.com/your-org/your-rules.git
+```
+
+See [Policies and rules](https://openagentlock.github.io/OpenAgentLock/guide/policies/) for the schema and authoring guide.
 
 ## Repository layout
 
@@ -134,7 +140,6 @@ control-plane/              Go HTTP service in Docker                 — ghcr.i
   Dockerfile, docker-compose.yml
   dashboard-ui/             Vite SPA embedded into the Go binary
 ledger/                     Rust crate (lib + cdylib + staticlib)     — openagentlock-ledger
-policies/default.yaml       baseline policy shipped with every install
 docs/                       MkDocs Material site (deployed to openagentlock.github.io/OpenAgentLock)
 assets/                     logo, favicon, social card
 docker-compose.yml          one-command control-plane bring-up

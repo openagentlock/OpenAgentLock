@@ -66,50 +66,23 @@ If a rule id collides between two registries the CLI errors out and asks you to 
 
 When the catalog doesn't have what you need, the [openagentlock/skills](https://github.com/openagentlock/skills) toolkit ships agent skills (Claude Code, Cursor, Codex) that turn natural-language intent into a `rule.yaml` and run `agentlock rules install` to land it. See the `block-pattern` skill for the canonical "block this command shape" flow.
 
-## The five built-in defaults
+## First-boot policy
 
-When the daemon boots, it loads `policies/default.yaml`, which ships these five gates in monitor mode. They are intentionally narrow — most operators leave them on and add registry rules on top.
+When the daemon boots without `AGENTLOCK_POLICY` pointing at a custom file, it loads a built-in minimal policy: a single `rogue.destructive-bash` gate in monitor mode. This exists only so every session has a non-empty policy hash to attest against — it is **not** meant as production coverage. The previously-bundled `policies/default.yaml` (with five hardcoded gates) was deprecated and removed.
 
-<div class="gate-grid" markdown>
+Real coverage comes from the registry. Recommended starting set:
 
-<div class="gate-card" markdown>
-#### Package install
-<span class="gate-id">`supply-chain.pkg-install`</span>
+```bash
+agentlock rules install rogue.destructive-bash      # tighter regex than the bootstrap gate
+agentlock rules install rogue.secret-read           # deny reads of .env / .ssh / .aws / credentials
+agentlock rules install rogue.net-egress            # block curl/wget/POST shapes
+agentlock rules install supply-chain.npm-untrusted  # block installs from URL/git/tarball
+agentlock rules install supply-chain.pip-untrusted  # same for pip / poetry / uv
+agentlock rules install exfil.curl-with-env         # catch $ENV_VAR exfil shapes
+agentlock rules install rogue.git-force-push        # deny force-push to main/develop/release
+```
 
-`pip install`, `npm install`, `brew install`, `cargo install`. Catches typosquats and build-time exfiltration.
-</div>
-
-<div class="gate-card" markdown>
-#### Untrusted MCP
-<span class="gate-id">`supply-chain.untrusted-mcp`</span>
-
-MCP server with an unpinned public key. Fingerprints land in `/v1/mcp/pin`.
-</div>
-
-<div class="gate-card" markdown>
-#### Secret reads
-<span class="gate-id">`rogue.secret-read`</span>
-
-Reads of `.env`, `~/.ssh`, `~/.aws/credentials`, anywhere a secret-shaped path appears in the command.
-</div>
-
-<div class="gate-card" markdown>
-#### Network egress
-<span class="gate-id">`rogue.net-egress`</span>
-
-`curl`, `wget`, MCP HTTP tools. Pre-execution.
-</div>
-
-<div class="gate-card" markdown>
-#### Destructive bash
-<span class="gate-id">`rogue.destructive-bash`</span>
-
-`rm -rf`, `git push --force`, `DROP TABLE`, `kubectl delete`.
-</div>
-
-</div>
-
-The community registry has tighter / opinionated variants of several of these — e.g. `rogue.git-force-push` (only deny force-push to main / develop / release), `exfil.curl-with-env` (catch the `$ENV_VAR` exfil shape specifically), `rogue.eval-untrusted` (deny dynamic-eval shells). Install whichever match your threat model.
+Browse the full catalog at <https://openagentlock.github.io/rules/>. Pin a private registry alongside the upstream for org-internal rules — see the section above.
 
 ## Authoring rules from scratch
 

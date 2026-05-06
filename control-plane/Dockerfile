@@ -59,11 +59,14 @@ RUN install -d -m 0700 -o 65532 -g 65532 /out/agentlock-home
 FROM gcr.io/distroless/cc-debian12 AS runtime
 COPY --from=go-builder /out/control-plane /usr/local/bin/agentlockd
 COPY --from=go-builder --chown=65532:65532 /out/agentlock-home /var/lib/agentlock
-COPY policies/default.yaml /etc/agentlock/policies/default.yaml
+# No bundled policy file — daemon falls back to the built-in
+# minimal monitor-mode policy in main.go (single rogue.destructive-bash
+# gate). Operators install community rules via `agentlock rules sync`
+# + `agentlock rules install <id>`. To pin a custom file, mount it
+# and set AGENTLOCK_POLICY=/path/to/policy.yaml.
 ENV AGENTLOCK_LISTEN=0.0.0.0:7878
 ENV AGENTLOCK_DASHBOARD_LISTEN=0.0.0.0:7879
 ENV AGENTLOCK_HOME=/var/lib/agentlock
-ENV AGENTLOCK_POLICY=/etc/agentlock/policies/default.yaml
 ENV AGENTLOCK_IN_CONTAINER=1
 # Default to unattested so `docker run` works zero-conf. TUI + dashboard
 # show the red "UNATTESTED — LEDGER NOT SIGNED" banner. Override with
