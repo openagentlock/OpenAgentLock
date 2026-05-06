@@ -92,6 +92,7 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"GET", "/v1/mcp/pins", mcpPinsListHandler(d)},
 		{"POST", "/v1/mcp/pin/check", mcpPinCheckHandler(d)},
 		{"POST", "/v1/mcp/pin/accept", mcpPinAcceptHandler(d)},
+		{"POST", "/v1/mcp/pin/refuse", mcpPinRefuseHandler(d)},
 
 		// Daemon mode + policy (read + CRUD for the dashboard Rules tab).
 		{"GET", "/v1/mode", modeGetHandler(d)},
