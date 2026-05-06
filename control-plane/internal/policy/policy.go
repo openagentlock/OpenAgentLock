@@ -161,8 +161,7 @@ type hostAllowlistEvaluator struct {
 }
 
 func (e hostAllowlistEvaluator) Evaluate(req EvalRequest) string {
-	cmd, _ := req.Input["command"].(string)
-	host := extractHost(cmd)
+	host := extractHostFromInput(req.Input)
 	if host == "" {
 		return "skip"
 	}
@@ -369,6 +368,17 @@ func extractPackageToken(cmd string) string {
 }
 
 var urlHostRE = regexp.MustCompile(`https?://([A-Za-z0-9.\-]+)`)
+
+func extractHostFromInput(input map[string]any) string {
+	u, _ := input["url"].(string)
+	if u != "" {
+		if host := extractHost(u); host != "" {
+			return host
+		}
+	}
+	cmd, _ := input["command"].(string)
+	return extractHost(cmd)
+}
 
 func extractHost(cmd string) string {
 	m := urlHostRE.FindStringSubmatch(cmd)
@@ -863,4 +873,3 @@ func compilePathGlob(g string) (*regexp.Regexp, error) {
 	b.WriteString("$")
 	return regexp.Compile(b.String())
 }
-
