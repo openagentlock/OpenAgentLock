@@ -6,7 +6,7 @@
 
 import { promises as fs } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 
 import type { InstallFileOp, InstallUninstallOp } from "./api.ts";
 
@@ -30,12 +30,28 @@ export function checkSafeTarget(
   const allowed = [".claude", ".codex", ".cursor", ".gemini"].map((d) =>
     resolve(home, d),
   );
+  // Claude Desktop's config lives outside the dotfile convention. Add
+  // its real path so prod installs that target it pass the safety check
+  // without forcing --config-dir bypass on every run.
+  if (platform() === "darwin") {
+    allowed.push(resolve(home, "Library", "Application Support", "Claude"));
+  } else if (platform() === "win32") {
+    const appdata = process.env.APPDATA;
+    if (appdata) allowed.push(resolve(appdata, "Claude"));
+    allowed.push(resolve(home, "AppData", "Roaming", "Claude"));
+  } else {
+    // Linux: no official Claude Desktop release. We still allow the
+    // XDG conventional path so users running a community port don't
+    // hit this gate; the daemon won't actually plan a write there
+    // unless the detector found the dir.
+    allowed.push(resolve(home, ".config", "Claude"));
+  }
   const target = resolve(absPath);
   for (const root of allowed) {
     if (target === root || target.startsWith(root + sep)) return;
   }
   throw new Error(
-    `unsafe target: ${absPath} does not resolve under ~/.claude, ~/.codex, ~/.cursor, or ~/.gemini`,
+    `unsafe target: ${absPath} does not resolve under ~/.claude, ~/.codex, ~/.cursor, ~/.gemini, or the Claude Desktop config dir`,
   );
 }
 

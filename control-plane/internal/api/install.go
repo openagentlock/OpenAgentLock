@@ -132,6 +132,10 @@ func buildPlanOps(req installPlanRequest) ([]fileOp, []string, []string) {
 		switch h {
 		case "claude-code":
 			ops = append(ops, claudeCodePlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.StatusLineScript, req.HarnessConfigDirs, req.ExistingFiles))
+		case "claude-desktop":
+			op, ws := claudeDesktopPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
+			ops = append(ops, op)
+			warnings = append(warnings, ws...)
 		case "codex":
 			codexOps, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
 			ops = append(ops, codexOps...)
@@ -477,6 +481,8 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 func harnessForPath(path string) string {
 	dir := filepath.Base(filepath.Dir(path))
 	switch {
+	case strings.HasSuffix(path, "claude_desktop_config.json"):
+		return "claude-desktop"
 	case strings.HasSuffix(path, "settings.json"):
 		// Gemini also writes settings.json (in ~/.gemini); disambiguate
 		// by parent directory. Anything else is Claude Code.
@@ -582,7 +588,7 @@ func isAgentlockEntry(v any) bool {
 // executes "/Users/ronaldli/Library/Application" as a script — that's
 // the "line 1: on: command not found" failure mode that produced red
 // "PreToolUse:hook error" banners in earlier installs. Single quotes
-// are the simplest robust escape: macOS state dirs can't contain '\''.
+// are the simplest robust escape: macOS state dirs can't contain '\”.
 // For the (extremely unlikely) edge case where they do, we fall back
 // to the close-quote / escaped-quote / open-quote idiom.
 func shellQuote(s string) string {
@@ -675,6 +681,8 @@ func installUninstallHandler(d Deps) http.HandlerFunc {
 				newBytes, removed, stripErr = stripCursorHooks(existing)
 			case "gemini":
 				newBytes, removed, stripErr = stripGeminiSettings(existing)
+			case "claude-desktop":
+				newBytes, removed, stripErr = stripClaudeDesktopConfig(existing)
 			default:
 				// Default to Claude's settings.json shape. Older manifests
 				// without a Harness field land here, which is the right
@@ -874,6 +882,27 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 					failures++
 					op.Error = stripErr.Error()
 					log.Printf("install.uninstall_harnesses: strip gemini %s: %v", p, stripErr)
+				} else {
+					op.EntriesRemoved = removed
+					if removed > 0 {
+						op.Content = string(newBytes)
+					}
+				}
+				ops = append(ops, op)
+			case "claude-desktop":
+				p, err := claudeDesktopConfigPath(req.ConfigDirOverride, req.HarnessConfigDirs)
+				if err != nil {
+					failures++
+					ops = append(ops, uninstallOp{Op: "strip", Path: "<unresolved>", Error: err.Error()})
+					continue
+				}
+				existing := []byte(req.ExistingFiles[p])
+				newBytes, removed, stripErr := stripClaudeDesktopConfig(existing)
+				op := uninstallOp{Op: "strip", Path: p}
+				if stripErr != nil {
+					failures++
+					op.Error = stripErr.Error()
+					log.Printf("install.uninstall_harnesses: strip claude-desktop %s: %v", p, stripErr)
 				} else {
 					op.EntriesRemoved = removed
 					if removed > 0 {

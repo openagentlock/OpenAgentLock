@@ -3,6 +3,7 @@
 
 export type HarnessId =
   | "claude-code"
+  | "claude-desktop"
   | "codex"
   | "opencode"
   | "cursor"

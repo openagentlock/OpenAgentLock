@@ -38,6 +38,7 @@ import {
   executeUninstallOps,
   readExistingFiles,
 } from "../util/install-fs.ts";
+import { claudeDesktopConfigPath } from "../detect/claude-desktop.ts";
 import { binDir, home, isWin } from "../util/paths.ts";
 import { mintAttestedSession, type AttestedTier } from "../util/session-mint.ts";
 
@@ -159,15 +160,22 @@ export async function runInstall(argv: string[] = []): Promise<void> {
   // explicitly avoids the host-vs-container path mismatch. When --config-
   // dir is set, mirror it for every harness so the legacy flag's "single
   // dir wins" behavior is preserved on both sides.
+  // Claude Desktop's config sits under platform-specific Application
+  // Support / APPDATA dirs, not under a "~/.claude" sibling. Resolve via
+  // the detector helper so dev mode (AGENTLOCK_DEV_HOME) and real-host
+  // mode share one source of truth for the path.
+  const claudeDesktopDir = resolve(join(claudeDesktopConfigPath(), ".."));
   const hostConfigDirs: Record<string, string> = flags.configDirOverride
     ? {
         "claude-code": flags.configDirOverride,
+        "claude-desktop": flags.configDirOverride,
         codex: flags.configDirOverride,
         cursor: flags.configDirOverride,
         gemini: flags.configDirOverride,
       }
     : {
         "claude-code": resolve(join(home(), ".claude")),
+        "claude-desktop": claudeDesktopDir,
         codex: resolve(join(home(), ".codex")),
         cursor: resolve(join(home(), ".cursor")),
         gemini: resolve(join(home(), ".gemini")),
@@ -177,7 +185,11 @@ export async function runInstall(argv: string[] = []): Promise<void> {
   const devMode = !!process.env.AGENTLOCK_DEV_HOME;
   const results = await detectAll();
   const isMvpEnabled = (id: HarnessId): boolean =>
-    id === "claude-code" || id === "codex" || id === "cursor" || id === "gemini";
+    id === "claude-code" ||
+    id === "claude-desktop" ||
+    id === "codex" ||
+    id === "cursor" ||
+    id === "gemini";
   const options = results.map((r) => {
     const enabled = devMode || isMvpEnabled(r.id);
     let sub: string;
@@ -337,6 +349,8 @@ export async function runInstall(argv: string[] = []): Promise<void> {
       if (!dir) continue;
       if (id === "claude-code") {
         uninstallPaths.push(resolve(join(dir, "settings.json")));
+      } else if (id === "claude-desktop") {
+        uninstallPaths.push(resolve(join(dir, "claude_desktop_config.json")));
       } else if (id === "codex" || id === "cursor") {
         uninstallPaths.push(resolve(join(dir, "hooks.json")));
       } else if (id === "gemini") {
@@ -388,6 +402,9 @@ export async function runInstall(argv: string[] = []): Promise<void> {
   const claudeSettings = resolve(
     join(hostConfigDirs["claude-code"], "settings.json"),
   );
+  const claudeDesktopConfig = resolve(
+    join(hostConfigDirs["claude-desktop"], "claude_desktop_config.json"),
+  );
   const codexHooks = resolve(join(hostConfigDirs["codex"], "hooks.json"));
   const codexConfig = resolve(join(hostConfigDirs["codex"], "config.toml"));
   const cursorHooks = resolve(join(hostConfigDirs["cursor"], "hooks.json"));
@@ -396,6 +413,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
   );
   const existingFiles = await readExistingFiles([
     claudeSettings,
+    claudeDesktopConfig,
     codexHooks,
     codexConfig,
     cursorHooks,
