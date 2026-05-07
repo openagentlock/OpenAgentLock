@@ -268,6 +268,8 @@ components:
         session_pubkey: { type: string }
         signer: { $ref: '#/components/schemas/SignerKind' }
         signer_pubkey: { type: string }
+        user_id: { type: string }
+        groups: { type: array, items: { type: string } }
 
     SessionStartRequest:
       type: object
@@ -278,6 +280,8 @@ components:
         signer: { $ref: '#/components/schemas/SignerKind' }
         signer_pubkey: { type: string }
         attestation: { type: string, description: "ed25519 signature over canonical attestation payload" }
+        user_id: { type: string, description: "Optional identity key used for group-policy overlays." }
+        groups: { type: array, items: { type: string }, description: "Optional ordered group memberships used for group-policy overlays." }
 
     GateCheckRequest:
       type: object

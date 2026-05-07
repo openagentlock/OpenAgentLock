@@ -163,6 +163,8 @@ session
   .option("--tier <tier>", "Signer tier (software | totp).", "software")
   .option("--url <url>", "Control-plane base URL.")
   .option("--policy-hash <hash>", "Policy hash to bind into the attestation.")
+  .option("--user-id <id>", "User identity used for group-policy overlays.")
+  .option("--group <name...>", "Group memberships used for group-policy overlays.")
   .option("--code <6-digit>", "TOTP code (required for --tier totp).")
   .option("--passphrase <pp>", "TOTP passphrase (required for --tier totp).")
   .option("--json", "Emit JSON instead of human output.", false)
@@ -171,6 +173,8 @@ session
       tier: string;
       url?: string;
       policyHash?: string;
+      userId?: string;
+      group?: string[];
       code?: string;
       passphrase?: string;
       json: boolean;
@@ -197,6 +201,8 @@ session
         url: opts.url,
         json: opts.json,
         policyHash: opts.policyHash,
+        userId: opts.userId,
+        groups: opts.group,
         code: opts.code,
         passphrase: opts.passphrase,
       });
@@ -220,6 +226,8 @@ session
   .option("--tier <tier>", "Signer tier (software | totp).", "software")
   .option("--url <url>", "Control-plane base URL.")
   .option("--policy-hash <hash>", "Policy hash to bind into the rotated attestation.")
+  .option("--user-id <id>", "User identity used for group-policy overlays.")
+  .option("--group <name...>", "Group memberships used for group-policy overlays.")
   .option("--code <6-digit>", "TOTP code (required for --tier totp).")
   .option("--passphrase <pp>", "TOTP passphrase (required for --tier totp).")
   .option("--json", "Emit JSON instead of human output.", false)
@@ -229,6 +237,8 @@ session
       tier: string;
       url?: string;
       policyHash?: string;
+      userId?: string;
+      group?: string[];
       code?: string;
       passphrase?: string;
       json: boolean;
@@ -252,6 +262,8 @@ session
         url: opts.url,
         json: opts.json,
         policyHash: opts.policyHash,
+        userId: opts.userId,
+        groups: opts.group,
         code: opts.code,
         passphrase: opts.passphrase,
       });
@@ -362,6 +374,7 @@ program
   .requiredOption("--tool <name>", "Tool name (Bash, Read, Write, mcp__X__Y).")
   .option("--command <cmd>", "Bash command (shorthand for --input.command).")
   .option("--file-path <path>", "File path (shorthand for --input.file_path).")
+  .option("--cwd <path>", "Working directory for scoped policy resolution.")
   .option("--input <json>", "Raw tool input as JSON.")
   .option("--url <url>", "Control-plane base URL.")
   .option("--json", "Emit JSON instead of human output.", false)
@@ -372,6 +385,7 @@ program
       tool: string;
       command?: string;
       filePath?: string;
+      cwd?: string;
       input?: string;
       url?: string;
       json: boolean;
@@ -382,6 +396,7 @@ program
         tool: opts.tool,
         command: opts.command,
         filePath: opts.filePath,
+        cwd: opts.cwd,
         inputJson: opts.input,
         url: opts.url,
         json: opts.json,

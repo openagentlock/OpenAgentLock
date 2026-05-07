@@ -82,6 +82,6 @@ Flip to `mode: enforce` at the top of your policy file when you've reviewed acti
 | MCP observation via lifecycle hooks (Claude Code, Cursor, Cline, Gemini CLI, OpenCode) | <span class="md-status-pill shipped">Shipped</span> on the hook side; OpenCode does not currently fire the pre-tool hook for MCP |
 | MCP fingerprint pinning (`/v1/mcp/pin`) | <span class="md-status-pill shipped">Shipped</span> |
 | OIDC SSO + RBAC + LDAP | <span class="md-status-pill not-yet">Not yet implemented</span> |
-| Group / scoped policy with inheritance | <span class="md-status-pill not-yet">Not yet implemented</span> |
+| Group / scoped policy with inheritance | <span class="md-status-pill shipped">Shipped</span> — filesystem-backed `group-policy.yaml`, deny-overrides, explicit priority conflict handling; OIDC group source remains under auth epic |
 | Federated deployment (per-dev daemons + central control plane) | <span class="md-status-pill not-yet">Not yet implemented</span> |
 | Signed PDF audit report | <span class="md-status-pill not-yet">Not yet implemented</span> |

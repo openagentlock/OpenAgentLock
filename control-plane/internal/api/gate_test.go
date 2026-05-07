@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -305,6 +306,182 @@ gates:
 	}
 	if out["verdict"] != "deny" || out["rule_id"] != "repo.npm-allowlist" {
 		t.Fatalf("conditional deny repo gate should apply, got %+v", out)
+	}
+}
+
+func TestGateCheck_GroupPoliciesBothApply(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	setSessionIdentity(t, fx, "alice", []string{"cloud", "secrets"})
+	writeGroupPolicy(t, fx.home, `
+version: 1
+groups:
+  cloud:
+    gates:
+      - id: group.cloud-delete
+        match:
+          tool: Bash
+          command_regex: '^terraform destroy'
+        evaluate:
+          - kind: always
+            action: deny
+  secrets:
+    gates:
+      - id: group.secret-print
+        match:
+          tool: Bash
+          command_regex: '^cat secret'
+        evaluate:
+          - kind: always
+            action: deny
+`)
+
+	for _, tc := range []struct {
+		cmd  string
+		rule string
+	}{
+		{"terraform destroy -auto-approve", "group.cloud-delete"},
+		{"cat secret.txt", "group.secret-print"},
+	} {
+		body := fmt.Sprintf(`{"session_id":%q,"source":"codex","tool":"Bash","input":{"command":%q}}`, fx.sessionID, tc.cmd)
+		res, out := postGateCheck(t, fx.srv, body)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", res.StatusCode)
+		}
+		if out["verdict"] != "deny" || out["rule_id"] != tc.rule {
+			t.Fatalf("%q got %+v, want deny by %s", tc.cmd, out, tc.rule)
+		}
+	}
+}
+
+func TestGateCheck_GroupDenyBeatsPersonalAllow(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	setSessionIdentity(t, fx, "alice", []string{"compliance"})
+	writeGroupPolicy(t, fx.home, `
+version: 1
+groups:
+  compliance:
+    gates:
+      - id: shared.secret
+        match:
+          tool: Bash
+          command_regex: '^cat secret'
+        evaluate:
+          - kind: always
+            action: deny
+users:
+  alice:
+    gates:
+      - id: user.secret-allow
+        match:
+          tool: Bash
+          command_regex: '^cat secret'
+        evaluate:
+          - kind: always
+            action: allow
+`)
+	body := fmt.Sprintf(`{"session_id":%q,"source":"codex","tool":"Bash","input":{"command":"cat secret.txt"}}`, fx.sessionID)
+	res, out := postGateCheck(t, fx.srv, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "deny" || out["rule_id"] != "shared.secret" {
+		t.Fatalf("group deny should win, got %+v", out)
+	}
+	entries, err := fx.store.ListLedger(context.Background())
+	if err != nil {
+		t.Fatalf("ListLedger: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected ledger entries, got none")
+	}
+	last := entries[len(entries)-1]
+	if len(last.PolicyTrace) != 2 {
+		t.Fatalf("policy trace should include group deny + user allow, got %+v", last.PolicyTrace)
+	}
+}
+
+func TestGateCheck_PriorityPrecedenceCanOverrideSameGateID(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	setSessionIdentity(t, fx, "alice", []string{"default", "red-team"})
+	writeGroupPolicy(t, fx.home, `
+version: 1
+groups:
+  default:
+    gates:
+      - id: shared.net
+        precedence: priority
+        priority: 10
+        match:
+          tool: Bash
+          command_regex: '^curl '
+        evaluate:
+          - kind: always
+            action: deny
+  red-team:
+    gates:
+      - id: shared.net
+        precedence: priority
+        priority: 20
+        match:
+          tool: Bash
+          command_regex: '^curl '
+        evaluate:
+          - kind: always
+            action: allow
+`)
+	body := fmt.Sprintf(`{"session_id":%q,"source":"codex","tool":"Bash","input":{"command":"curl https://example.com"}}`, fx.sessionID)
+	res, out := postGateCheck(t, fx.srv, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "allow" || out["rule_id"] != "shared.net" {
+		t.Fatalf("priority allow should win, got %+v", out)
+	}
+}
+
+func TestGateCheck_ZeroGroupsUsesBasePolicyOnly(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	setSessionIdentity(t, fx, "alice", nil)
+	writeGroupPolicy(t, fx.home, `
+version: 1
+groups:
+  compliance:
+    gates:
+      - id: group.secret-print
+        match:
+          tool: Bash
+          command_regex: '^cat secret'
+        evaluate:
+          - kind: always
+            action: deny
+`)
+	body := fmt.Sprintf(`{"session_id":%q,"source":"codex","tool":"Bash","input":{"command":"cat secret.txt"}}`, fx.sessionID)
+	res, out := postGateCheck(t, fx.srv, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "allow" || out["rule_id"] != "default" {
+		t.Fatalf("zero groups should not inherit group policy, got %+v", out)
+	}
+}
+
+func setSessionIdentity(t *testing.T, fx gateFixture, userID string, groups []string) {
+	t.Helper()
+	sess, err := fx.store.GetSession(context.Background(), fx.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.UserID = userID
+	sess.Groups = groups
+	if err := fx.store.UpdateSession(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeGroupPolicy(t *testing.T, home string, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(home, groupPolicyFileName), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
