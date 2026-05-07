@@ -19,6 +19,8 @@ interface Options {
   policyHash?: string;
   code?: string;
   passphrase?: string;
+  userId?: string;
+  groups?: string[];
 }
 
 export async function runSessionEnd(opts: {
@@ -82,6 +84,8 @@ export async function runSessionRotate(opts: Options & { id: string }): Promise<
     signer: payload.signer,
     signer_pubkey: payload.signer_pubkey,
     attestation: `ed25519:${toHex(attestation)}`,
+    user_id: opts.userId,
+    groups: opts.groups,
   };
 
   const client = apiClient(opts.url);
@@ -152,6 +156,8 @@ export async function runSessionCreate(opts: Options): Promise<void> {
     signer: payload.signer,
     signer_pubkey: payload.signer_pubkey,
     attestation: `ed25519:${toHex(attestation)}`,
+    user_id: opts.userId,
+    groups: opts.groups,
   };
 
   const client = apiClient(opts.url);

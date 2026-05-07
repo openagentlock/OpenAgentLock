@@ -37,13 +37,15 @@ type rawDef struct {
 }
 
 type rawGate struct {
-	ID       string    `yaml:"id"`
-	Source   string    `yaml:"source,omitempty"`
-	Mode     string    `yaml:"mode,omitempty"`
-	Severity string    `yaml:"severity,omitempty"`
-	Disabled bool      `yaml:"disabled,omitempty"`
-	Match    rawMatch  `yaml:"match"`
-	Evaluate []rawEval `yaml:"evaluate"`
+	ID         string    `yaml:"id"`
+	Source     string    `yaml:"source,omitempty"`
+	Mode       string    `yaml:"mode,omitempty"`
+	Severity   string    `yaml:"severity,omitempty"`
+	Disabled   bool      `yaml:"disabled,omitempty"`
+	Precedence string    `yaml:"precedence,omitempty"`
+	Priority   int       `yaml:"priority,omitempty"`
+	Match      rawMatch  `yaml:"match"`
+	Evaluate   []rawEval `yaml:"evaluate"`
 }
 
 type rawMatch struct {
@@ -98,11 +100,13 @@ type evalEntry struct {
 }
 
 type Gate struct {
-	ID       string
-	Mode     string // monitor | enforce — inherits Policy.Mode if empty
-	Disabled bool   // true = skip this gate during evaluation
-	Source   string // daemon | registry | per-repo:<path>
-	Match    Matcher
+	ID         string
+	Mode       string // monitor | enforce — inherits Policy.Mode if empty
+	Disabled   bool   // true = skip this gate during evaluation
+	Source     string // daemon | registry | group | user | per-repo:<path>
+	Precedence string // empty = deny-overrides; priority = compare same rule id by Priority
+	Priority   int
+	Match      Matcher
 	// Evals is the compiled evaluate[] pipeline. Each entry carries the
 	// evaluator plus its optional `nudge:` hint; the firing entry's nudge
 	// gets propagated into EvalResult on a deny verdict.
@@ -428,6 +432,27 @@ type EvalResult struct {
 	// hint. The API layer (applyDaemonModeOverride) is responsible for
 	// clearing this when the agent is being allowed to proceed.
 	Nudge string
+	Trace []TraceItem
+	// Source/Precedence/Priority describe the firing gate. They are
+	// duplicated into TraceItem for layered evaluation and kept here so
+	// callers that evaluate one policy can still ledger the source.
+	Source     string
+	Precedence string
+	Priority   int
+}
+
+type TraceItem struct {
+	Layer      string `json:"layer,omitempty"`
+	Source     string `json:"source,omitempty"`
+	RuleID     string `json:"rule_id"`
+	Verdict    string `json:"verdict"`
+	Precedence string `json:"precedence,omitempty"`
+	Priority   int    `json:"priority,omitempty"`
+}
+
+type Layer struct {
+	Name   string
+	Policy *Policy
 }
 
 // Load parses YAML into a compiled Policy. Returns an error for unknown
@@ -481,12 +506,14 @@ func loadBytesWithSource(buf []byte, source, defaultMode string) (*Policy, error
 			gateSource = source
 		}
 		gates = append(gates, Gate{
-			ID:       rg.ID,
-			Mode:     rg.Mode,
-			Disabled: rg.Disabled,
-			Source:   gateSource,
-			Match:    m,
-			Evals:    evals,
+			ID:         rg.ID,
+			Mode:       rg.Mode,
+			Disabled:   rg.Disabled,
+			Source:     gateSource,
+			Precedence: rg.Precedence,
+			Priority:   rg.Priority,
+			Match:      m,
+			Evals:      evals,
 		})
 	}
 
@@ -610,6 +637,16 @@ func (p *Policy) Evaluate(req EvalRequest) EvalResult {
 				MonitorMatch:    true,
 				OriginalVerdict: verdict,
 				Nudge:           nudge,
+				Trace: []TraceItem{{
+					Source:     g.Source,
+					RuleID:     g.ID,
+					Verdict:    verdict,
+					Precedence: g.Precedence,
+					Priority:   g.Priority,
+				}},
+				Source:     g.Source,
+				Precedence: g.Precedence,
+				Priority:   g.Priority,
 			}
 		}
 		// Only carry the nudge through on a deny verdict; an allow
@@ -624,6 +661,16 @@ func (p *Policy) Evaluate(req EvalRequest) EvalResult {
 			Reason:          reason,
 			OriginalVerdict: verdict,
 			Nudge:           resultNudge,
+			Trace: []TraceItem{{
+				Source:     g.Source,
+				RuleID:     g.ID,
+				Verdict:    verdict,
+				Precedence: g.Precedence,
+				Priority:   g.Priority,
+			}},
+			Source:     g.Source,
+			Precedence: g.Precedence,
+			Priority:   g.Priority,
 		}
 	}
 	return EvalResult{
@@ -632,6 +679,97 @@ func (p *Policy) Evaluate(req EvalRequest) EvalResult {
 		Reason:          "no rule matched",
 		OriginalVerdict: "allow",
 	}
+}
+
+func EvaluateLayered(base *Policy, layers []Layer, req EvalRequest) EvalResult {
+	if base == nil {
+		return EvalResult{Verdict: "allow", RuleID: "default", Reason: "no policy loaded", OriginalVerdict: "allow"}
+	}
+	results := make([]EvalResult, 0, len(layers)+1)
+	baseResult := base.Evaluate(req)
+	if baseResult.RuleID != "default" {
+		baseResult.Trace = stampTraceLayer(baseResult.Trace, "daemon")
+		results = append(results, baseResult)
+	}
+	for _, layer := range layers {
+		if layer.Policy == nil {
+			continue
+		}
+		r := layer.Policy.Evaluate(req)
+		if r.RuleID == "default" {
+			continue
+		}
+		r.Trace = stampTraceLayer(r.Trace, layer.Name)
+		results = append(results, r)
+	}
+	if len(results) == 0 {
+		return baseResult
+	}
+	effective := collapsePriorityConflicts(results)
+	chosen := effective[0]
+	for _, r := range effective {
+		if r.OriginalVerdict == "deny" {
+			chosen = r
+			break
+		}
+	}
+	chosen.Trace = flattenTrace(results)
+	if chosen.Reason == "" {
+		chosen.Reason = "matched layered policy"
+	}
+	return chosen
+}
+
+func stampTraceLayer(items []TraceItem, layer string) []TraceItem {
+	out := append([]TraceItem(nil), items...)
+	for i := range out {
+		if out[i].Layer == "" {
+			out[i].Layer = traceLayer(out[i], layer)
+		}
+	}
+	return out
+}
+
+func traceLayer(item TraceItem, fallback string) string {
+	if strings.HasPrefix(item.Source, "per-repo:") {
+		return item.Source
+	}
+	return fallback
+}
+
+func flattenTrace(results []EvalResult) []TraceItem {
+	var out []TraceItem
+	for _, r := range results {
+		out = append(out, r.Trace...)
+	}
+	return out
+}
+
+func collapsePriorityConflicts(results []EvalResult) []EvalResult {
+	bestByRule := map[string]int{}
+	drop := map[int]struct{}{}
+	for i, r := range results {
+		if r.Precedence != "priority" {
+			continue
+		}
+		if prior, ok := bestByRule[r.RuleID]; ok {
+			if r.Priority >= results[prior].Priority {
+				drop[prior] = struct{}{}
+				bestByRule[r.RuleID] = i
+			} else {
+				drop[i] = struct{}{}
+			}
+			continue
+		}
+		bestByRule[r.RuleID] = i
+	}
+	out := make([]EvalResult, 0, len(results))
+	for i, r := range results {
+		if _, ok := drop[i]; !ok {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func gateMatches(g Gate, req EvalRequest) bool {

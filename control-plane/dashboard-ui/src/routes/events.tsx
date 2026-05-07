@@ -452,6 +452,20 @@ function EventDetail({
             value="suppressed deny — runtime allowed; ledger keeps original verdict"
           />
         )}
+        {entry.policy_trace && entry.policy_trace.length > 0 && (
+          <DetailRow
+            label="policy"
+            value={entry.policy_trace
+              .map((t) => {
+                const priority =
+                  t.precedence === "priority" ? ` priority=${t.priority ?? 0}` : "";
+                return `${t.layer || t.source || "policy"}:${t.rule_id}=${t.verdict}${priority}`;
+              })
+              .join(" → ")}
+            mono
+            wrap
+          />
+        )}
         <DetailRow label="signer" value={entry.signer || "—"} mono />
         <DetailRow label="tool_use_id" value={entry.tool_use_id || "—"} mono />
         <DetailRow label="payload_hash" value={entry.payload_hash} mono wrap />

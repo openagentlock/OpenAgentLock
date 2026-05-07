@@ -132,6 +132,7 @@ export interface PolicyGateView {
   id: string;
   mode?: string;
   disabled?: boolean;
+  source?: string;
   tool?: string;
   tool_prefix?: string;
   any_command_regex?: string[];
@@ -283,6 +284,8 @@ export interface SessionStartRequest {
   signer: string;
   signer_pubkey: string;
   attestation: string;
+  user_id?: string;
+  groups?: string[];
 }
 
 export interface SessionResponse {
@@ -293,6 +296,8 @@ export interface SessionResponse {
   session_pubkey: string;
   signer: string;
   signer_pubkey: string;
+  user_id?: string;
+  groups?: string[];
 }
 
 export function apiClient(baseUrl?: string, initialToken?: string | null): ApiClient {

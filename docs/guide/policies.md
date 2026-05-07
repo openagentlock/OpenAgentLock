@@ -68,6 +68,29 @@ gates:
 
 The daemon walks upward from `cwd` and uses the nearest `.agentlock.yaml`. Sibling repos are unaffected. Because cloned repos are not trusted, repo-local policy is additive by default: new deny-producing gates apply immediately, but disabled gates, same-id overrides, and `always: allow` content cannot weaken daemon policy without an operator approval flow. See [Per-Repo Policy](../architecture/per-repo-policy.md) for the full trust model and precedence chain.
 
+## Group policy
+
+Multi-user deployments can add `AGENTLOCK_HOME/group-policy.yaml` to layer group and personal gates over the daemon policy. Sessions may carry optional `user_id` and `groups` fields that determine which policy gates apply to each user. Today those fields can be supplied by the session API / CLI; directory-backed population belongs with the auth integration.
+
+```yaml
+version: 1
+groups:
+  compliance:
+    gates:
+      - id: group.secret-read
+        match:
+          tool: Bash
+          command_regex: '^cat secret'
+        evaluate:
+          - kind: always
+            action: deny
+users:
+  alice:
+    groups: [compliance]
+```
+
+Across daemon, registry, group, user, and repo layers, deny-overrides is the default. A shared gate id may opt into `precedence: priority` plus `priority: <number>` when an operator wants highest-priority-wins for that id. Ledger entries include `policy_trace` so the dashboard can show which layers allowed or denied a call. See [Group Policy](../architecture/group-policy.md).
+
 ### Pin a private registry too
 
 Most teams want a few internal-only rules alongside the upstream catalog. Any Git repo with the same `rules/<id>/rule.yaml` layout works:

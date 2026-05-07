@@ -207,6 +207,99 @@ func TestEvaluate_FirstMatchWins(t *testing.T) {
 	}
 }
 
+func TestEvaluateLayered_DenyOverridesPersonalAllow(t *testing.T) {
+	base, _ := Load(strings.NewReader(`version: 1
+mode: enforce
+gates:
+  - id: base.safe
+    match: { tool: Bash, command_regex: '^echo ' }
+    evaluate:
+      - kind: always
+        action: allow
+`))
+	group, _ := LoadBytes([]byte(`version: 1
+mode: enforce
+gates:
+  - id: group.secret-read
+    source: group:compliance
+    match:
+      tool: Bash
+      command_regex: '^cat secret'
+    evaluate:
+      - kind: always
+        action: deny
+`))
+	user, _ := LoadBytes([]byte(`version: 1
+mode: enforce
+gates:
+  - id: user.secret-read
+    source: user:alice
+    match:
+      tool: Bash
+      command_regex: '^cat secret'
+    evaluate:
+      - kind: always
+        action: allow
+`))
+	got := EvaluateLayered(base, []Layer{{Name: "group:compliance", Policy: group}, {Name: "user:alice", Policy: user}}, EvalRequest{
+		Tool:  "Bash",
+		Input: map[string]any{"command": "cat secret.txt"},
+	})
+	if got.Verdict != "deny" || got.RuleID != "group.secret-read" {
+		t.Fatalf("got verdict=%q rule=%q, want group deny", got.Verdict, got.RuleID)
+	}
+	if len(got.Trace) != 2 {
+		t.Fatalf("trace len = %d, want 2: %+v", len(got.Trace), got.Trace)
+	}
+}
+
+func TestEvaluateLayered_PriorityPrecedenceCanChooseAllow(t *testing.T) {
+	base, _ := Load(strings.NewReader(`version: 1
+mode: enforce
+gates:
+  - id: base.never
+    match: { tool: Bash, command_regex: '^never$' }
+    evaluate:
+      - kind: always
+        action: deny
+`))
+	lowDeny, _ := LoadBytes([]byte(`version: 1
+mode: enforce
+gates:
+  - id: shared.net
+    source: group:default
+    precedence: priority
+    priority: 10
+    match:
+      tool: Bash
+      command_regex: '^curl '
+    evaluate:
+      - kind: always
+        action: deny
+`))
+	highAllow, _ := LoadBytes([]byte(`version: 1
+mode: enforce
+gates:
+  - id: shared.net
+    source: group:red-team
+    precedence: priority
+    priority: 20
+    match:
+      tool: Bash
+      command_regex: '^curl '
+    evaluate:
+      - kind: always
+        action: allow
+`))
+	got := EvaluateLayered(base, []Layer{{Name: "group:default", Policy: lowDeny}, {Name: "group:red-team", Policy: highAllow}}, EvalRequest{
+		Tool:  "Bash",
+		Input: map[string]any{"command": "curl https://example.com"},
+	})
+	if got.Verdict != "allow" || got.RuleID != "shared.net" {
+		t.Fatalf("got verdict=%q rule=%q, want higher-priority allow", got.Verdict, got.RuleID)
+	}
+}
+
 const pkgInstallYAML = `
 version: 1
 mode: enforce
@@ -408,7 +501,7 @@ func TestEvaluate_PinTofu_NoServerFieldSkips(t *testing.T) {
 	// tool_prefix matches but no mcp_server in input → evaluator skips →
 	// gate falls through to default.
 	v := p.Evaluate(EvalRequest{
-		Tool: "mcp__noop__x",
+		Tool:  "mcp__noop__x",
 		Input: map[string]any{},
 	})
 	if v.Verdict != "allow" || v.RuleID != "default" {

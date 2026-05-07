@@ -13,10 +13,20 @@ export interface LedgerEntry {
   // mode forced the runtime to allow. UI renders these as "alert"
   // (IDS-style) instead of "deny" (IPS-style) — the call did go through.
   monitor_match?: boolean;
+  policy_trace?: PolicyTraceItem[];
   payload_hash: string;
   sig: string;
   leaf_hash: string;
   prev_leaf: string;
+}
+
+export interface PolicyTraceItem {
+  layer?: string;
+  source?: string;
+  rule_id: string;
+  verdict: string;
+  precedence?: string;
+  priority?: number;
 }
 
 export interface ModeInfo {

@@ -40,7 +40,9 @@ type Session struct {
 	// (claude-code, cursor, tui, system, ...). Set at session-create from
 	// the incoming hook body or the request. Blank on pre-harness-aware
 	// sessions; UI renders those as "unknown".
-	Harness string `json:"harness,omitempty"`
+	Harness string   `json:"harness,omitempty"`
+	UserID  string   `json:"user_id,omitempty"`
+	Groups  []string `json:"groups,omitempty"`
 }
 
 type AppendInput struct {
@@ -61,8 +63,18 @@ type AppendInput struct {
 	// a hard "deny" so monitor mode looks like an IDS, not an IPS.
 	MonitorMatch bool
 	MatcherInput map[string]string
+	PolicyTrace  []PolicyTraceItem
 	PayloadHash  []byte
 	Sig          []byte
+}
+
+type PolicyTraceItem struct {
+	Layer      string `json:"layer,omitempty"`
+	Source     string `json:"source,omitempty"`
+	RuleID     string `json:"rule_id"`
+	Verdict    string `json:"verdict"`
+	Precedence string `json:"precedence,omitempty"`
+	Priority   int    `json:"priority,omitempty"`
 }
 
 type LedgerEntry struct {
@@ -76,6 +88,7 @@ type LedgerEntry struct {
 	RuleID       string            `json:"rule_id,omitempty"`
 	Verdict      string            `json:"verdict,omitempty"`
 	MonitorMatch bool              `json:"monitor_match,omitempty"`
+	PolicyTrace  []PolicyTraceItem `json:"policy_trace,omitempty"`
 	PayloadHash  string            `json:"payload_hash"`
 	Sig          string            `json:"sig"`
 	LeafHash     [32]byte          `json:"-"`
@@ -376,6 +389,7 @@ func (m *Memory) AppendLedger(_ context.Context, in AppendInput) (LedgerEntry, e
 		RuleID:       in.RuleID,
 		Verdict:      in.Verdict,
 		MonitorMatch: in.MonitorMatch,
+		PolicyTrace:  append([]PolicyTraceItem(nil), in.PolicyTrace...),
 		PayloadHash:  hex.EncodeToString(in.PayloadHash),
 		Sig:          hex.EncodeToString(in.Sig),
 		LeafHash:     leaf,

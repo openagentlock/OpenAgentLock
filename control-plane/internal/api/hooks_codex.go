@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/openagentlock/openagentlock/control-plane/internal/policy"
 	"github.com/openagentlock/openagentlock/control-plane/internal/storage"
 )
 
@@ -57,15 +56,11 @@ func codexPreToolUseHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		evalPolicy := resolvePolicyForCwd(d, sess.PolicyHash, in.Cwd)
+		evalPolicy, result := evaluatePolicyForSession(d, sess, in.Cwd, in.ToolName, in.ToolInput)
 		if evalPolicy == nil {
 			writeError(w, http.StatusServiceUnavailable, "policy_unavailable", "no policy loaded")
 			return
 		}
-		result := evalPolicy.Evaluate(policy.EvalRequest{
-			Tool:  in.ToolName,
-			Input: in.ToolInput,
-		})
 
 		var origVerdict, mode string
 		result, mode, origVerdict = applyDaemonModeOverride(result)
@@ -103,6 +98,7 @@ func codexPreToolUseHandler(d Deps) http.HandlerFunc {
 			Verdict:      origVerdict,
 			MonitorMatch: monitorMatch,
 			MatcherInput: ledgerMatcherInput(in.ToolInput),
+			PolicyTrace:  storagePolicyTrace(result.Trace),
 			PayloadHash:  payloadHash[:],
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "ledger_error", err.Error())
