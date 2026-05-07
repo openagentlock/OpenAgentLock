@@ -46,7 +46,7 @@ agentlock install --tier totp --code 123456 --passphrase 'your-passphrase-here'
 
 For a quick eval without a signer (dev only): start the daemon with `-e AGENTLOCK_ALLOW_UNATTESTED=1`, then `agentlock install` (defaults to unattested).
 
-Open the local web dashboard at <http://127.0.0.1:7879/>.
+Open the local web dashboard at <http://127.0.0.1:7879/>, or run `agentlock dashboard` for a terminal TUI with the same live ledger tail, sessions, loaded gates, and a one-key monitor⇄enforce flip.
 
 Full walkthrough at <https://openagentlock.github.io/OpenAgentLock/guide/getting-started/>.
 
