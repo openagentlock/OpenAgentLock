@@ -23,6 +23,58 @@ func postCodexPre(t *testing.T, fx gateFixture, body string) (*http.Response, ma
 	return res, out
 }
 
+func postCodexDesktopPre(t *testing.T, fx gateFixture, body string) (*http.Response, map[string]any) {
+	t.Helper()
+	res, err := http.Post(fx.srv.URL+"/v1/hooks/codex-desktop/pre-tool-use", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	var out map[string]any
+	if res.Header.Get("Content-Type") == "application/json" {
+		_ = json.NewDecoder(res.Body).Decode(&out)
+	}
+	_ = res.Body.Close()
+	return res, out
+}
+
+func TestCodexDesktopPreToolUse_RecordsDesktopSource(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	body := `{
+		"session_id": "codex-desktop-sess-001",
+		"hook_event_name": "PreToolUse",
+		"tool_name": "Bash",
+		"tool_use_id": "desktop_t_01",
+		"turn_id": "turn_01",
+		"model": "gpt-5-codex",
+		"tool_input": {"command": "ls -la"}
+	}`
+	res, out := postCodexDesktopPre(t, fx, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["continue"] != true {
+		t.Fatalf("continue = %v", out["continue"])
+	}
+	sess, err := fx.store.GetSession(context.Background(), "codex-desktop-sess-001")
+	if err != nil {
+		t.Fatalf("auto-session not created: %v", err)
+	}
+	if sess.Harness != "codex-desktop" {
+		t.Fatalf("auto-session should be tagged codex-desktop, got %q", sess.Harness)
+	}
+	entries, _ := fx.store.ListLedger(context.Background())
+	hit := false
+	for _, e := range entries {
+		if e.ToolUseID == "desktop_t_01" && e.Source == "codex-desktop" && e.Verdict == "allow" {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		t.Fatalf("expected codex-desktop ledger entry: %+v", entries)
+	}
+}
+
 func TestCodexPreToolUse_AllowsBenignBash(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 	body := `{
@@ -218,6 +270,48 @@ func TestCodexPostToolUse_RecordsOutcome(t *testing.T) {
 	if !hit {
 		t.Fatalf("missing complete PostToolUse ledger entry: %+v", entries)
 	}
+}
+
+func TestCodexPostToolUse_ExitCodeZeroCompletesDespiteErrorMetadata(t *testing.T) {
+	fx := newGateFixture(t, enforcePolicyYAML)
+	body := `{
+		"session_id": "codex-post-exit-code",
+		"hook_event_name": "PostToolUse",
+		"tool_name": "Bash",
+		"tool_use_id": "t_post_exit_code_001",
+		"turn_id": "turn_p_exit_code",
+		"tool_input": {"command": "sed -n '1,2p' README.md"},
+		"tool_response": {
+			"output": "Process exited with code 0\nREADME",
+			"exit_code": 0,
+			"error": {"message": "codex metadata"}
+		}
+	}`
+	res, err := http.Post(
+		fx.srv.URL+"/v1/hooks/codex/post-tool-use",
+		"application/json",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(res.Body)
+		t.Fatalf("status = %d body=%s", res.StatusCode, buf.String())
+	}
+
+	entries, _ := fx.store.ListLedger(context.Background())
+	for _, e := range entries {
+		if e.ToolUseID == "t_post_exit_code_001" && e.Source == "codex" {
+			if e.Verdict != "complete" {
+				t.Fatalf("verdict = %s, want complete; entry=%+v", e.Verdict, e)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing PostToolUse ledger entry: %+v", entries)
 }
 
 func TestCodexSessionStart_CreatesSession(t *testing.T) {

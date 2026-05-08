@@ -518,6 +518,28 @@ const hookCodex = hook
 // commander binds the positional event above; nothing else to wire.
 void hookCodex;
 
+const hookCodexDesktop = hook
+  .command("codex-desktop <event>")
+  .description(
+    "Codex Desktop shim. Reads stdin hook payload, forwards to /v1/hooks/codex-desktop/<event>, maps allow/deny → exit 0/2.",
+  )
+  .allowUnknownOption()
+  .action(async (event: string) => {
+    await runHookCodex([event], "codex-desktop");
+  });
+void hookCodexDesktop;
+
+const hookCodexAuto = hook
+  .command("codex-auto <event>")
+  .description(
+    "Shared Codex shim. Routes Desktop-originated hooks to codex-desktop and CLI hooks to codex.",
+  )
+  .allowUnknownOption()
+  .action(async (event: string) => {
+    await runHookCodex([event], "codex-auto");
+  });
+void hookCodexAuto;
+
 const hookCursor = hook
   .command("cursor <event>")
   .description(

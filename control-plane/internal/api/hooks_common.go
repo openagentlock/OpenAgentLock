@@ -12,12 +12,20 @@
 
 package api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var processExitCodePattern = regexp.MustCompile(`(?i)process exited with code\s+(-?\d+)`)
 
 // summarizeToolResponse returns (response_size, success) for a heterogeneous
 // PostToolUse tool_response payload. Failure signals (any one is enough):
 //
 //	is_error: true        — Anthropic canonical (Claude Code)
+//	exit_code/status      — Codex command responses
 //	error: <non-empty>    — Gemini / some Codex tools
 //
 // Anything else is treated as a successful run. We never hash the response
@@ -37,6 +45,9 @@ func summarizeToolResponse(resp any) (int, bool) {
 		}
 		if v, ok := m["is_error"].(bool); ok && v {
 			return size, false
+		}
+		if success, ok := explicitToolSuccess(m); ok {
+			return size, success
 		}
 		if errVal, present := m["error"]; present {
 			switch v := errVal.(type) {
@@ -59,4 +70,83 @@ func summarizeToolResponse(resp any) (int, bool) {
 		return len(b), true
 	}
 	return 0, true
+}
+
+func explicitToolSuccess(m map[string]any) (bool, bool) {
+	for _, key := range []string{"success", "ok"} {
+		if v, ok := m[key].(bool); ok {
+			return v, true
+		}
+	}
+	for _, key := range []string{"exit_code", "exitCode", "exitCodeInt", "code"} {
+		if code, ok := numericExitCode(m[key]); ok {
+			return code == 0, true
+		}
+	}
+	for _, key := range []string{"status", "state"} {
+		if success, ok := statusSuccess(m[key]); ok {
+			return success, true
+		}
+	}
+	for _, key := range []string{"output", "stdout", "stderr", "message"} {
+		if code, ok := outputExitCode(m[key]); ok {
+			return code == 0, true
+		}
+	}
+	return false, false
+}
+
+func numericExitCode(v any) (int, bool) {
+	switch n := v.(type) {
+	case nil:
+		return 0, false
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case json.Number:
+		i, err := n.Int64()
+		if err == nil {
+			return int(i), true
+		}
+	case string:
+		i, err := strconv.Atoi(strings.TrimSpace(n))
+		if err == nil {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func statusSuccess(v any) (bool, bool) {
+	s, ok := v.(string)
+	if !ok {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "complete", "completed", "success", "succeeded", "ok":
+		return true, true
+	case "failed", "failure", "error", "errored", "canceled", "cancelled", "timeout", "timed_out":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func outputExitCode(v any) (int, bool) {
+	s, ok := v.(string)
+	if !ok {
+		return 0, false
+	}
+	matches := processExitCodePattern.FindStringSubmatch(s)
+	if len(matches) != 2 {
+		return 0, false
+	}
+	code, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, false
+	}
+	return code, true
 }

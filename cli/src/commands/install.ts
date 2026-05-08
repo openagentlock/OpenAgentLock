@@ -59,13 +59,18 @@ export function installAndResolveAgentlockBinary(): string {
     );
   }
   const indexPath = resolve(import.meta.dir, "..", "index.ts");
+  const bunPath = resolve(process.execPath);
   const dir = binDir();
   const wrapper = join(dir, "agentlock");
-  const body = `#!/usr/bin/env bash\nexec bun run "${indexPath}" "$@"\n`;
+  const body = `#!/usr/bin/env bash\nexec ${shellQuote(bunPath)} run ${shellQuote(indexPath)} "$@"\n`;
   mkdirSync(dir, { recursive: true });
   writeFileSync(wrapper, body, { flag: "w" });
   chmodSync(wrapper, 0o755);
   return wrapper;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 // Tiny health-check script wired into Claude Code's `statusLine` config.
@@ -172,6 +177,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
         "claude-code": flags.configDirOverride,
         "claude-desktop": flags.configDirOverride,
         codex: flags.configDirOverride,
+        "codex-desktop": flags.configDirOverride,
         cursor: flags.configDirOverride,
         gemini: flags.configDirOverride,
       }
@@ -179,6 +185,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
         "claude-code": resolve(join(home(), ".claude")),
         "claude-desktop": claudeDesktopDir,
         codex: resolve(join(home(), ".codex")),
+        "codex-desktop": resolve(join(home(), ".codex")),
         cursor: resolve(join(home(), ".cursor")),
         gemini: resolve(join(home(), ".gemini")),
       };
@@ -190,6 +197,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     id === "claude-code" ||
     id === "claude-desktop" ||
     id === "codex" ||
+    id === "codex-desktop" ||
     id === "cursor" ||
     id === "gemini";
   const options = results.map((r) => {
@@ -216,7 +224,11 @@ export async function runInstall(argv: string[] = []): Promise<void> {
       // is idempotent for claude and re-stamps the dev marker).
       checked: enabled && !!r.agentlockInstalled,
       disabled: !enabled,
-      disabledReason: enabled ? undefined : "MVP: claude-code + codex + cursor only",
+      disabledReason: enabled
+        ? undefined
+        : r.id === "codex-desktop"
+          ? "Codex Desktop is supported through the shared Codex hooks; install Codex and trust the hook from /hooks"
+          : "MVP: claude-code + claude-desktop + codex + cursor + gemini only",
     };
   });
 
@@ -358,7 +370,7 @@ export async function runInstall(argv: string[] = []): Promise<void> {
         // unwind the wrap on uninstall.
         const bundlesDir = resolve(join(dir, "Claude Extensions"));
         uninstallPaths.push(...(await listExtensionBundleManifests(bundlesDir)));
-      } else if (id === "codex" || id === "cursor") {
+      } else if (id === "codex" || id === "codex-desktop" || id === "cursor") {
         uninstallPaths.push(resolve(join(dir, "hooks.json")));
       } else if (id === "gemini") {
         // Gemini stuffs hook entries into the same settings.json as
