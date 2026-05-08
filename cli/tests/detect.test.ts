@@ -215,6 +215,52 @@ describe("present — installed=true when expected files seeded", () => {
     expect(r.installed).toBe(true);
   });
 
+  test("cursor reports agentlockInstalled from hooks.json", async () => {
+    touch(
+      join(tmpHome, ".cursor", "hooks.json"),
+      JSON.stringify({
+        version: 1,
+        hooks: {
+          preToolUse: [
+            {
+              _agentlock: true,
+              command: "agentlock hook cursor pre-tool-use",
+              env: { AGENTLOCK_DAEMON_URL: "http://127.0.0.1:7878" },
+            },
+          ],
+        },
+      }),
+    );
+    const r = await cursor.detect();
+    expect(r.agentlockInstalled).toBe(true);
+    expect(r.agentlockDaemonURL).toBe("http://127.0.0.1:7878");
+  });
+
+  test("gemini reports agentlockInstalled from settings.json", async () => {
+    touch(
+      join(tmpHome, ".gemini", "settings.json"),
+      JSON.stringify({
+        hooks: {
+          BeforeTool: [
+            {
+              _agentlock: true,
+              hooks: [
+                {
+                  type: "command",
+                  command: "agentlock hook gemini pre-tool-use",
+                  env: { AGENTLOCK_DAEMON_URL: "http://127.0.0.1:7878" },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    const r = await gemini.detect();
+    expect(r.agentlockInstalled).toBe(true);
+    expect(r.agentlockDaemonURL).toBe("http://127.0.0.1:7878");
+  });
+
   test("vscode-copilot with extension globalStorage", async () => {
     const userDir = vscodeUserDir();
     if (!userDir) return; // platform without a vscode user dir mapping

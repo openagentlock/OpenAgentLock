@@ -4,7 +4,7 @@ OpenAgentLock policy is **deterministic YAML**. No LLM lives inside the evaluato
 
 Most operators do not author policies from scratch. The shape of a real-world policy is:
 
-1. The **five built-in defaults** the daemon boots with — useful baseline, intentionally narrow.
+1. The **thirteen-gate built-in baseline** the daemon boots with — useful baseline, intentionally narrow.
 2. A handful of **community rules** pulled from [openagentlock/rules](https://openagentlock.github.io/rules/) on top.
 3. Optionally, a **private rules registry** with internal-to-your-org rules.
 

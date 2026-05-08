@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { home } from "../util/paths.ts";
-import { devStubStateForHarness } from "./agentlock-state.ts";
+import { geminiAgentlockState } from "./agentlock-state.ts";
 import type { Detector, Detection } from "./types.ts";
 
 export const gemini: Detector = {
@@ -10,10 +10,12 @@ export const gemini: Detector = {
 
   async detect(): Promise<Detection> {
     const dir = join(home(), ".gemini");
+    const settingsPath = join(dir, "settings.json");
     const dirExists = existsSync(dir);
     const evidence = dirExists ? [`found ${dir}`] : [];
+    if (existsSync(settingsPath)) evidence.push(`found ${settingsPath}`);
 
-    const al = devStubStateForHarness(this.id);
+    const al = geminiAgentlockState(settingsPath);
 
     return {
       id: this.id,

@@ -67,6 +67,8 @@ export interface AddGateRequest {
 export interface PatchGateRequest {
   disabled?: boolean;
   any_command_regex?: string[];
+  any_path_regex?: string[];
+  any_url_regex?: string[];
   mode?: string;
 }
 
@@ -133,10 +135,29 @@ export interface PolicyGateView {
   mode?: string;
   disabled?: boolean;
   source?: string;
+  /** @deprecated Compatibility summary for simple matchers. Prefer `match.tool`. */
+  tool?: string;
+  /** @deprecated Compatibility summary for simple matchers. Prefer `match.tool_prefix`. */
+  tool_prefix?: string;
+  /** @deprecated Compatibility summary for simple matchers. Prefer `match.any_command_regex`. */
+  any_command_regex?: string[];
+  /** @deprecated Compatibility summary for simple matchers. Prefer `match.any_path_regex`. */
+  any_path_regex?: string[];
+  /** @deprecated Compatibility summary for simple matchers. Prefer `match.any_url_regex`. */
+  any_url_regex?: string[];
+  /** Canonical recursive matcher schema. Consumers should prefer this over top-level summaries. */
+  match?: PolicyMatchView;
+  evaluators?: string[];
+}
+
+export interface PolicyMatchView {
   tool?: string;
   tool_prefix?: string;
+  path_glob_regex?: string;
   any_command_regex?: string[];
-  evaluators?: string[];
+  any_path_regex?: string[];
+  any_url_regex?: string[];
+  any_of?: PolicyMatchView[];
 }
 
 export interface PolicyViewResponse {

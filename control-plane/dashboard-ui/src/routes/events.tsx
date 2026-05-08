@@ -9,6 +9,11 @@ import { INTERNAL_SOURCES } from "@/lib/filters";
 import { fullLocal, shortTime } from "@/lib/time";
 import { shortHash } from "@/lib/filters";
 import { rulePresetFromLedgerEntry } from "@/lib/eventRulePreset";
+import {
+  isOutcomeEntry,
+  outcomeByToolUseId,
+  subjectFromLedgerEntry,
+} from "@/lib/ledgerEntryDisplay";
 import type { AddRuleInitialPreset } from "@/lib/rulePresetTypes";
 
 // verdictDisplay maps a ledger row to a (label, color-class) pair.
@@ -49,6 +54,7 @@ function EventsTab() {
   const [verdictFilter, setVerdictFilter] = useState("");
   const [ruleFilter, setRuleFilter] = useState("");
   const [showInternal, setShowInternal] = useState(false);
+  const [showOutcomes, setShowOutcomes] = useState(false);
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
@@ -63,7 +69,7 @@ function EventsTab() {
   // never lands on an empty page after narrowing the result set.
   useEffect(() => {
     setPage(0);
-  }, [sourceFilter, verdictFilter, ruleFilter, showInternal, pageSize]);
+  }, [sourceFilter, verdictFilter, ruleFilter, showInternal, showOutcomes, pageSize]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -100,6 +106,7 @@ function EventsTab() {
     return entries
       .filter((e) => {
         if (!showInternal && INTERNAL_SOURCES.has(e.source)) return false;
+        if (isOutcomeEntry(e)) return false;
         if (sourceFilter && e.source !== sourceFilter) return false;
         if (verdictFilter && e.verdict !== verdictFilter) return false;
         if (rule && !(e.rule_id ?? "").toLowerCase().includes(rule)) return false;
@@ -108,6 +115,8 @@ function EventsTab() {
       .slice()
       .sort((a, b) => b.seq - a.seq);
   }, [entries, sourceFilter, verdictFilter, ruleFilter, showInternal]);
+
+  const outcomes = useMemo(() => outcomeByToolUseId(entries), [entries]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
@@ -208,6 +217,14 @@ function EventsTab() {
           <label className="flex items-center gap-2 text-[11px] text-muted ml-auto">
             <input
               type="checkbox"
+              checked={showOutcomes}
+              onChange={(e) => setShowOutcomes(e.target.checked)}
+            />
+            show tool outcomes
+          </label>
+          <label className="flex items-center gap-2 text-[11px] text-muted">
+            <input
+              type="checkbox"
               checked={showInternal}
               onChange={(e) => setShowInternal(e.target.checked)}
             />
@@ -237,48 +254,18 @@ function EventsTab() {
                   </td>
                 </tr>
               ) : (
-                paged.map((e) => (
-                  <tr
-                    key={`${e.seq}-${e.leaf_hash}`}
-                    onClick={() => setSelectedSeq(e.seq)}
-                    onContextMenu={(ev) => onRowContextMenu(ev, e)}
-                    className="cursor-pointer hover:bg-chip"
-                  >
-                    <td className="font-mono">{e.seq}</td>
-                    <td className="font-mono" title={fullLocal(e.ts)}>
-                      {shortTime(e.ts)}
-                    </td>
-                    <td>
-                      <span className="oal-chip">{e.source}</span>
-                    </td>
-                    <td className="font-mono">{e.rule_id || "—"}</td>
-                    <td>
-                      {e.verdict ? (
-                        (() => {
-                          const v = verdictDisplay(e.verdict, e.monitor_match);
-                          const tip = e.monitor_match
-                            ? `monitor mode: rule ${e.rule_id ?? ""} would have denied`
-                            : undefined;
-                          return (
-                            <span
-                              className={`inline-block px-1.5 py-0.5 rounded text-[11px] ${v.cls}`}
-                              title={tip}
-                            >
-                              {v.label}
-                            </span>
-                          );
-                        })()
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-                    <td className="font-mono">{e.signer}</td>
-                    <td className="font-mono text-muted">{shortHash(e.tool_use_id, 16)}</td>
-                    <td className="font-mono text-muted" title={e.leaf_hash}>
-                      {shortHash(e.leaf_hash, 12)}
-                    </td>
-                  </tr>
-                ))
+                paged.map((e) => {
+                  const outcome = showOutcomes ? outcomes.get(e.tool_use_id) : undefined;
+                  return (
+                    <EventRows
+                      key={`${e.seq}-${e.leaf_hash}`}
+                      entry={e}
+                      outcome={outcome}
+                      onSelect={setSelectedSeq}
+                      onContextMenu={onRowContextMenu}
+                    />
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -364,6 +351,86 @@ function EventsTab() {
   );
 }
 
+function EventRows({
+  entry,
+  outcome,
+  onSelect,
+  onContextMenu,
+}: {
+  entry: LedgerEntry;
+  outcome?: LedgerEntry;
+  onSelect: (seq: number) => void;
+  onContextMenu: (ev: React.MouseEvent, entry: LedgerEntry) => void;
+}) {
+  const v = verdictDisplay(entry.verdict, entry.monitor_match);
+  const tip = entry.monitor_match
+    ? `monitor mode: rule ${entry.rule_id ?? ""} would have denied`
+    : undefined;
+  const outcomeVerdict = outcome ? verdictDisplay(outcome.verdict, outcome.monitor_match) : null;
+  return (
+    <>
+      <tr
+        onClick={() => onSelect(entry.seq)}
+        onContextMenu={(ev) => onContextMenu(ev, entry)}
+        className="cursor-pointer hover:bg-chip"
+      >
+        <td className="font-mono">{entry.seq}</td>
+        <td className="font-mono" title={fullLocal(entry.ts)}>
+          {shortTime(entry.ts)}
+        </td>
+        <td>
+          <span className="oal-chip">{entry.source}</span>
+        </td>
+        <td className="font-mono">{entry.rule_id || "—"}</td>
+        <td>
+          {entry.verdict ? (
+            <span
+              className={`inline-block px-1.5 py-0.5 rounded text-[11px] ${v.cls}`}
+              title={tip}
+            >
+              {v.label}
+            </span>
+          ) : (
+            <span className="text-muted">—</span>
+          )}
+        </td>
+        <td className="font-mono">{entry.signer}</td>
+        <td className="font-mono text-muted">{shortHash(entry.tool_use_id, 16)}</td>
+        <td className="font-mono text-muted" title={entry.leaf_hash}>
+          {shortHash(entry.leaf_hash, 12)}
+        </td>
+      </tr>
+      {outcome && outcomeVerdict && (
+        <tr
+          onClick={() => onSelect(outcome.seq)}
+          className="cursor-pointer bg-chip/30 hover:bg-chip text-muted"
+        >
+          <td className="font-mono pl-6">↳ {outcome.seq}</td>
+          <td className="font-mono" title={fullLocal(outcome.ts)}>
+            {shortTime(outcome.ts)}
+          </td>
+          <td>
+            <span className="oal-chip">{outcome.source}</span>
+          </td>
+          <td className="font-mono text-muted">tool outcome</td>
+          <td>
+            <span
+              className={`inline-block px-1.5 py-0.5 rounded text-[11px] ${outcomeVerdict.cls}`}
+            >
+              {outcomeVerdict.label}
+            </span>
+          </td>
+          <td className="font-mono">{outcome.signer}</td>
+          <td className="font-mono text-muted">{shortHash(outcome.tool_use_id, 16)}</td>
+          <td className="font-mono text-muted" title={outcome.leaf_hash}>
+            {shortHash(outcome.leaf_hash, 12)}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 // EventDetail renders every field on a ledger entry — verdict, monitor
 // match, payload + leaf hashes, signer — so a user inspecting "why
 // did this row show up" can see the full chain context without diving
@@ -403,6 +470,7 @@ function EventDetail({
     );
   }
   const v = verdictDisplay(entry.verdict, entry.monitor_match);
+  const subject = subjectFromLedgerEntry(entry);
   return (
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-40"
@@ -430,6 +498,13 @@ function EventDetail({
         </div>
         <DetailRow label="time" value={fullLocal(entry.ts)} mono />
         <DetailRow label="source" value={entry.source} />
+        {subject && (
+          <DetailRow
+            label={subject.label}
+            value={<span className="whitespace-pre-wrap break-words">{subject.value}</span>}
+            mono
+          />
+        )}
         <DetailRow label="rule" value={entry.rule_id ?? "—"} mono />
         <DetailRow
           label="verdict"

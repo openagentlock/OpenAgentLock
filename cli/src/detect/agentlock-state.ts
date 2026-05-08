@@ -138,6 +138,71 @@ export function codexAgentlockState(hooksPath: string): AgentlockState {
   return NOT_INSTALLED;
 }
 
+export function cursorAgentlockState(hooksPath: string): AgentlockState {
+  return agentlockHookState(hooksPath);
+}
+
+export function geminiAgentlockState(settingsPath: string): AgentlockState {
+  return agentlockHookState(settingsPath);
+}
+
+function agentlockHookState(path: string): AgentlockState {
+  if (!existsSync(path)) return NOT_INSTALLED;
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return NOT_INSTALLED;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return NOT_INSTALLED;
+  }
+  const root =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  const hooks =
+    root.hooks && typeof root.hooks === "object"
+      ? (root.hooks as Record<string, unknown>)
+      : root;
+
+  for (const list of Object.values(hooks)) {
+    if (!Array.isArray(list)) continue;
+		for (const entry of list) {
+			if (!entry || typeof entry !== "object") continue;
+			const e = entry as Record<string, unknown>;
+			if (e._agentlock !== true) continue;
+			const url = daemonURLFromHookEntry(e);
+			return url ? { installed: true, daemonURL: originOf(url) } : { installed: true };
+		}
+	}
+  return NOT_INSTALLED;
+}
+
+function daemonURLFromHookEntry(entry: Record<string, unknown>): string | undefined {
+  const env = entry.env;
+  if (env && typeof env === "object") {
+    const url = (env as { AGENTLOCK_DAEMON_URL?: unknown }).AGENTLOCK_DAEMON_URL;
+    if (typeof url === "string" && url.length > 0) return url;
+  }
+
+  const inner = Array.isArray(entry.hooks) ? (entry.hooks as unknown[]) : [];
+  for (const h of inner) {
+    if (!h || typeof h !== "object") continue;
+    const hook = h as { env?: unknown };
+    const hookEnv = hook.env;
+    if (hookEnv && typeof hookEnv === "object") {
+      const url = (hookEnv as { AGENTLOCK_DAEMON_URL?: unknown }).AGENTLOCK_DAEMON_URL;
+      if (typeof url === "string" && url.length > 0) return url;
+    }
+  }
+
+  return undefined;
+}
+
 export function devStubAgentlockState(harnessDir: string): AgentlockState {
   const marker = join(harnessDir, ".agentlock-dev.json");
   if (!existsSync(marker)) return NOT_INSTALLED;

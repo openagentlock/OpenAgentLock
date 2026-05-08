@@ -12,8 +12,8 @@
 //   q or esc          quit (also closes any open modal first)
 //
 // Per-tab keys (footer shows the active set):
-//   Events:  enter open detail   f filter   c clear filters   tab cycle field   H toggle full hashes
-//   Gates:   a add (editor)   e edit (editor)   space toggle disabled   M cycle mode   x x delete
+//   Events:  enter open detail   f filter   c clear filters   i internal   o outcomes   H hashes
+//   Gates:   enter detail   a add (editor)   e edit (editor)   space toggle disabled   M cycle mode   x x delete
 //   Sessions: i toggle internal harnesses
 //
 // The daemon base URL comes from the ApiClient passed in (so tests can
@@ -29,6 +29,7 @@ import type {
   LedgerRootResponse,
   ModeResponse,
   PolicyGateView,
+  PolicyMatchView,
   PolicyViewResponse,
   SessionsListResponse,
   SessionSummary,
@@ -44,6 +45,8 @@ interface LedgerEntry {
   tool_use_id: string;
   tool?: string;
   signer: string;
+  input?: Record<string, unknown>;
+  tool_input?: Record<string, unknown>;
   rule_id?: string;
   verdict?: string;
   monitor_match?: boolean;
@@ -70,12 +73,14 @@ interface Filters {
   verdict: string;
   rule: string;
   internal: boolean;
+  outcomes: boolean;
 }
 const EMPTY_FILTERS: Filters = {
   source: "",
   verdict: "",
   rule: "",
   internal: false,
+  outcomes: false,
 };
 type FilterField = "source" | "verdict" | "rule";
 const FILTER_FIELDS: FilterField[] = ["source", "verdict", "rule"];
@@ -157,6 +162,8 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
     gateId: string;
     expiresAt: number;
   } | null>(null);
+  const [gateDetailId, setGateDetailId] = useState<string | null>(null);
+  const [gateDetailScroll, setGateDetailScroll] = useState<number>(0);
 
   // Editor flow state — when true, the renderer is suspended and
   // keypresses skip the TUI handler (the editor owns the TTY).
@@ -225,6 +232,10 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
   filterBufferRef.current = filterBuffer;
   const detailSeqRef = useRef(detailSeq);
   detailSeqRef.current = detailSeq;
+  const gateDetailIdRef = useRef(gateDetailId);
+  gateDetailIdRef.current = gateDetailId;
+  const gateDetailScrollRef = useRef(gateDetailScroll);
+  gateDetailScrollRef.current = gateDetailScroll;
   const showInternalRef = useRef(showInternal);
   showInternalRef.current = showInternal;
   const pendingDeleteRef = useRef(pendingDelete);
@@ -237,16 +248,14 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
   function filteredEvents(): LedgerEntry[] {
     const f = filtersRef.current;
     let arr = eventsRef.current;
-    if (f.source) arr = arr.filter((e) => e.source.includes(f.source));
+    arr = arr.filter((e) => !isOutcomeEntry(e));
+    if (f.source) arr = arr.filter((e) => e.source === f.source);
     if (f.verdict)
-      arr = arr.filter((e) => (e.verdict || "").includes(f.verdict));
+      arr = arr.filter((e) => (e.verdict || "") === f.verdict);
     if (f.rule) arr = arr.filter((e) => (e.rule_id || "").includes(f.rule));
     if (!f.internal) {
-      // "internal" off = decisions only. Hides:
-      //   - post-tool-use receipts (verdict=failure, no rule_id) that
-      //     pair with every allow/deny and just doubled the row count.
-      //   - session lifecycle rows (session.unattested, auto-create) that
-      //     come from internal sources or carry no rule_id.
+      // "internal" off = operator-facing policy decisions only. Outcome
+      // receipts are handled separately under the matching tool row.
       arr = arr.filter(
         (e) =>
           !INTERNAL_SOURCES.has(e.source || "") &&
@@ -349,8 +358,29 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
         return;
       }
 
-      // ---- Filter line-edit ----
+      // ---- Modal: gate detail ----
+      if (gateDetailIdRef.current !== null) {
+        if (name === "escape" || name === "q" || name === "return" || name === "enter") {
+          flushSync(() => {
+            setGateDetailId(null);
+            setGateDetailScroll(0);
+          });
+          return;
+        }
+        if (name === "down" || name === "j") {
+          flushSync(() => setGateDetailScroll((v) => v + 1));
+          return;
+        }
+        if (name === "up" || name === "k") {
+          flushSync(() => setGateDetailScroll((v) => Math.max(0, v - 1)));
+          return;
+        }
+        return;
+      }
+
+      // ---- Filter edit ----
       if (filterFieldRef.current !== null) {
+        const activeField = filterFieldRef.current;
         if (name === "escape") {
           flushSync(() => {
             setFilterField(null);
@@ -359,9 +389,10 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
           return;
         }
         if (name === "return" || name === "enter") {
-          const f = filterFieldRef.current!;
           flushSync(() => {
-            setFilters((cur) => ({ ...cur, [f]: filterBufferRef.current }));
+            if (activeField === "rule") {
+              setFilters((cur) => ({ ...cur, rule: filterBufferRef.current }));
+            }
             setFilterField(null);
             setFilterBuffer("");
             setCursor((s) => ({ ...s, events: 0 }));
@@ -370,18 +401,37 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
           return;
         }
         if (name === "tab") {
-          // Save the current buffer into the active field, then hop to
-          // the next field with that field's existing value preloaded.
-          const cur = filterFieldRef.current!;
-          const idx = FILTER_FIELDS.indexOf(cur);
+          // Save the current text field, then hop to the next filter.
+          const idx = FILTER_FIELDS.indexOf(activeField);
           const nextField = FILTER_FIELDS[(idx + 1) % FILTER_FIELDS.length]!;
           flushSync(() => {
-            setFilters((c) => ({ ...c, [cur]: filterBufferRef.current }));
+            if (activeField === "rule") {
+              setFilters((c) => ({ ...c, rule: filterBufferRef.current }));
+            }
             setFilterField(nextField);
-            setFilterBuffer(filtersRef.current[nextField] ?? "");
+            setFilterBuffer(nextField === "rule" ? (filtersRef.current.rule ?? "") : "");
+            setCursor((s) => ({ ...s, events: 0 }));
+            setScroll((s) => ({ ...s, events: 0 }));
           });
           return;
         }
+        if (isCategoricalFilter(activeField) && (name === "left" || name === "h")) {
+          cycleEventFilter(activeField, -1);
+          return;
+        }
+        if (isCategoricalFilter(activeField) && (name === "right" || name === "l")) {
+          cycleEventFilter(activeField, 1);
+          return;
+        }
+        if (isCategoricalFilter(activeField) && (name === "backspace" || name === "delete")) {
+          flushSync(() => {
+            setFilters((cur) => ({ ...cur, [activeField]: "" }));
+            setCursor((s) => ({ ...s, events: 0 }));
+            setScroll((s) => ({ ...s, events: 0 }));
+          });
+          return;
+        }
+        if (activeField !== "rule") return;
         if (name === "backspace") {
           flushSync(() => setFilterBuffer((s) => s.slice(0, -1)));
           return;
@@ -477,7 +527,7 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
         if (name === "f") {
           flushSync(() => {
             setFilterField("source");
-            setFilterBuffer(filtersRef.current.source);
+            setFilterBuffer("");
           });
           return;
         }
@@ -493,6 +543,12 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
         if (name === "i") {
           flushSync(() =>
             setFilters((f) => ({ ...f, internal: !f.internal })),
+          );
+          return;
+        }
+        if (name === "o") {
+          flushSync(() =>
+            setFilters((f) => ({ ...f, outcomes: !f.outcomes })),
           );
           return;
         }
@@ -515,6 +571,15 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
         const gates = policyRef.current?.gates ?? [];
         const cur = cursorRef.current.gates;
         const sel = gates[cur];
+        if (name === "return" || name === "enter") {
+          if (sel) {
+            flushSync(() => {
+              setGateDetailId(sel.id);
+              setGateDetailScroll(0);
+            });
+          }
+          return;
+        }
         if (name === "a") {
           // Add via $EDITOR. Spawned async; the handler returns
           // immediately so the renderer can suspend cleanly.
@@ -611,9 +676,25 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
     };
   }, [renderer, api, onQuit]);
 
+  function cycleEventFilter(field: "source" | "verdict", delta: number): void {
+    const values = eventFilterOptions(eventsRef.current, field);
+    const current = filtersRef.current[field];
+    const idx = Math.max(0, values.indexOf(current));
+    const next = values[(idx + delta + values.length) % values.length] ?? "";
+    flushSync(() => {
+      setFilters((cur) => ({ ...cur, [field]: next }));
+      setCursor((s) => ({ ...s, events: 0 }));
+      setScroll((s) => ({ ...s, events: 0 }));
+    });
+  }
+
   // The detail modal needs the actual entry — pull it from the buffer.
   const detailEntry =
     detailSeq === null ? null : events.find((e) => e.seq === detailSeq) || null;
+  const gateDetail =
+    gateDetailId === null
+      ? null
+      : policy?.gates.find((g) => g.id === gateDetailId) || null;
 
   return (
     <box flexDirection="column" padding={1}>
@@ -627,11 +708,14 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
       <box flexDirection="column" flexGrow={1} marginTop={1}>
         {detailEntry ? (
           <DetailModal entry={detailEntry} expandHashes={expandHashes} />
+        ) : gateDetail ? (
+          <GateDetailModal gate={gateDetail} scroll={gateDetailScroll} />
         ) : tab === "stats" ? (
           <StatsPane data={insights} window={statsWindow} />
         ) : tab === "events" ? (
           <EventsPane
             entries={filteredEvents()}
+            allEntries={events}
             cursor={cursor.events}
             scroll={scroll.events}
             sseStatus={sseStatus}
@@ -1019,6 +1103,7 @@ function SourceRow({ data }: { data: Record<string, number> }): React.ReactNode 
 
 interface EventsPaneProps {
   entries: LedgerEntry[];
+  allEntries: LedgerEntry[];
   cursor: number;
   scroll: number;
   sseStatus: "connecting" | "open" | "closed";
@@ -1029,6 +1114,7 @@ interface EventsPaneProps {
 
 function EventsPane({
   entries,
+  allEntries,
   cursor,
   scroll,
   sseStatus,
@@ -1037,6 +1123,7 @@ function EventsPane({
   filterBuffer,
 }: EventsPaneProps): React.ReactNode {
   const visible = entries.slice(scroll, scroll + VISIBLE_ROWS);
+  const outcomes = filters.outcomes ? outcomeByToolUseId(allEntries) : new Map();
   const statusColor =
     sseStatus === "open" ? "#00FF88" : sseStatus === "closed" ? "#FF4455" : "#F5A623";
   return (
@@ -1060,6 +1147,7 @@ function EventsPane({
           const arrow = isCursor ? "▌" : " ";
           const rowFg = isCursor ? "#FFFFFF" : "#CCCCCC";
           const verdictRaw = e.monitor_match ? "alert" : (e.verdict ?? "—");
+          const outcome = outcomes.get(e.tool_use_id);
           // Anchoring time at the left matches log-scanning convention
           // and gives the eye a stable column to track. Verdict comes
           // next, bold + uppercase, since it's the highest-signal field.
@@ -1069,20 +1157,34 @@ function EventsPane({
             ? e.tool_use_id.slice(6)
             : e.tool_use_id;
           return (
-            <box key={e.seq} flexDirection="row">
-              <text fg={isCursor ? "#7FE7DC" : "#555555"}>
-                {`${arrow} ${String(e.seq).padStart(5, " ")}  `}
-              </text>
-              <text fg="#888888">{cell(formatTs(e.ts), 8)}</text>
-              <text
-                fg={verdictColor(e.verdict, e.monitor_match)}
-                attributes={1}
-              >
-                {cell(verdictRaw.toUpperCase(), 7)}
-              </text>
-              <text fg="#888888">{cell(e.source, 12)}</text>
-              <text fg={rowFg}>{cell(e.rule_id || "—", 22)}</text>
-              <text fg="#666666">{cell(idShort, 18)}</text>
+            <box key={e.seq} flexDirection="column">
+              <box flexDirection="row">
+                <text fg={isCursor ? "#7FE7DC" : "#555555"}>
+                  {`${arrow} ${String(e.seq).padStart(5, " ")}  `}
+                </text>
+                <text fg="#888888">{cell(formatTs(e.ts), 8)}</text>
+                <text
+                  fg={verdictColor(e.verdict, e.monitor_match)}
+                  attributes={1}
+                >
+                  {cell(verdictRaw.toUpperCase(), 7)}
+                </text>
+                <text fg="#888888">{cell(e.source, 12)}</text>
+                <text fg={rowFg}>{cell(e.rule_id || "—", 22)}</text>
+                <text fg="#666666">{cell(idShort, 18)}</text>
+              </box>
+              {outcome ? (
+                <box flexDirection="row">
+                  <text fg="#555555">{`  ↳ ${String(outcome.seq).padStart(5, " ")}  `}</text>
+                  <text fg="#666666">{cell(formatTs(outcome.ts), 8)}</text>
+                  <text fg={verdictColor(outcome.verdict, outcome.monitor_match)}>
+                    {cell((outcome.verdict === "complete" ? "RAN" : "ERRORED"), 7)}
+                  </text>
+                  <text fg="#666666">{cell(outcome.source, 12)}</text>
+                  <text fg="#666666">{cell("tool outcome", 22)}</text>
+                  <text fg="#555555">{cell(idShort, 18)}</text>
+                </box>
+              ) : null}
             </box>
           );
         })
@@ -1102,7 +1204,12 @@ function FilterBar({
 }): React.ReactNode {
   const cell = (label: FilterField): React.ReactNode => {
     const editing = field === label;
-    const value = editing ? `${buffer}_` : filters[label] || "—";
+    const current = filters[label] || "all";
+    const value = editing
+      ? label === "rule"
+        ? `${buffer}_`
+        : `‹${current}›`
+      : current;
     const fg = editing ? "#7FE7DC" : filters[label] ? "#CCCCCC" : "#555555";
     const attrs = editing ? 1 : 0;
     return (
@@ -1119,6 +1226,14 @@ function FilterBar({
       <text fg={filters.internal ? "#7FE7DC" : "#555555"}>
         {`  internal:[${filters.internal ? "on" : "off"}]`}
       </text>
+      <text fg={filters.outcomes ? "#7FE7DC" : "#555555"}>
+        {`  outcomes:[${filters.outcomes ? "on" : "off"}]`}
+      </text>
+      {field && field !== "rule" ? (
+        <text fg="#555555">  h/l select  tab next  enter done</text>
+      ) : field === "rule" ? (
+        <text fg="#555555">  type rule text  tab next  enter done</text>
+      ) : null}
     </box>
   );
 }
@@ -1128,6 +1243,34 @@ function verdictColor(v?: string, monitor?: boolean): string {
   if (v === "allow") return "#00FF88";
   if (v === "deny") return "#FF4455";
   return "#888888";
+}
+
+function isOutcomeEntry(entry: LedgerEntry): boolean {
+  return entry.verdict === "complete" || entry.verdict === "failure";
+}
+
+function isCategoricalFilter(field: FilterField): field is "source" | "verdict" {
+  return field === "source" || field === "verdict";
+}
+
+function eventFilterOptions(entries: LedgerEntry[], field: "source" | "verdict"): string[] {
+  const values = new Set<string>();
+  for (const entry of entries) {
+    if (isOutcomeEntry(entry)) continue;
+    const value = field === "source" ? entry.source : entry.verdict;
+    if (value) values.add(value);
+  }
+  return ["", ...Array.from(values).sort()];
+}
+
+function outcomeByToolUseId(entries: LedgerEntry[]): Map<string, LedgerEntry> {
+  const out = new Map<string, LedgerEntry>();
+  for (const entry of entries) {
+    if (!isOutcomeEntry(entry) || !entry.tool_use_id) continue;
+    const current = out.get(entry.tool_use_id);
+    if (!current || entry.seq > current.seq) out.set(entry.tool_use_id, entry);
+  }
+  return out;
 }
 
 // ---------- sessions pane --------------------------------------------------
@@ -1260,12 +1403,10 @@ function GatesPane({
             <text fg={idFg}>{g.id.padEnd(36, " ")}</text>
             <text fg="#888888">{(g.mode || "—").padEnd(10, " ")}</text>
             <text fg="#888888">
-              {truncate(g.tool || g.tool_prefix || "*", 18).padEnd(20, " ")}
+              {truncate(gateToolSummary(g), 18).padEnd(20, " ")}
             </text>
             <text fg="#555555">
-              {g.any_command_regex && g.any_command_regex.length > 0
-                ? `regex×${g.any_command_regex.length}`
-                : (g.evaluators ?? []).join(",")}
+              {gateMatchSummary(g)}
             </text>
             {armed ? (
               <text fg="#FF4455" attributes={1}>{"  ← x to confirm"}</text>
@@ -1275,6 +1416,32 @@ function GatesPane({
       })}
     </box>
   );
+}
+
+function gateToolSummary(g: PolicyGateView): string {
+  const match = g.match;
+  if (match?.any_of && match.any_of.length > 0) {
+    const tools = match.any_of
+      .map((sub) => sub.tool ?? sub.tool_prefix)
+      .filter((value): value is string => !!value);
+    return tools.length > 0 ? tools.join("|") : "any_of";
+  }
+  return match?.tool ?? match?.tool_prefix ?? g.tool ?? g.tool_prefix ?? "*";
+}
+
+function gateMatchSummary(g: PolicyGateView): string {
+  const regexes = commandRegexesFromMatch(g.match);
+  if (regexes.length === 0) regexes.push(...(g.any_command_regex ?? []));
+  if (regexes.length > 0) return `regex×${regexes.length}`;
+  return (g.evaluators ?? []).join(",");
+}
+
+function commandRegexesFromMatch(match: PolicyMatchView | undefined): string[] {
+  if (!match) return [];
+  return [
+    ...(match.any_command_regex ?? []),
+    ...((match.any_of ?? []).flatMap((sub) => commandRegexesFromMatch(sub))),
+  ];
 }
 
 // ---------- mode pane ------------------------------------------------------
@@ -1322,7 +1489,124 @@ function ModePane({ data }: { data: ModeResponse | null }): React.ReactNode {
   );
 }
 
-// ---------- detail modal ---------------------------------------------------
+// ---------- detail modals --------------------------------------------------
+
+const GATE_DETAIL_VISIBLE_ROWS = 14;
+const GATE_DETAIL_LINE_WIDTH = 112;
+
+function GateDetailModal({
+  gate,
+  scroll,
+}: {
+  gate: PolicyGateView;
+  scroll: number;
+}): React.ReactNode {
+  const schemaRows = gateSchemaRows(gate.match);
+  const maxScroll = Math.max(0, schemaRows.length - GATE_DETAIL_VISIBLE_ROWS);
+  const safeScroll = Math.min(scroll, maxScroll);
+  const visibleRows = schemaRows.slice(
+    safeScroll,
+    safeScroll + GATE_DETAIL_VISIBLE_ROWS,
+  );
+  return (
+    <box flexDirection="column" borderStyle="rounded" borderColor="#7FE7DC" padding={1}>
+      <text fg="#7FE7DC" attributes={1}>{`gate detail — ${gate.id}`}</text>
+      <box flexDirection="row" marginTop={1}>
+        <text fg="#888888">mode: </text>
+        <text fg="#CCCCCC">{gate.mode || "inherit"}</text>
+        <text fg="#555555">   source: </text>
+        <text fg="#CCCCCC">{gate.source || "daemon"}</text>
+        <text fg="#555555">   enabled: </text>
+        <text fg={gate.disabled ? "#FF8888" : "#00FF88"}>
+          {gate.disabled ? "no" : "yes"}
+        </text>
+      </box>
+      <box flexDirection="row">
+        <text fg="#888888">tool: </text>
+        <text fg="#CCCCCC">{gateToolSummary(gate)}</text>
+        <text fg="#555555">   tool_prefix: </text>
+        <text fg="#CCCCCC">{gate.match?.tool_prefix ?? gate.tool_prefix ?? "—"}</text>
+      </box>
+      <box flexDirection="row" marginBottom={1}>
+        <text fg="#888888">evaluators: </text>
+        <text fg="#CCCCCC">{(gate.evaluators ?? []).join(", ") || "—"}</text>
+      </box>
+      <box flexDirection="row">
+        <text fg="#888888" attributes={1}>match schema</text>
+        <text fg="#555555">
+          {schemaRows.length > GATE_DETAIL_VISIBLE_ROWS
+            ? `  rows ${safeScroll + 1}-${Math.min(schemaRows.length, safeScroll + GATE_DETAIL_VISIBLE_ROWS)} of ${schemaRows.length}`
+            : ""}
+        </text>
+      </box>
+      {visibleRows.length > 0 ? (
+        visibleRows.map((row, index) => (
+          <text key={`${safeScroll}-${index}`} fg={row.fg}>
+            {truncate(row.text, GATE_DETAIL_LINE_WIDTH)}
+          </text>
+        ))
+      ) : (
+        <text fg="#555555">—</text>
+      )}
+      <box marginTop={1}>
+        <text fg="#555555">
+          {schemaRows.length > GATE_DETAIL_VISIBLE_ROWS ? "↑/↓ or j/k scroll  " : ""}
+          enter/esc closes
+        </text>
+      </box>
+    </box>
+  );
+}
+
+function gateSchemaRows(match: PolicyMatchView | undefined): Array<{ text: string; fg: string }> {
+  const rows: Array<{ text: string; fg: string }> = [];
+  for (const { label, match: branch } of matchBranches(match)) {
+    rows.push({ text: label, fg: "#7FE7DC" });
+    pushMatchSchemaRows(rows, branch);
+  }
+  return rows;
+}
+
+function pushMatchSchemaRows(
+  rows: Array<{ text: string; fg: string }>,
+  match: PolicyMatchView,
+): void {
+  const start = rows.length;
+  if (match.tool) rows.push({ text: `  tool: ${match.tool}`, fg: "#CCCCCC" });
+  if (match.tool_prefix)
+    rows.push({ text: `  tool_prefix: ${match.tool_prefix}`, fg: "#CCCCCC" });
+  if (match.path_glob_regex)
+    rows.push({ text: `  path_glob_regex: ${match.path_glob_regex}`, fg: "#CCCCCC" });
+  pushRegexRows(rows, "any_command_regex", match.any_command_regex);
+  pushRegexRows(rows, "any_path_regex", match.any_path_regex);
+  pushRegexRows(rows, "any_url_regex", match.any_url_regex);
+  if (rows.length === start) rows.push({ text: "  —", fg: "#555555" });
+}
+
+function pushRegexRows(
+  rows: Array<{ text: string; fg: string }>,
+  label: string,
+  values?: string[],
+): void {
+  if (!values || values.length === 0) return;
+  rows.push({ text: `  ${label}:`, fg: "#888888" });
+  for (const value of values) {
+    rows.push({ text: `    - ${value}`, fg: "#CCCCCC" });
+  }
+}
+
+function matchBranches(
+  match: PolicyMatchView | undefined,
+): Array<{ label: string; match: PolicyMatchView }> {
+  if (!match) return [];
+  if (match.any_of && match.any_of.length > 0) {
+    return match.any_of.map((sub, index) => ({
+      label: `any_of[${index}]`,
+      match: sub,
+    }));
+  }
+  return [{ label: "match", match }];
+}
 
 function DetailModal({
   entry,
@@ -1337,6 +1621,7 @@ function DetailModal({
     if (h.length <= 16) return h;
     return `${h.slice(0, 8)}…${h.slice(-8)}`;
   };
+  const subject = subjectFromLedgerEntry(entry);
   return (
     <box
       flexDirection="column"
@@ -1348,6 +1633,7 @@ function DetailModal({
       <text fg="#7FE7DC" attributes={1}>{`event detail — seq ${entry.seq}`}</text>
       <Row k="ts" v={entry.ts} />
       <Row k="source" v={entry.source} />
+      {subject ? <Row k={subject.label} v={subject.value} /> : null}
       <Row k="rule_id" v={entry.rule_id || "—"} />
       <Row
         k="verdict"
@@ -1363,6 +1649,30 @@ function DetailModal({
       <text fg="#555555">  H toggle full hashes   esc/enter close</text>
     </box>
   );
+}
+
+function subjectFromLedgerEntry(
+  entry: LedgerEntry,
+): { label: "command" | "path" | "url"; value: string } | null {
+  const input = entry.input ?? entry.tool_input;
+  if (!input) return null;
+  const command = stringField(input, ["command"]);
+  if (command) return { label: "command", value: command };
+  const path = stringField(input, ["file_path", "path"]);
+  if (path) return { label: "path", value: path };
+  const url = stringField(input, ["url"]);
+  if (url) return { label: "url", value: url };
+  return null;
+}
+
+function stringField(input: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return null;
 }
 
 function Row({ k, v }: { k: string; v: string }): React.ReactNode {
@@ -1387,9 +1697,9 @@ function Footer({ toast, tab }: { toast: string; tab: TabName }): React.ReactNod
   const common = "h/l tab  j/k move  m flip mode  r refresh  q quit";
   const tabHelp: Record<TabName, string> = {
     stats: "(window keybinds shown next to each button above)",
-    events: "enter detail  f filter  c clear  i toggle internal  H toggle hashes",
+    events: "enter detail  f filter  c clear  i internal  o outcomes  H hashes",
     sessions: "i toggle internal harnesses",
-    gates: "a add  e edit  space toggle  M cycle-mode  x x delete",
+    gates: "enter detail  a add  e edit  space toggle  M cycle-mode  x x delete",
     mode: "(read-only — m on any tab flips mode)",
   };
   // Each line wrapped in its own row-box. Bare <text> siblings inside
