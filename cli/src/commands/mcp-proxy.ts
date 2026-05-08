@@ -251,8 +251,18 @@ export async function runMcpProxy(argv: string[]): Promise<void> {
   child.on("exit", (code, signal) => {
     // Mirror the child's termination to our parent so Claude Desktop's
     // server-died detection works the same as it would without the proxy.
-    if (signal) process.kill(process.pid, signal);
-    else process.exit(code ?? 0);
+    // Windows doesn't honor POSIX signals, so a process.kill with anything
+    // other than SIGTERM/SIGKILL is undefined behavior — fall back to a
+    // non-zero exit so the parent still sees an abnormal termination.
+    if (signal) {
+      if (process.platform === "win32") {
+        process.exit(1);
+      } else {
+        process.kill(process.pid, signal);
+      }
+    } else {
+      process.exit(code ?? 0);
+    }
   });
 
   // Track the in-flight tool/call ids so we can fire post-tool-use when
@@ -261,48 +271,74 @@ export async function runMcpProxy(argv: string[]): Promise<void> {
   const pendingToolCalls = new Map<string, { name: string; toolUseId: string }>();
 
   // Claude Desktop → us → child
+  //
+  // Lines from stdin are processed in order through a single Promise
+  // chain. The naive `process.stdin.on("data", async ...)` pattern lets
+  // two chunks that arrive close together race on `pendingToolCalls`
+  // and reorder writes to the child — the await-on-callPreToolUse for
+  // chunk N can resolve after chunk N+1's, flipping the verdict-vs-
+  // forward order. Serializing through `processingChain` keeps every
+  // line's effects (deny synthesis, Map insert, child.stdin.write) in
+  // arrival order.
   const stdinBuf = new LineBuffer();
-  process.stdin.on("data", async (chunk: Buffer) => {
-    for (const line of stdinBuf.push(chunk)) {
-      let msg: JsonRpcMessage;
-      try {
-        msg = JSON.parse(line) as JsonRpcMessage;
-      } catch {
-        // Pass malformed lines through — the child will reject them and
-        // we don't want to silently drop messages we don't understand.
-        child.stdin.write(line + "\n");
-        continue;
-      }
-      if (msg.method === "tools/call" && msg.id !== undefined && msg.id !== null) {
-        const params = (msg.params ?? {}) as {
-          name?: string;
-          arguments?: unknown;
-        };
-        const { decision, reason } = await callPreToolUse(
-          daemonUrl,
-          parsed.serverName,
-          sessionId,
-          msg,
-        );
-        if (decision === "deny") {
-          // Short-circuit: respond directly to Claude, don't wake child.
-          process.stdout.write(JSON.stringify(denyResponseFor(msg.id, reason)) + "\n");
-          continue;
-        }
-        // Allow / ask → forward and remember the id so the response
-        // path can fire post-tool-use.
-        pendingToolCalls.set(String(msg.id), {
-          name: params.name ?? "<unknown>",
-          toolUseId: String(msg.id),
-        });
-        child.stdin.write(line + "\n");
-        continue;
-      }
+  let processingChain: Promise<void> = Promise.resolve();
+
+  async function processLine(line: string): Promise<void> {
+    let msg: JsonRpcMessage;
+    try {
+      msg = JSON.parse(line) as JsonRpcMessage;
+    } catch {
+      // Pass malformed lines through — the child will reject them and
+      // we don't want to silently drop messages we don't understand.
       child.stdin.write(line + "\n");
+      return;
+    }
+    if (msg.method === "tools/call" && msg.id !== undefined && msg.id !== null) {
+      const params = (msg.params ?? {}) as {
+        name?: string;
+        arguments?: unknown;
+      };
+      const { decision, reason } = await callPreToolUse(
+        daemonUrl,
+        parsed.serverName,
+        sessionId,
+        msg,
+      );
+      if (decision === "deny") {
+        // Short-circuit: respond directly to Claude, don't wake child.
+        process.stdout.write(JSON.stringify(denyResponseFor(msg.id, reason)) + "\n");
+        return;
+      }
+      // Allow / ask → forward and remember the id so the response
+      // path can fire post-tool-use.
+      pendingToolCalls.set(String(msg.id), {
+        name: params.name ?? "<unknown>",
+        toolUseId: String(msg.id),
+      });
+      child.stdin.write(line + "\n");
+      return;
+    }
+    child.stdin.write(line + "\n");
+  }
+
+  process.stdin.on("data", (chunk: Buffer) => {
+    for (const line of stdinBuf.push(chunk)) {
+      processingChain = processingChain.then(() => processLine(line)).catch((err) => {
+        // Surface unexpected processing errors to stderr so Claude
+        // Desktop's log shows them; never propagate to keep the chain
+        // alive for subsequent lines.
+        process.stderr.write(
+          `agentlock mcp-proxy: processing error: ${(err as Error).message}\n`,
+        );
+      });
     }
   });
   process.stdin.on("end", () => {
-    child.stdin.end();
+    // Wait for any in-flight processing before closing the child's stdin
+    // so queued writes don't land on an already-ended stream.
+    processingChain = processingChain.then(() => {
+      child.stdin.end();
+    });
   });
 
   // Child → us → Claude Desktop
