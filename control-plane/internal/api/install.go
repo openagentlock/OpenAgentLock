@@ -520,10 +520,12 @@ func harnessForPath(path string) string {
 	case strings.HasSuffix(path, "claude_desktop_config.json"),
 		strings.HasSuffix(path, "extensions-installations.json"):
 		return "claude-desktop"
-	case strings.HasSuffix(path, "manifest.json") &&
-		strings.Contains(path, "/Claude Extensions/"):
+	case filepath.Base(path) == "manifest.json" &&
+		filepath.Base(filepath.Dir(filepath.Dir(path))) == "Claude Extensions":
 		// Bundle manifest of a Desktop Extension. Path shape:
 		// <config-dir>/Claude Extensions/<ext-id>/manifest.json.
+		// filepath.Base avoids the cross-platform footgun of literal
+		// "/Claude Extensions/" not matching backslash paths on Windows.
 		return "claude-desktop"
 	case strings.HasSuffix(path, "settings.json"):
 		// Gemini also writes settings.json (in ~/.gemini); disambiguate
@@ -730,8 +732,8 @@ func installUninstallHandler(d Deps) http.HandlerFunc {
 				//   - <Claude Extensions>/<id>/manifest.json (bundle manifests, the actual launch source)
 				if strings.HasSuffix(e.SettingsPath, "extensions-installations.json") {
 					newBytes, removed, stripErr = stripExtensionRegistry(existing)
-				} else if strings.HasSuffix(e.SettingsPath, "manifest.json") &&
-					strings.Contains(e.SettingsPath, "/Claude Extensions/") {
+				} else if filepath.Base(e.SettingsPath) == "manifest.json" &&
+					filepath.Base(filepath.Dir(filepath.Dir(e.SettingsPath))) == "Claude Extensions" {
 					newBytes, removed, stripErr = stripBundleManifest(existing)
 				} else {
 					newBytes, removed, stripErr = stripClaudeDesktopConfig(existing)
@@ -997,7 +999,7 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 						absBundles = a
 					}
 					for path, body := range req.ExistingFiles {
-						if !strings.HasSuffix(path, "/manifest.json") {
+						if filepath.Base(path) != "manifest.json" {
 							continue
 						}
 						if filepath.Dir(filepath.Dir(path)) != absBundles {
