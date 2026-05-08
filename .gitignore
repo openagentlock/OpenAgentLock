@@ -63,6 +63,7 @@ cli/openagentlock-cli-*.tgz
 *.png
 !docs/**/*.png
 !control-plane/dashboard-ui/**/*.png
+!assets/**/*.png
 
 # Locally-built daemon binary.
 control-plane/agentlockd
