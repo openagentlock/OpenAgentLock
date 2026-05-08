@@ -36,6 +36,8 @@ import {
   checkSafeTarget,
   executeFileOps,
   executeUninstallOps,
+  listExtensionBundleManifests,
+  listJsonFiles,
   readExistingFiles,
 } from "../util/install-fs.ts";
 import { claudeDesktopConfigPath } from "../detect/claude-desktop.ts";
@@ -351,6 +353,11 @@ export async function runInstall(argv: string[] = []): Promise<void> {
         uninstallPaths.push(resolve(join(dir, "settings.json")));
       } else if (id === "claude-desktop") {
         uninstallPaths.push(resolve(join(dir, "claude_desktop_config.json")));
+        // Bundle manifests live one dir over and are the actual launch
+        // source for Desktop Extensions — the daemon needs each to
+        // unwind the wrap on uninstall.
+        const bundlesDir = resolve(join(dir, "Claude Extensions"));
+        uninstallPaths.push(...(await listExtensionBundleManifests(bundlesDir)));
       } else if (id === "codex" || id === "cursor") {
         uninstallPaths.push(resolve(join(dir, "hooks.json")));
       } else if (id === "gemini") {
@@ -411,6 +418,22 @@ export async function runInstall(argv: string[] = []): Promise<void> {
   const geminiSettings = resolve(
     join(hostConfigDirs["gemini"], "settings.json"),
   );
+  // Per-extension bundle manifests are THE launch source for Desktop
+  // Extensions installed via Settings → Extensions UI — claudeDesktopPlan
+  // wraps each one in place using the schema-blessed _meta.agentlock
+  // slot (MCPB v0.3+). The Claude Extensions Settings sidecar JSONs
+  // tell us which extensions are isEnabled so disabled ones get
+  // unwound rather than re-wrapped.
+  const claudeDesktopBundlesDir = resolve(
+    join(hostConfigDirs["claude-desktop"], "Claude Extensions"),
+  );
+  const claudeDesktopExtSettingsDir = resolve(
+    join(hostConfigDirs["claude-desktop"], "Claude Extensions Settings"),
+  );
+  const bundleManifests = await listExtensionBundleManifests(
+    claudeDesktopBundlesDir,
+  );
+  const extSettingsFiles = await listJsonFiles(claudeDesktopExtSettingsDir);
   const existingFiles = await readExistingFiles([
     claudeSettings,
     claudeDesktopConfig,
@@ -418,6 +441,8 @@ export async function runInstall(argv: string[] = []): Promise<void> {
     codexConfig,
     cursorHooks,
     geminiSettings,
+    ...bundleManifests,
+    ...extSettingsFiles,
   ]);
 
   // Write the status-line script alongside the binary wrapper. Daemon

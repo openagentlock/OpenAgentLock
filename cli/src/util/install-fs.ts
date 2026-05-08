@@ -55,6 +55,56 @@ export function checkSafeTarget(
   );
 }
 
+// listJsonFiles returns the absolute path of every *.json file
+// directly under `dir`. Returns an empty array if `dir` doesn't exist
+// or isn't a directory — matches readExistingFiles's "missing is
+// fine" posture so callers can chain them safely.
+export async function listJsonFiles(dir: string): Promise<string[]> {
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err: unknown) {
+    const code = (err as { code?: string }).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw err;
+  }
+  const out: string[] = [];
+  for (const e of entries) {
+    if (!e.isFile()) continue;
+    if (!e.name.endsWith(".json")) continue;
+    out.push(resolve(dir, e.name));
+  }
+  return out;
+}
+
+// listExtensionBundleManifests scans the "Claude Extensions" dir for
+// each <ext-id>/manifest.json — the on-disk bundle manifest Claude
+// Desktop launches from. Returns absolute paths. Missing dir is fine.
+export async function listExtensionBundleManifests(
+  bundlesDir: string,
+): Promise<string[]> {
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(bundlesDir, { withFileTypes: true });
+  } catch (err: unknown) {
+    const code = (err as { code?: string }).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw err;
+  }
+  const out: string[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const manifestPath = resolve(bundlesDir, e.name, "manifest.json");
+    try {
+      const stat = await fs.stat(manifestPath);
+      if (stat.isFile()) out.push(manifestPath);
+    } catch {
+      // No manifest.json in this bundle dir — skip silently.
+    }
+  }
+  return out;
+}
+
 // readExistingFiles loads utf8 contents for each absolute path that
 // exists; silently skips ENOENT so the caller can pass a list of
 // "maybe present" paths and the daemon merges against whatever it
