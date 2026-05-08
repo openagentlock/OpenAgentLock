@@ -233,47 +233,62 @@ func mergeClaudeDesktopConfig(existing []byte, daemonURL, agentlockBinary string
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
-// claudeDesktopPlan returns the merged config the CLI should write. When
-// existingFiles[configPath] is unset we emit a fresh config carrying
-// only the agentlock entry; otherwise we merge against the supplied
-// bytes so user-set mcpServers + any other top-level keys survive.
-func claudeDesktopPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string, existingFiles map[string]string) (fileOp, []string) {
+// claudeDesktopPlan returns the merged file ops the CLI should execute.
+//
+// Two surfaces:
+//
+//  1. claude_desktop_config.json — the manual mcpServers JSON path.
+//     Each entry is rewritten through `agentlock mcp-proxy --name <id>
+//     -- <orig-cmd> <args>`; original preserved under
+//     `_agentlock_original` for clean restore.
+//
+//  2. Per-extension bundle manifests under
+//     `<config-dir>/Claude Extensions/<ext-id>/manifest.json` — the
+//     actual launch source for Desktop Extensions installed via
+//     Settings → Extensions UI. Claude Desktop's manifest schema
+//     validator is strict (`additionalProperties: false` everywhere),
+//     so wrap markers can't live in the legacy `mcp_config._agentlock`
+//     slot. Instead we use the schema-blessed root-level `_meta`
+//     object (added in MCPB v0.3) — `_meta.agentlock.{wrapped,
+//     original_command, original_args, original_env,
+//     original_manifest_version}`. Manifest versions 0.1 / 0.2 (or
+//     missing) are bumped to 0.3 on wrap; the original is stashed for
+//     restore. Rewriting `mcp_config.command` to a non-`node`/non-
+//     `python` binary defeats Claude Desktop's UtilityProcess
+//     short-circuit and forces basic-execution spawn — that's how the
+//     proxy ends up in the byte path.
+//
+// The Desktop Extensions registry (`extensions-installations.json`)
+// is intentionally NOT wrapped — empirical probing (May 2026) showed
+// it's an audit record only, not the launch source. Wrapping it
+// would be dead text and risks fighting Anthropic's auto-update
+// hash check. mergeExtensionRegistry / stripExtensionRegistry remain
+// in this file as defensive helpers for cleanup of any stale wrap
+// state, but the install path never emits a registry write op.
+func claudeDesktopPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string, existingFiles map[string]string) ([]fileOp, []string) {
 	warnings := []string{
-		// Honest scope statement. We gate the MCP slice (every tools/call
-		// to a user-installed MCP server or .mcpb Desktop Extension), but
-		// Claude Desktop has additional local capabilities that don't go
-		// through MCP and are NOT gated by this install:
-		//   - Computer Use (direct mouse/keyboard control)
-		//   - Cowork's non-MCP agentic paths (where applicable)
-		//   - Integrated terminal command execution
-		//   - Native connectors (Slack, Google Calendar, etc.)
-		//   - Server-side features (web search, code interpreter)
-		// Documented in docs/status.md so dashboard / report can't
-		// overstate coverage.
-		"claude-desktop: agentlock gates MCP tool calls only — every user-installed MCP server and .mcpb Desktop Extension is wrapped. NOT gated: Computer Use, integrated terminal, native connectors (Slack/GCal), Cowork's non-MCP paths, and Anthropic cloud features (web search, code interpreter). For full local enforcement, use Claude Code instead.",
+		"claude-desktop: agentlock gates MCP tool calls for both manual mcpServers entries (claude_desktop_config.json) and Desktop Extensions installed via Settings → Extensions UI. Each per-extension bundle manifest is rewritten in place; auto-updates from Anthropic may overwrite the wrap on extension version bumps — re-run `agentlock install` after extension updates. Other surfaces remain out of scope: Computer Use, integrated terminal, native connectors (Slack/GCal), Cowork's non-MCP paths, server-side cloud features. For full local enforcement of an agent harness, use Claude Code.",
 	}
 
+	ops := make([]fileOp, 0, 4)
+
+	// claude_desktop_config.json — manual mcpServers path.
 	configPath, err := claudeDesktopConfigPath(configDirOverride, overrides)
 	if err != nil {
 		configPath = "<unresolved: " + err.Error() + ">"
 	}
-	abs := configPath
+	cfgAbs := configPath
 	if a, err := filepath.Abs(configPath); err == nil {
-		abs = a
+		cfgAbs = a
 	}
-
-	var existing []byte
-	backupPath := ""
-	if c, ok := existingFiles[abs]; ok && c != "" {
-		existing = []byte(c)
-		backupPath = fmt.Sprintf("%s.agentlock-backup-%d", abs, time.Now().UnixNano())
+	var cfgExisting []byte
+	cfgBackup := ""
+	if c, ok := existingFiles[cfgAbs]; ok && c != "" {
+		cfgExisting = []byte(c)
+		cfgBackup = fmt.Sprintf("%s.agentlock-backup-%d", cfgAbs, time.Now().UnixNano())
 	}
-
-	merged, mergeErr := mergeClaudeDesktopConfig(existing, daemonURL, agentlockBinary)
+	merged, mergeErr := mergeClaudeDesktopConfig(cfgExisting, daemonURL, agentlockBinary)
 	if mergeErr != nil {
-		// Existing config was unparseable. Fall back to an agentlock-only
-		// payload so the install still produces something usable; the
-		// CLI will surface the parse error when it diffs against existing.
 		fresh := map[string]any{
 			"mcpServers": map[string]any{
 				claudeDesktopServerName: claudeDesktopServerEntry(daemonURL, agentlockBinary),
@@ -281,13 +296,470 @@ func claudeDesktopPlan(daemonURL, configDirOverride, agentlockBinary string, ove
 		}
 		merged, _ = json.MarshalIndent(fresh, "", "  ")
 	}
-	return fileOp{
+	ops = append(ops, fileOp{
 		Op:         "write",
-		Path:       abs,
+		Path:       cfgAbs,
 		Content:    string(merged),
 		Reason:     fmt.Sprintf("register agentlock as MCP server in Claude Desktop → %s (no PreToolUse upstream)", strings.TrimRight(daemonURL, "/")),
-		BackupPath: backupPath,
-	}, warnings
+		BackupPath: cfgBackup,
+	})
+
+	// Desktop Extension bundle manifests — _meta.agentlock wrap.
+	bundlesDir, _ := claudeDesktopExtensionsDir(configDirOverride, overrides)
+	if bundlesDir != "" {
+		registryAbsPath, _ := extensionsRegistryPath(configDirOverride, overrides)
+		settings := collectExtensionSettings(existingFiles, registryAbsPath)
+		ops = append(ops, bundleManifestOps(bundlesDir, daemonURL, agentlockBinary, settings, existingFiles)...)
+	}
+
+	return ops, warnings
+}
+
+// claudeDesktopExtensionsDir returns the absolute path of
+// "<config-dir>/Claude Extensions". Sibling of the registry — same
+// override / dev-home / host-fallback resolution rules.
+func claudeDesktopExtensionsDir(configDirOverride string, overrides map[string]string) (string, error) {
+	cfg, err := claudeDesktopConfigPath(configDirOverride, overrides)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(cfg), "Claude Extensions"), nil
+}
+
+// bundleManifestOps walks existingFiles for any path of the form
+// "<bundlesDir>/<ext-id>/manifest.json" and emits a wrap op for each
+// matching extension that isn't disabled. Disabled extensions are
+// either skipped (already-unwrapped) or unwrapped (if they were
+// wrapped on a prior install). The CLI is responsible for sending
+// each bundle manifest's contents in existing_files; manifests not
+// supplied are silently skipped.
+func bundleManifestOps(bundlesDir, daemonURL, agentlockBinary string, settings map[string]extensionSettings, existingFiles map[string]string) []fileOp {
+	abs := bundlesDir
+	if a, err := filepath.Abs(bundlesDir); err == nil {
+		abs = a
+	}
+	var ops []fileOp
+	for path, body := range existingFiles {
+		if !strings.HasSuffix(path, "/manifest.json") {
+			continue
+		}
+		// path layout: <abs>/<extID>/manifest.json
+		extDir := filepath.Dir(path)
+		if filepath.Dir(extDir) != abs {
+			continue
+		}
+		extID := filepath.Base(extDir)
+
+		merged, ok := mergeBundleManifest([]byte(body), extID, daemonURL, agentlockBinary, settings)
+		if !ok {
+			continue
+		}
+		ops = append(ops, fileOp{
+			Op:         "write",
+			Path:       path,
+			Content:    string(merged),
+			Reason:     fmt.Sprintf("wrap Desktop Extension bundle %q → %s", extID, strings.TrimRight(daemonURL, "/")),
+			BackupPath: fmt.Sprintf("%s.agentlock-backup-%d", path, time.Now().UnixNano()),
+		})
+	}
+	return ops
+}
+
+// mergeBundleManifest parses one extension's on-disk manifest.json,
+// applies wrapManifest (or restoreManifest when the extension is now
+// disabled), and returns the new bytes. Returns ok=false when the
+// manifest is unparseable or there's nothing to do (e.g. disabled
+// extension that was never wrapped — no write op needed).
+func mergeBundleManifest(existing []byte, extID, daemonURL, agentlockBinary string, settings map[string]extensionSettings) ([]byte, bool) {
+	manifest := map[string]any{}
+	if err := json.Unmarshal(existing, &manifest); err != nil {
+		return nil, false
+	}
+
+	// Disabled extensions: unwind any prior wrap, no-op otherwise.
+	// Leaving an unmodified disabled extension untouched avoids a
+	// pointless write op every install run.
+	if s, ok := settings[extID]; ok && !s.IsEnabled {
+		if !restoreManifest(manifest) {
+			return nil, false
+		}
+		out, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return nil, false
+		}
+		return out, true
+	}
+
+	if !wrapManifest(manifest, extID, daemonURL, agentlockBinary) {
+		return nil, false
+	}
+	out, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// stripBundleManifest reverses the wrap on a single bundle manifest.
+// Returns the new bytes plus 1 if a wrap was undone, 0 otherwise.
+// Pure: no disk I/O.
+func stripBundleManifest(existing []byte) ([]byte, int, error) {
+	if len(existing) == 0 {
+		return nil, 0, nil
+	}
+	manifest := map[string]any{}
+	if err := json.Unmarshal(existing, &manifest); err != nil {
+		return nil, 0, fmt.Errorf("parse bundle manifest: %w", err)
+	}
+	if !restoreManifest(manifest) {
+		return nil, 0, nil
+	}
+	out, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshal: %w", err)
+	}
+	return out, 1, nil
+}
+
+// extensionsRegistryPath sits next to claude_desktop_config.json in the
+// same Claude support dir. Anthropic stores the install record for every
+// Desktop Extension here; the per-extension settings (isEnabled,
+// userConfig) live one dir over in "Claude Extensions Settings/".
+func extensionsRegistryPath(configDirOverride string, overrides map[string]string) (string, error) {
+	cfg, err := claudeDesktopConfigPath(configDirOverride, overrides)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(cfg), "extensions-installations.json"), nil
+}
+
+// extensionSettings is the parsed shape of one
+// "Claude Extensions Settings/<id>.json" file. We only need isEnabled
+// today; userConfig is preserved on disk by Claude Desktop and not our
+// concern.
+type extensionSettings struct {
+	IsEnabled bool `json:"isEnabled"`
+}
+
+// collectExtensionSettings walks existingFiles for any path that looks
+// like a Claude Extensions Settings/<id>.json sibling of the registry
+// path, parses each, and returns a map keyed by extension id. Missing
+// or unparseable entries default to enabled — same behavior Claude
+// Desktop seems to take when the settings file is absent on first run
+// (we err on the side of wrapping; a disabled extension that we wrap
+// is harmless because it's never spawned anyway).
+func collectExtensionSettings(existingFiles map[string]string, registryAbsPath string) map[string]extensionSettings {
+	out := map[string]extensionSettings{}
+	settingsDir := filepath.Join(filepath.Dir(registryAbsPath), "Claude Extensions Settings")
+	for path, body := range existingFiles {
+		if filepath.Dir(path) != settingsDir {
+			continue
+		}
+		base := filepath.Base(path)
+		if !strings.HasSuffix(base, ".json") {
+			continue
+		}
+		extID := strings.TrimSuffix(base, ".json")
+		var parsed extensionSettings
+		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+			// Default to enabled on parse error — matches the "wrap
+			// unless explicitly disabled" posture above.
+			parsed.IsEnabled = true
+		}
+		out[extID] = parsed
+	}
+	return out
+}
+
+// wrapManifest rewrites one Desktop Extension manifest in place to
+// route MCP traffic through `agentlock mcp-proxy --name <ext-id> --
+// <orig-cmd> <args...>`. The schema-blessed `_meta.agentlock` slot
+// (MCPB v0.3+) carries the originals so a strip can restore them.
+//
+// Two non-obvious moves:
+//
+//   - manifest_version is bumped from "0.1" / "0.2" / missing → "0.3"
+//     when needed, so the validator accepts our `_meta` block. The
+//     original is stashed under _meta.agentlock.original_manifest_version
+//     (or _meta.agentlock.original_manifest_version_absent when the
+//     field was missing) for byte-clean restore.
+//
+//   - mcp_config.command is rewritten to the agentlock binary path
+//     (NOT "node" / "python"), which forces Claude Desktop's runtime
+//     into the basic-execution branch. Otherwise, for type=node /
+//     type=python extensions, Claude Desktop short-circuits via
+//     UtilityProcess (Electron's built-in node) and would bypass our
+//     wrap entirely. Empirically verified May 2026.
+//
+// Template variables in args (`${__dirname}`,
+// `${user_config.<key>}`) pass through verbatim — Claude Desktop
+// expands them at launch, the proxy spawns whatever it's handed.
+//
+// Returns true if the wrap was applied; false on shape mismatch
+// (no `server.mcp_config`). Idempotent: re-wrapping reads the prior
+// _meta.agentlock to recover real originals first.
+func wrapManifest(manifest map[string]any, extID, daemonURL, agentlockBinary string) bool {
+	server, ok := manifest["server"].(map[string]any)
+	if !ok {
+		return false
+	}
+	mcp, ok := server["mcp_config"].(map[string]any)
+	if !ok {
+		return false
+	}
+
+	bin := claudeCodeBinary(agentlockBinary)
+	daemonURL = strings.TrimRight(daemonURL, "/")
+
+	// Recover prior originals (if previously wrapped) so a re-wrap
+	// reflects the user's true source state, not our wrapper.
+	meta, _ := manifest["_meta"].(map[string]any)
+	prior, _ := meta["agentlock"].(map[string]any)
+
+	var (
+		origCmd                 string
+		origArgs                []any
+		origEnv                 map[string]any
+		origManifestVersion     string
+		origManifestVersionMiss bool
+	)
+	if prior != nil {
+		origCmd, _ = prior["original_command"].(string)
+		origArgs, _ = prior["original_args"].([]any)
+		origEnv, _ = prior["original_env"].(map[string]any)
+		origManifestVersion, _ = prior["original_manifest_version"].(string)
+		if a, ok := prior["original_manifest_version_absent"].(bool); ok && a {
+			origManifestVersionMiss = true
+		}
+	} else {
+		origCmd, _ = mcp["command"].(string)
+		origArgs, _ = mcp["args"].([]any)
+		origEnv, _ = mcp["env"].(map[string]any)
+	}
+
+	args := []any{"mcp-proxy", "--name", extID, "--", origCmd}
+	args = append(args, origArgs...)
+
+	env := map[string]any{}
+	for k, v := range origEnv {
+		env[k] = v
+	}
+	if _, ok := env["AGENTLOCK_DAEMON_URL"]; !ok {
+		env["AGENTLOCK_DAEMON_URL"] = daemonURL
+	}
+
+	newMcp := map[string]any{
+		"command": bin,
+		"args":    args,
+	}
+	if len(env) > 0 {
+		newMcp["env"] = env
+	}
+	server["mcp_config"] = newMcp
+
+	// Bump manifest_version if the current value would reject _meta.
+	// MCPB v0.3 added the field; v0.1 and v0.2 schemas are
+	// additionalProperties:false at root and would reject it.
+	mv, hasMV := manifest["manifest_version"].(string)
+	shouldBump := !hasMV || mv == "0.1" || mv == "0.2"
+	if shouldBump {
+		// Stash the original on the FIRST wrap. Re-wrap re-uses what
+		// we already recovered above from prior so we don't lose the
+		// real source over multiple install runs.
+		if prior == nil {
+			if hasMV {
+				origManifestVersion = mv
+			} else {
+				origManifestVersionMiss = true
+			}
+		}
+		manifest["manifest_version"] = "0.3"
+	}
+
+	// dxt_version is the deprecated alias for manifest_version (kept for
+	// older bundles that haven't migrated yet, e.g. Anthropic's own
+	// Control Chrome ships dxt_version "0.1" with no manifest_version).
+	// The v0.3 schema pins it to const "0.3" when present, so a stale
+	// value must be bumped in lockstep or the validator rejects the
+	// whole manifest with `dxt_version: Invalid literal value`.
+	var (
+		origDxtVersion       string
+		origDxtVersionMiss   bool
+	)
+	if prior != nil {
+		origDxtVersion, _ = prior["original_dxt_version"].(string)
+		if a, ok := prior["original_dxt_version_absent"].(bool); ok && a {
+			origDxtVersionMiss = true
+		}
+	}
+	dxt, hasDxt := manifest["dxt_version"].(string)
+	if hasDxt && dxt != "0.3" {
+		if prior == nil {
+			origDxtVersion = dxt
+		}
+		manifest["dxt_version"] = "0.3"
+	} else if !hasDxt && prior == nil {
+		origDxtVersionMiss = true
+	}
+
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	agentlockMeta := map[string]any{
+		"wrapped":          true,
+		"original_command": origCmd,
+		"original_args":    origArgs,
+	}
+	if len(origEnv) > 0 {
+		agentlockMeta["original_env"] = origEnv
+	}
+	if origManifestVersion != "" {
+		agentlockMeta["original_manifest_version"] = origManifestVersion
+	}
+	if origManifestVersionMiss {
+		agentlockMeta["original_manifest_version_absent"] = true
+	}
+	if origDxtVersion != "" {
+		agentlockMeta["original_dxt_version"] = origDxtVersion
+	}
+	if origDxtVersionMiss {
+		agentlockMeta["original_dxt_version_absent"] = true
+	}
+	meta["agentlock"] = agentlockMeta
+	manifest["_meta"] = meta
+
+	return true
+}
+
+// restoreManifest is wrapManifest's inverse: reads _meta.agentlock,
+// restores server.mcp_config + manifest_version to their pre-wrap
+// values, and deletes the agentlock namespace from _meta. If _meta
+// has no other namespaces left it's removed entirely so the manifest
+// returns to byte-equivalent shape on a v0.3 host. Returns true if
+// a wrap was undone.
+func restoreManifest(manifest map[string]any) bool {
+	meta, _ := manifest["_meta"].(map[string]any)
+	if meta == nil {
+		return false
+	}
+	agentlockMeta, _ := meta["agentlock"].(map[string]any)
+	if agentlockMeta == nil {
+		return false
+	}
+	server, _ := manifest["server"].(map[string]any)
+	if server == nil {
+		return false
+	}
+
+	origCmd, _ := agentlockMeta["original_command"].(string)
+	origArgs, _ := agentlockMeta["original_args"].([]any)
+	origEnv, _ := agentlockMeta["original_env"].(map[string]any)
+
+	restoredMcp := map[string]any{
+		"command": origCmd,
+		"args":    origArgs,
+	}
+	if len(origEnv) > 0 {
+		restoredMcp["env"] = origEnv
+	}
+	server["mcp_config"] = restoredMcp
+
+	if origMV, ok := agentlockMeta["original_manifest_version"].(string); ok && origMV != "" {
+		manifest["manifest_version"] = origMV
+	} else if a, ok := agentlockMeta["original_manifest_version_absent"].(bool); ok && a {
+		delete(manifest, "manifest_version")
+	}
+
+	if origDxt, ok := agentlockMeta["original_dxt_version"].(string); ok && origDxt != "" {
+		manifest["dxt_version"] = origDxt
+	} else if a, ok := agentlockMeta["original_dxt_version_absent"].(bool); ok && a {
+		delete(manifest, "dxt_version")
+	}
+
+	delete(meta, "agentlock")
+	if len(meta) == 0 {
+		delete(manifest, "_meta")
+	}
+
+	return true
+}
+
+// mergeExtensionRegistry walks each entry in extensions-installations.json
+// and applies wrapManifest to its nested manifest. The registry is
+// not the launch source (claudeDesktopPlan does not call this today)
+// but the helper stays around so a future install pipeline that
+// needs registry coherency can rely on it. Disabled extensions are
+// unwrapped if previously wrapped, otherwise left alone.
+//
+// Idempotent: wrapManifest reads any prior _meta.agentlock first.
+func mergeExtensionRegistry(existing []byte, daemonURL, agentlockBinary string, settings map[string]extensionSettings) ([]byte, error) {
+	if len(existing) == 0 {
+		return nil, fmt.Errorf("empty registry")
+	}
+	root := map[string]any{}
+	if err := json.Unmarshal(existing, &root); err != nil {
+		return nil, fmt.Errorf("parse extensions registry: %w", err)
+	}
+	extensions, _ := root["extensions"].(map[string]any)
+	if extensions == nil {
+		return json.MarshalIndent(root, "", "  ")
+	}
+
+	for extID, raw := range extensions {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		manifest, ok := entry["manifest"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if s, ok := settings[extID]; ok && !s.IsEnabled {
+			restoreManifest(manifest)
+			continue
+		}
+		wrapManifest(manifest, extID, daemonURL, agentlockBinary)
+	}
+	return json.MarshalIndent(root, "", "  ")
+}
+
+// stripExtensionRegistry reverses the wrap for uninstall. Each
+// extension whose nested manifest carries _meta.agentlock is
+// restored. Non-wrapped entries pass through. Returns (newBytes,
+// removalCount, error).
+func stripExtensionRegistry(existing []byte) ([]byte, int, error) {
+	if len(existing) == 0 {
+		return nil, 0, nil
+	}
+	root := map[string]any{}
+	if err := json.Unmarshal(existing, &root); err != nil {
+		return nil, 0, fmt.Errorf("parse extensions registry: %w", err)
+	}
+	extensions, _ := root["extensions"].(map[string]any)
+	if extensions == nil {
+		return nil, 0, nil
+	}
+
+	removed := 0
+	for _, raw := range extensions {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		manifest, ok := entry["manifest"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if restoreManifest(manifest) {
+			removed++
+		}
+	}
+
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshal: %w", err)
+	}
+	return out, removed, nil
 }
 
 // stripClaudeDesktopConfig reverses the wrap. For each entry tagged
