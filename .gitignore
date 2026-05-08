@@ -59,10 +59,14 @@ cli/openagentlock-cli-*.tgz
 # during manual demos). Not meant for the repo.
 .playwright-mcp/
 
+# Local planning scratch from agent workflows. Product docs live under docs/.
+.superpowers/
+
 # Local screenshots saved by Playwright MCP screenshot tool.
 *.png
 !docs/**/*.png
 !control-plane/dashboard-ui/**/*.png
+!assets/**/*.png
 
 # Locally-built daemon binary.
 control-plane/agentlockd

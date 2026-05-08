@@ -170,6 +170,7 @@ describe("agentlock rules", () => {
         const body = captured[0]!.body as { yaml: string; replace: boolean };
         expect(body.replace).toBe(false);
         expect(body.yaml).toContain("rogue.destructive-bash");
+        expect(body.yaml).toContain("registry:openagentlock-rules");
         expect(body.yaml).toContain("any_command_regex");
         expect(body.yaml).toContain("rm");
       },
@@ -196,6 +197,29 @@ describe("agentlock rules", () => {
         expect(body.replace).toBe(true);
       },
     );
+  });
+
+  test("install --repo writes registry rule gate into .agentlock.yaml", async () => {
+    const repo = join(home, "repo");
+    mkdirSync(repo, { recursive: true });
+    const originalCwd = process.cwd();
+    process.chdir(repo);
+    try {
+      await runRulesInstall({
+        spec: "rogue.destructive-bash",
+        repo: true,
+        json: true,
+      });
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    const body = readFileSync(join(repo, ".agentlock.yaml"), "utf8");
+    expect(body).toContain("version: 1");
+    expect(body).toContain("rogue.destructive-bash");
+    expect(body).toContain("registry:openagentlock-rules");
+    expect(body).toContain("any_command_regex");
+    expect(body).toContain("rm");
   });
 
   test("install on missing rule throws", async () => {

@@ -159,6 +159,106 @@ evaluate:
 	}
 }
 
+func TestPolicyPatchGate_UpdatesPathAndURLRegexes(t *testing.T) {
+	srv := newPolicyCRUDFixture(t)
+
+	req, err := http.NewRequest(
+		http.MethodPatch,
+		srv.URL+"/v1/policy/gates/rogue.destructive-bash",
+		strings.NewReader(`{
+			"any_path_regex": ["\\.env$"],
+			"any_url_regex": ["^https://attacker\\.example"]
+		}`),
+	)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want 200", res.StatusCode)
+	}
+
+	view, err := http.Get(srv.URL + "/v1/policy/view")
+	if err != nil {
+		t.Fatalf("GET policy/view: %v", err)
+	}
+	defer view.Body.Close()
+	buf := new(bytes.Buffer)
+	_, _ = buf.ReadFrom(view.Body)
+	got := buf.String()
+	if !strings.Contains(got, `\\.env$`) || !strings.Contains(got, `^https://attacker\\.example`) {
+		t.Errorf("policy view missing path/url regexes; got %s", got)
+	}
+}
+
+func TestPolicyView_IncludesGroupedMatchSchema(t *testing.T) {
+	srv := newPolicyCRUDFixture(t)
+
+	body := map[string]string{
+		"yaml": `id: rogue.grouped
+match:
+  any_of:
+    - tool: Bash
+      any_command_regex:
+        - 'chmod\s+777'
+    - tool_prefix: mcp_
+      any_path_regex:
+        - '\.env$'
+evaluate:
+  - kind: always
+    action: deny
+`,
+	}
+	res := postPolicyJSON(t, srv.URL+"/v1/policy/gates/yaml", body)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("status=%d, want 201", res.StatusCode)
+	}
+
+	view, err := http.Get(srv.URL + "/v1/policy/view")
+	if err != nil {
+		t.Fatalf("GET policy/view: %v", err)
+	}
+	defer view.Body.Close()
+	var payload struct {
+		Gates []struct {
+			ID    string `json:"id"`
+			Match struct {
+				AnyOf []struct {
+					Tool            string   `json:"tool"`
+					ToolPrefix      string   `json:"tool_prefix"`
+					AnyCommandRegex []string `json:"any_command_regex"`
+					AnyPathRegex    []string `json:"any_path_regex"`
+				} `json:"any_of"`
+			} `json:"match"`
+		} `json:"gates"`
+	}
+	if err := json.NewDecoder(view.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode view: %v", err)
+	}
+	for _, gate := range payload.Gates {
+		if gate.ID != "rogue.grouped" {
+			continue
+		}
+		if len(gate.Match.AnyOf) != 2 {
+			t.Fatalf("any_of len=%d, want 2", len(gate.Match.AnyOf))
+		}
+		if gate.Match.AnyOf[0].Tool != "Bash" ||
+			len(gate.Match.AnyOf[0].AnyCommandRegex) != 1 ||
+			gate.Match.AnyOf[1].ToolPrefix != "mcp_" ||
+			len(gate.Match.AnyOf[1].AnyPathRegex) != 1 {
+			t.Fatalf("unexpected grouped match schema: %+v", gate.Match.AnyOf)
+		}
+		return
+	}
+	t.Fatal("policy view missing rogue.grouped")
+}
+
 func TestPolicyAddGateYAML_EmptyBody(t *testing.T) {
 	srv := newPolicyCRUDFixture(t)
 	res := postPolicyJSON(t, srv.URL+"/v1/policy/gates/yaml", map[string]string{"yaml": "   "})

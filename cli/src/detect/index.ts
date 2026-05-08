@@ -1,8 +1,10 @@
 // Detector registry. Add new harnesses here.
 
 import { claudeCode } from "./claude-code.ts";
+import { claudeDesktop } from "./claude-desktop.ts";
 import { cline } from "./cline.ts";
 import { codex } from "./codex.ts";
+import { codexDesktop } from "./codex-desktop.ts";
 import { continueDev } from "./continue-dev.ts";
 import { cursor } from "./cursor.ts";
 import { gemini } from "./gemini.ts";
@@ -15,7 +17,9 @@ import type { Detection, Detector } from "./types.ts";
 // path is left out — we don't ship dead picker rows.
 export const ALL_DETECTORS: Detector[] = [
   claudeCode,
+  claudeDesktop,
   codex,
+  codexDesktop,
   opencode,
   cursor,
   vscodeCopilot,

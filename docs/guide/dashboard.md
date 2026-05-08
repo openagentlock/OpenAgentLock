@@ -1,21 +1,41 @@
-# Local web dashboard
+# Dashboard
 
-The control plane serves a small SPA at `127.0.0.1:7879`. It is shaped like a firewall admin UI — log table on the left, rule tree on the right, live activity at the bottom.
+OpenAgentLock ships two surfaces over the same daemon endpoints:
 
-## What it does
+- **Web dashboard** — a small SPA the control plane serves at `127.0.0.1:7879`. Shaped like a firewall admin UI: log table on the left, rule tree on the right, live activity at the bottom.
+- **Terminal dashboard** — `agentlock dashboard`, an OpenTUI viewer over the daemon's JSON + SSE endpoints. Read-mostly today; edit flows still live on the web dashboard.
+
+Both read from the same ledger and policy state — pick whichever fits the moment.
+
+## What the web dashboard does
 
 - **Log table** — every tool call across every harness, with per-row source / session / verdict / signer
 - **Rule tree** — visual editor for the YAML policy with diff preview before save
 - **Live activity** — Server-Sent Events feed; new entries stream in
 - **"Block this next time"** — right-click any logged tool call to generate a starter rule from its shape, then refine
+- **False-positive repair** — open a blocked or monitor-alert event detail, report it as a false positive, validate replacement gate YAML, then atomically disable the old rule and install the replacement
 - **Mode toggle** — flip the daemon between `monitor` and `enforce` (separate from the policy file's own `mode`)
 - **MCP pin queue** — accept or reject newly seen MCP servers
 
-## Why a separate UI
+## What the terminal dashboard does
 
-The TUI on your terminal is for setup. Once installed, you should not see it during your agent loop. Approval prompts in the hot path are user-hostile; we keep them out of the agent's flow on purpose.
+```bash
+agentlock dashboard
+# --daemon <url>   override control-plane base URL (env: AGENTLOCK_CONTROL_PLANE_URL)
+# --token <token>  bearer token when AGENTLOCK_AUTH=password (env: AGENTLOCK_TOKEN)
+```
 
-The web dashboard is where you spend time *between* agent sessions: reviewing what the agent did, tightening rules, and resolving MCP pin requests.
+- **Live ledger tail** — events stream in over SSE
+- **Sessions** — open sessions with their signer tier and policy hash
+- **Loaded gates** — the gates the daemon currently evaluates
+- **Mode flip** — one keypress to toggle the daemon between `monitor` and `enforce`
+- **False-positive repair** — open event detail for a matched deny or alert row and press `f` to edit, validate, and apply a replacement gate
+
+Rule edits and the MCP pin queue still live on the web dashboard.
+
+## Why two surfaces
+
+Approval prompts in the hot path are user-hostile, so neither surface sits in the agent's flow. Both are where you spend time *between* agent sessions: reviewing what the agent did, tightening rules, and resolving MCP pin requests. The web dashboard is the full admin UI; the terminal dashboard is for when you'd rather not leave your shell.
 
 ## Access
 

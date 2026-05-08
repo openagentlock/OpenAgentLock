@@ -30,7 +30,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openagentlock/openagentlock/control-plane/internal/policy"
 	"github.com/openagentlock/openagentlock/control-plane/internal/storage"
 )
 
@@ -214,15 +213,11 @@ func cursorGateHandler(d Deps, eventName string, kind cursorDedupeKind) http.Han
 			return
 		}
 
-		evalPolicy := resolvePolicy(d, sess.PolicyHash)
+		evalPolicy, result := evaluatePolicyForSession(d, sess, in.Cwd, in.ToolName, in.ToolInput)
 		if evalPolicy == nil {
 			writeError(w, http.StatusServiceUnavailable, "policy_unavailable", "no policy loaded")
 			return
 		}
-		result := evalPolicy.Evaluate(policy.EvalRequest{
-			Tool:  in.ToolName,
-			Input: in.ToolInput,
-		})
 
 		var origVerdict, mode string
 		result, mode, origVerdict = applyDaemonModeOverride(result)
@@ -262,6 +257,7 @@ func cursorGateHandler(d Deps, eventName string, kind cursorDedupeKind) http.Han
 			Verdict:      origVerdict,
 			MonitorMatch: monitorMatch,
 			MatcherInput: ledgerMatcherInput(in.ToolInput),
+			PolicyTrace:  storagePolicyTrace(result.Trace),
 			PayloadHash:  payloadHash[:],
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "ledger_error", err.Error())
@@ -500,18 +496,13 @@ func cursorBeforeShellHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		evalPolicy := resolvePolicy(d, sess.PolicyHash)
+		evalPolicy, result := evaluatePolicyForSession(d, sess, in.Cwd, "Shell", map[string]any{"command": in.Command})
 		if evalPolicy == nil {
 			// No policy → can't evaluate, fail-open. preToolUse already
 			// landed (or also failed-open), so this is a safe default.
 			writeJSON(w, http.StatusOK, map[string]any{"continue": true})
 			return
 		}
-
-		result := evalPolicy.Evaluate(policy.EvalRequest{
-			Tool:  "Shell",
-			Input: map[string]any{"command": in.Command},
-		})
 
 		result, _, _ = applyDaemonModeOverride(result)
 

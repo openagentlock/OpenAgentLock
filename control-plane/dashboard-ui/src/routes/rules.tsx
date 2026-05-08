@@ -5,7 +5,7 @@ import { ModeToggle } from "@/components/ModeToggle";
 import { RuleEditDrawer } from "@/components/RuleEditDrawer";
 import { useModeInfo, usePolicyView } from "@/hooks/usePoll";
 import { apiSend } from "@/lib/api";
-import type { GateView } from "@/lib/types";
+import type { GateView, MatchView } from "@/lib/types";
 
 function RulesTab() {
   const { policy, error, refresh } = usePolicyView(true);
@@ -84,6 +84,7 @@ function RulesTab() {
                   <th style={{ width: 48 }}>on</th>
                   <th>id</th>
                   <th>mode</th>
+                  <th>source</th>
                   <th>tool</th>
                   <th>match</th>
                   <th style={{ width: 96 }}>actions</th>
@@ -110,16 +111,10 @@ function RulesTab() {
                       <td>
                         <span className="oal-chip">{g.mode || "inherit"}</span>
                       </td>
-                      <td className="font-mono">{g.tool || g.tool_prefix || "—"}</td>
+                      <td className="font-mono text-muted text-[11px]">{g.source || "daemon"}</td>
+                      <td className="font-mono">{toolSummary(g)}</td>
                       <td className="font-mono text-muted text-[11px]">
-                        {g.any_command_regex && g.any_command_regex.length > 0
-                          ? g.any_command_regex.slice(0, 2).join(" | ") +
-                            (g.any_command_regex.length > 2
-                              ? ` +${g.any_command_regex.length - 2}`
-                              : "")
-                          : Array.isArray(g.evaluators) && g.evaluators.length > 0
-                            ? g.evaluators.join(", ")
-                            : "—"}
+                        {matchSummary(g)}
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <button
@@ -134,7 +129,7 @@ function RulesTab() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="text-center text-muted py-4">
+                    <td colSpan={7} className="text-center text-muted py-4">
                       no rules
                     </td>
                   </tr>
@@ -180,3 +175,31 @@ function RulesTab() {
 export const Route = createFileRoute("/rules")({
   component: RulesTab,
 });
+
+function toolSummary(gate: GateView): string {
+  const match = gate.match;
+  if (match?.any_of && match.any_of.length > 0) {
+    const tools = match.any_of
+      .map((sub) => sub.tool ?? sub.tool_prefix)
+      .filter((value): value is string => !!value);
+    return tools.length > 0 ? tools.join(" | ") : "any_of";
+  }
+  return match?.tool ?? match?.tool_prefix ?? gate.tool ?? gate.tool_prefix ?? "—";
+}
+
+function matchSummary(gate: GateView): string {
+  const regexes = commandRegexes(gate.match);
+  if (regexes.length === 0) regexes.push(...(gate.any_command_regex ?? []));
+  if (regexes.length > 0) {
+    return regexes.slice(0, 2).join(" | ") + (regexes.length > 2 ? ` +${regexes.length - 2}` : "");
+  }
+  return Array.isArray(gate.evaluators) && gate.evaluators.length > 0 ? gate.evaluators.join(", ") : "—";
+}
+
+function commandRegexes(match: MatchView | undefined): string[] {
+  if (!match) return [];
+  return [
+    ...(match.any_command_regex ?? []),
+    ...((match.any_of ?? []).flatMap((sub) => commandRegexes(sub))),
+  ];
+}

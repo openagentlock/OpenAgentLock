@@ -59,11 +59,14 @@ RUN install -d -m 0700 -o 65532 -g 65532 /out/agentlock-home
 FROM gcr.io/distroless/cc-debian12 AS runtime
 COPY --from=go-builder /out/control-plane /usr/local/bin/agentlockd
 COPY --from=go-builder --chown=65532:65532 /out/agentlock-home /var/lib/agentlock
-# No bundled policy file — daemon falls back to the built-in
-# minimal monitor-mode policy in main.go (single rogue.destructive-bash
-# gate). Operators install community rules via `agentlock rules sync`
-# + `agentlock rules install <id>`. To pin a custom file, mount it
-# and set AGENTLOCK_POLICY=/path/to/policy.yaml.
+# No external policy file — daemon falls back to the baseline policy
+# embedded into the binary at build time
+# (control-plane/internal/policy/baseline.yaml): thirteen enforce-mode
+# gates spanning destructive shell, supply-chain RCE, secret/credential
+# reads, defence-evasion, destructive infra, and system/auth/shell-rc/
+# cron persistence. Operators layer extras via `agentlock rules sync`
+# + `agentlock rules install <id>`. To pin a custom file, mount it and
+# set AGENTLOCK_POLICY=/path/to/policy.yaml.
 ENV AGENTLOCK_LISTEN=0.0.0.0:7878
 ENV AGENTLOCK_DASHBOARD_LISTEN=0.0.0.0:7879
 ENV AGENTLOCK_HOME=/var/lib/agentlock

@@ -15,16 +15,24 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { runDashboard } from "./commands/dashboard.ts";
 import { runDetect } from "./commands/detect.ts";
+import { runDoctor } from "./commands/doctor.ts";
 import { runInstall } from "./commands/install.ts";
 import { runLogin } from "./commands/login.ts";
 import { runStatus } from "./commands/status.ts";
 import { runSessionCreate, runSessionEnd, runSessionRotate } from "./commands/session.ts";
 import { runFakeHook } from "./commands/fake-hook.ts";
+import {
+  runFalsePositiveApply,
+  runFalsePositiveCreate,
+  runFalsePositiveRulesPatch,
+} from "./commands/false-positive.ts";
 import { runHookClaudeCode } from "./commands/hook-claude-code.ts";
 import { runHookCodex } from "./commands/hook-codex.ts";
 import { runHookCursor } from "./commands/hook-cursor.ts";
 import { runHookGemini } from "./commands/hook-gemini.ts";
 import { runLedgerRoot, runLedgerVerify } from "./commands/ledger.ts";
+import { runMcpProxy } from "./commands/mcp-proxy.ts";
+import { runMcpServer } from "./commands/mcp-server.ts";
 import { runSignerEnroll } from "./commands/signer-enroll.ts";
 import {
   runRulesAdd,
@@ -153,6 +161,18 @@ program
     await runStatus({ url: opts.url, json: opts.json });
   });
 
+program
+  .command("doctor")
+  .description("Run read-only diagnostics for the CLI, daemon, ledger, policy, sessions, and installed harness hooks.")
+  .option(
+    "--url <url>",
+    "Override the control-plane base URL (env: AGENTLOCK_CONTROL_PLANE_URL).",
+  )
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (opts: { url?: string; json: boolean }) => {
+    await runDoctor({ url: opts.url, json: opts.json, version: PKG_VERSION });
+  });
+
 const session = program
   .command("session")
   .description("Session management.");
@@ -163,6 +183,8 @@ session
   .option("--tier <tier>", "Signer tier (software | totp).", "software")
   .option("--url <url>", "Control-plane base URL.")
   .option("--policy-hash <hash>", "Policy hash to bind into the attestation.")
+  .option("--user-id <id>", "User identity used for group-policy overlays.")
+  .option("--group <name...>", "Group memberships used for group-policy overlays.")
   .option("--code <6-digit>", "TOTP code (required for --tier totp).")
   .option("--passphrase <pp>", "TOTP passphrase (required for --tier totp).")
   .option("--json", "Emit JSON instead of human output.", false)
@@ -171,6 +193,8 @@ session
       tier: string;
       url?: string;
       policyHash?: string;
+      userId?: string;
+      group?: string[];
       code?: string;
       passphrase?: string;
       json: boolean;
@@ -197,6 +221,8 @@ session
         url: opts.url,
         json: opts.json,
         policyHash: opts.policyHash,
+        userId: opts.userId,
+        groups: opts.group,
         code: opts.code,
         passphrase: opts.passphrase,
       });
@@ -220,6 +246,8 @@ session
   .option("--tier <tier>", "Signer tier (software | totp).", "software")
   .option("--url <url>", "Control-plane base URL.")
   .option("--policy-hash <hash>", "Policy hash to bind into the rotated attestation.")
+  .option("--user-id <id>", "User identity used for group-policy overlays.")
+  .option("--group <name...>", "Group memberships used for group-policy overlays.")
   .option("--code <6-digit>", "TOTP code (required for --tier totp).")
   .option("--passphrase <pp>", "TOTP passphrase (required for --tier totp).")
   .option("--json", "Emit JSON instead of human output.", false)
@@ -229,6 +257,8 @@ session
       tier: string;
       url?: string;
       policyHash?: string;
+      userId?: string;
+      group?: string[];
       code?: string;
       passphrase?: string;
       json: boolean;
@@ -252,6 +282,8 @@ session
         url: opts.url,
         json: opts.json,
         policyHash: opts.policyHash,
+        userId: opts.userId,
+        groups: opts.group,
         code: opts.code,
         passphrase: opts.passphrase,
       });
@@ -362,6 +394,7 @@ program
   .requiredOption("--tool <name>", "Tool name (Bash, Read, Write, mcp__X__Y).")
   .option("--command <cmd>", "Bash command (shorthand for --input.command).")
   .option("--file-path <path>", "File path (shorthand for --input.file_path).")
+  .option("--cwd <path>", "Working directory for scoped policy resolution.")
   .option("--input <json>", "Raw tool input as JSON.")
   .option("--url <url>", "Control-plane base URL.")
   .option("--json", "Emit JSON instead of human output.", false)
@@ -372,6 +405,7 @@ program
       tool: string;
       command?: string;
       filePath?: string;
+      cwd?: string;
       input?: string;
       url?: string;
       json: boolean;
@@ -382,6 +416,7 @@ program
         tool: opts.tool,
         command: opts.command,
         filePath: opts.filePath,
+        cwd: opts.cwd,
         inputJson: opts.input,
         url: opts.url,
         json: opts.json,
@@ -461,10 +496,11 @@ rules
     "Install a rule into the local policy. Accepts a bare id or 'registryId:ruleId' to disambiguate.",
   )
   .option("--replace", "Overwrite an existing gate with the same id.")
+  .option("--repo", "Write the rule into the current repo's .agentlock.yaml instead of daemon policy.")
   .option("--url <url>", "Control-plane base URL.")
   .option("--json", "Emit JSON instead of human output.", false)
-  .action(async (ruleId: string, opts: { replace?: boolean; url?: string; json: boolean }) => {
-    await runRulesInstall({ spec: ruleId, replace: opts.replace, url: opts.url, json: opts.json });
+  .action(async (ruleId: string, opts: { replace?: boolean; repo?: boolean; url?: string; json: boolean }) => {
+    await runRulesInstall({ spec: ruleId, replace: opts.replace, repo: opts.repo, url: opts.url, json: opts.json });
   });
 
 rules
@@ -484,6 +520,73 @@ rules
     await runRulesRemove({ id: registryId, json: opts.json });
   });
 
+const falsePositive = program
+  .command("false-positive [seq]")
+  .description("Create, validate, and apply a local replacement for a false-positive policy match.")
+  .option("--url <url>", "Control-plane base URL.")
+  .option("--out <dir>", "Output directory for `agentlock false-positive <seq>`.")
+  .option("--include-raw", "Include raw event input in case.json. Redacted only by default.", false)
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (seq: string | undefined, opts: { url?: string; out?: string; includeRaw?: boolean; json: boolean }) => {
+    if (seq === undefined) {
+      falsePositive.help();
+      return;
+    }
+    await runFalsePositiveCreate({
+      seq: Number(seq),
+      url: opts.url,
+      out: opts.out,
+      includeRaw: opts.includeRaw,
+      json: opts.json,
+    });
+  });
+
+falsePositive
+  .command("case <seq>")
+  .alias("create")
+  .description("Export a redacted false-positive case bundle for a matched ledger event.")
+  .option("--url <url>", "Control-plane base URL.")
+  .option("--out <dir>", "Output directory. Defaults to ./agentlock-false-positive-<seq>.")
+  .option("--include-raw", "Include raw event input in case.json. Redacted only by default.", false)
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (seq: string, opts: { url?: string; out?: string; includeRaw?: boolean; json: boolean }) => {
+    await runFalsePositiveCreate({
+      seq: Number(seq),
+      url: opts.url,
+      out: opts.out,
+      includeRaw: opts.includeRaw,
+      json: opts.json,
+    });
+  });
+
+falsePositive
+  .command("apply <case-dir>")
+  .description("Validate replacement.yaml and atomically disable the old rule plus install the replacement.")
+  .option("--url <url>", "Control-plane base URL.")
+  .option("--note <text>", "Human-readable note written to disabled rule metadata.")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (caseDir: string, opts: { url?: string; note?: string; json: boolean }) => {
+    await runFalsePositiveApply({
+      caseDir,
+      url: opts.url,
+      note: opts.note,
+      json: opts.json,
+    });
+  });
+
+falsePositive
+  .command("rules-patch <case-dir>")
+  .description("Write a ready-to-edit openagentlock/rules patch draft from a case bundle.")
+  .requiredOption("--rules-repo <path>", "Path to an openagentlock/rules checkout.")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (caseDir: string, opts: { rulesRepo: string; json: boolean }) => {
+    await runFalsePositiveRulesPatch({
+      caseDir,
+      rulesRepo: opts.rulesRepo,
+      json: opts.json,
+    });
+  });
+
 // `agentlock hook <harness> <event>` — shim spawned by command-hook
 // harnesses (Codex, Cursor). Reads stdin JSON, POSTs to the daemon,
 // translates the response into the harness-specific output shape.
@@ -499,6 +602,28 @@ const hookCodex = hook
   });
 // commander binds the positional event above; nothing else to wire.
 void hookCodex;
+
+const hookCodexDesktop = hook
+  .command("codex-desktop <event>")
+  .description(
+    "Codex Desktop shim. Reads stdin hook payload, forwards to /v1/hooks/codex-desktop/<event>, maps allow/deny → exit 0/2.",
+  )
+  .allowUnknownOption()
+  .action(async (event: string) => {
+    await runHookCodex([event], "codex-desktop");
+  });
+void hookCodexDesktop;
+
+const hookCodexAuto = hook
+  .command("codex-auto <event>")
+  .description(
+    "Shared Codex shim. Routes Desktop-originated hooks to codex-desktop and CLI hooks to codex.",
+  )
+  .allowUnknownOption()
+  .action(async (event: string) => {
+    await runHookCodex([event], "codex-auto");
+  });
+void hookCodexAuto;
 
 const hookCursor = hook
   .command("cursor <event>")
@@ -532,5 +657,42 @@ const hookClaudeCode = hook
     await runHookClaudeCode([event]);
   });
 void hookClaudeCode;
+
+// `agentlock mcp-server` — MCP stdio server spawned by Claude Desktop.
+// Claude Desktop has no PreToolUse/PostToolUse surface, so this is the
+// only honest install: register agentlock as an MCP server, expose
+// read-only observability tools (status, recent ledger entries) backed
+// by the daemon. No enforcement on Desktop's built-in tools.
+program
+  .command("mcp-server")
+  .description(
+    "Run the OpenAgentLock MCP stdio server. Spawned by Claude Desktop after `agentlock install` registers it under mcpServers. Exposes read-only status + ledger query tools.",
+  )
+  .action(async () => {
+    await runMcpServer();
+  });
+
+// `agentlock mcp-proxy --name <id> -- <child-cmd> [args...]`
+//
+// Stdio bridge spawned by Claude Desktop in place of each user-installed
+// MCP server (`agentlock install` rewrites their claude_desktop_config.json
+// to point here, preserving the original command under _agentlock_original).
+// Pumps bytes both directions verbatim except for tools/call requests,
+// which it forwards to /v1/hooks/claude-desktop/pre-tool-use for policy
+// evaluation. allowUnknownOption + helpOption(false) keeps commander from
+// gobbling the child's flags before we see the `--` separator.
+program
+  .command("mcp-proxy")
+  .description(
+    "Stdio proxy for Claude Desktop's MCP servers. Intercepts tools/call, applies policy via the daemon, forwards or denies. Spawned by Claude Desktop after `agentlock install` wraps each user MCP server.",
+  )
+  .allowUnknownOption()
+  .helpOption(false)
+  .action(async () => {
+    // Slice off "node|bun, scriptPath, mcp-proxy" — the rest are our args.
+    const ix = process.argv.indexOf("mcp-proxy");
+    const rest = ix >= 0 ? process.argv.slice(ix + 1) : [];
+    await runMcpProxy(rest);
+  });
 
 await program.parseAsync(process.argv);

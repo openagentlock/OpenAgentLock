@@ -6,7 +6,7 @@
 
 import { promises as fs } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 
 import type { InstallFileOp, InstallUninstallOp } from "./api.ts";
 
@@ -30,13 +30,79 @@ export function checkSafeTarget(
   const allowed = [".claude", ".codex", ".cursor", ".gemini"].map((d) =>
     resolve(home, d),
   );
+  // Claude Desktop's config lives outside the dotfile convention. Add
+  // its real path so prod installs that target it pass the safety check
+  // without forcing --config-dir bypass on every run.
+  if (platform() === "darwin") {
+    allowed.push(resolve(home, "Library", "Application Support", "Claude"));
+  } else if (platform() === "win32") {
+    const appdata = process.env.APPDATA;
+    if (appdata) allowed.push(resolve(appdata, "Claude"));
+    allowed.push(resolve(home, "AppData", "Roaming", "Claude"));
+  } else {
+    // Linux: no official Claude Desktop release. We still allow the
+    // XDG conventional path so users running a community port don't
+    // hit this gate; the daemon won't actually plan a write there
+    // unless the detector found the dir.
+    allowed.push(resolve(home, ".config", "Claude"));
+  }
   const target = resolve(absPath);
   for (const root of allowed) {
     if (target === root || target.startsWith(root + sep)) return;
   }
   throw new Error(
-    `unsafe target: ${absPath} does not resolve under ~/.claude, ~/.codex, ~/.cursor, or ~/.gemini`,
+    `unsafe target: ${absPath} does not resolve under ~/.claude, ~/.codex, ~/.cursor, ~/.gemini, or the Claude Desktop config dir`,
   );
+}
+
+// listJsonFiles returns the absolute path of every *.json file
+// directly under `dir`. Returns an empty array if `dir` doesn't exist
+// or isn't a directory — matches readExistingFiles's "missing is
+// fine" posture so callers can chain them safely.
+export async function listJsonFiles(dir: string): Promise<string[]> {
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err: unknown) {
+    const code = (err as { code?: string }).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw err;
+  }
+  const out: string[] = [];
+  for (const e of entries) {
+    if (!e.isFile()) continue;
+    if (!e.name.endsWith(".json")) continue;
+    out.push(resolve(dir, e.name));
+  }
+  return out;
+}
+
+// listExtensionBundleManifests scans the "Claude Extensions" dir for
+// each <ext-id>/manifest.json — the on-disk bundle manifest Claude
+// Desktop launches from. Returns absolute paths. Missing dir is fine.
+export async function listExtensionBundleManifests(
+  bundlesDir: string,
+): Promise<string[]> {
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(bundlesDir, { withFileTypes: true });
+  } catch (err: unknown) {
+    const code = (err as { code?: string }).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw err;
+  }
+  const out: string[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const manifestPath = resolve(bundlesDir, e.name, "manifest.json");
+    try {
+      const stat = await fs.stat(manifestPath);
+      if (stat.isFile()) out.push(manifestPath);
+    } catch {
+      // No manifest.json in this bundle dir — skip silently.
+    }
+  }
+  return out;
 }
 
 // readExistingFiles loads utf8 contents for each absolute path that

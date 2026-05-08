@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { appSupport, home, isMac } from "../util/paths.ts";
-import { devStubStateForHarness } from "./agentlock-state.ts";
+import { cursorAgentlockState } from "./agentlock-state.ts";
 import type { Detector, Detection, DetectedScope } from "./types.ts";
 
 function editorUserDir(): string {
@@ -31,7 +31,7 @@ export const cursor: Detector = {
       { kind: "global", path: globalMcp, exists: existsSync(globalMcp) },
     ];
 
-    const al = devStubStateForHarness(this.id);
+    const al = cursorAgentlockState(globalHooks);
 
     return {
       id: this.id,
