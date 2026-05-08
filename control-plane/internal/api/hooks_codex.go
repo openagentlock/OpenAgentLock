@@ -35,8 +35,16 @@ type codexPreToolInput struct {
 }
 
 func codexPreToolUseHandler(d Deps) http.HandlerFunc {
+	return codexPreToolUseHandlerFor(d, "codex")
+}
+
+func codexDesktopPreToolUseHandler(d Deps) http.HandlerFunc {
+	return codexPreToolUseHandlerFor(d, "codex-desktop")
+}
+
+func codexPreToolUseHandlerFor(d Deps, source string) http.HandlerFunc {
 	if d.Store == nil {
-		return todo("hooks.codex.pre-tool-use")
+		return todo("hooks." + source + ".pre-tool-use")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in codexPreToolInput
@@ -50,7 +58,7 @@ func codexPreToolUseHandler(d Deps) http.HandlerFunc {
 		}
 		in.ToolInput = normalizeMCPHTTPURLInput(in.ToolName, in.ToolInput)
 
-		sess, err := ensureCodexSession(r, d, in.SessionID)
+		sess, err := ensureCodexSession(r, d, in.SessionID, source)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "session_error", err.Error())
 			return
@@ -68,12 +76,12 @@ func codexPreToolUseHandler(d Deps) http.HandlerFunc {
 
 		toolUseID := in.ToolUseID
 		if toolUseID == "" {
-			toolUseID = "codex.pre-tool-use"
+			toolUseID = source + ".pre-tool-use"
 		}
 
 		payloadBytes, err := json.Marshal(map[string]any{
 			"session_id":    in.SessionID,
-			"source":        "codex",
+			"source":        source,
 			"tool":          in.ToolName,
 			"input":         in.ToolInput,
 			"turn_id":       in.TurnID,
@@ -90,7 +98,7 @@ func codexPreToolUseHandler(d Deps) http.HandlerFunc {
 		payloadHash := sha256.Sum256(payloadBytes)
 		if _, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
 			TS:           time.Now().UTC(),
-			Source:       "codex",
+			Source:       source,
 			Tool:         in.ToolName,
 			ToolUseID:    toolUseID,
 			Signer:       sess.Signer,
@@ -140,8 +148,16 @@ type codexPostToolInput struct {
 }
 
 func codexPostToolUseHandler(d Deps) http.HandlerFunc {
+	return codexPostToolUseHandlerFor(d, "codex")
+}
+
+func codexDesktopPostToolUseHandler(d Deps) http.HandlerFunc {
+	return codexPostToolUseHandlerFor(d, "codex-desktop")
+}
+
+func codexPostToolUseHandlerFor(d Deps, source string) http.HandlerFunc {
 	if d.Store == nil {
-		return todo("hooks.codex.post-tool-use")
+		return todo("hooks." + source + ".post-tool-use")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in codexPostToolInput
@@ -154,9 +170,9 @@ func codexPostToolUseHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		sess, err := ensureCodexSession(r, d, in.SessionID)
+		sess, err := ensureCodexSession(r, d, in.SessionID, source)
 		if err != nil {
-			log.Printf("codex post-tool-use: ensureCodexSession: %v", err)
+			log.Printf("%s post-tool-use: ensureCodexSession: %v", source, err)
 			writeError(w, http.StatusInternalServerError, "session_error", "session create failed")
 			return
 		}
@@ -165,7 +181,7 @@ func codexPostToolUseHandler(d Deps) http.HandlerFunc {
 
 		toolUseID := in.ToolUseID
 		if toolUseID == "" {
-			toolUseID = "codex.post-tool-use"
+			toolUseID = source + ".post-tool-use"
 		}
 		verdict := "complete"
 		if !success {
@@ -174,7 +190,7 @@ func codexPostToolUseHandler(d Deps) http.HandlerFunc {
 
 		payloadBytes, err := json.Marshal(map[string]any{
 			"session_id":    in.SessionID,
-			"source":        "codex",
+			"source":        source,
 			"tool":          in.ToolName,
 			"tool_use_id":   toolUseID,
 			"turn_id":       in.TurnID,
@@ -189,7 +205,7 @@ func codexPostToolUseHandler(d Deps) http.HandlerFunc {
 		payloadHash := sha256.Sum256(payloadBytes)
 		if _, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
 			TS:          time.Now().UTC(),
-			Source:      "codex",
+			Source:      source,
 			ToolUseID:   toolUseID,
 			Tool:        in.ToolName,
 			Signer:      sess.Signer,
@@ -214,8 +230,16 @@ type codexSessionStartInput struct {
 }
 
 func codexSessionStartHandler(d Deps) http.HandlerFunc {
+	return codexSessionStartHandlerFor(d, "codex")
+}
+
+func codexDesktopSessionStartHandler(d Deps) http.HandlerFunc {
+	return codexSessionStartHandlerFor(d, "codex-desktop")
+}
+
+func codexSessionStartHandlerFor(d Deps, source string) http.HandlerFunc {
 	if d.Store == nil {
-		return todo("hooks.codex.session-start")
+		return todo("hooks." + source + ".session-start")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in codexSessionStartInput
@@ -228,16 +252,16 @@ func codexSessionStartHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		sess, err := ensureCodexSession(r, d, in.SessionID)
+		sess, err := ensureCodexSession(r, d, in.SessionID, source)
 		if err != nil {
-			log.Printf("codex session-start: ensureCodexSession: %v", err)
+			log.Printf("%s session-start: ensureCodexSession: %v", source, err)
 			writeError(w, http.StatusInternalServerError, "session_error", "session create failed")
 			return
 		}
 
 		payloadBytes, err := json.Marshal(map[string]any{
 			"session_id":      in.SessionID,
-			"source":          "codex",
+			"source":          source,
 			"cwd":             in.Cwd,
 			"transcript_path": in.TranscriptPath,
 			"model":           in.Model,
@@ -250,8 +274,8 @@ func codexSessionStartHandler(d Deps) http.HandlerFunc {
 		payloadHash := sha256.Sum256(payloadBytes)
 		if _, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
 			TS:          time.Now().UTC(),
-			Source:      "codex",
-			ToolUseID:   "codex.session-start",
+			Source:      source,
+			ToolUseID:   source + ".session-start",
 			Signer:      sess.Signer,
 			PayloadHash: payloadHash[:],
 		}); err != nil {
@@ -270,8 +294,16 @@ type codexStopInput struct {
 }
 
 func codexStopHandler(d Deps) http.HandlerFunc {
+	return codexStopHandlerFor(d, "codex")
+}
+
+func codexDesktopStopHandler(d Deps) http.HandlerFunc {
+	return codexStopHandlerFor(d, "codex-desktop")
+}
+
+func codexStopHandlerFor(d Deps, source string) http.HandlerFunc {
 	if d.Store == nil {
-		return todo("hooks.codex.stop")
+		return todo("hooks." + source + ".stop")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in codexStopInput
@@ -285,14 +317,14 @@ func codexStopHandler(d Deps) http.HandlerFunc {
 		}
 		if _, err := d.Store.GetSession(r.Context(), in.SessionID); err == nil {
 			if err := d.Store.EndSession(r.Context(), in.SessionID); err != nil && !errors.Is(err, storage.ErrSessionEnded) {
-				log.Printf("codex stop: EndSession: %v", err)
+				log.Printf("%s stop: EndSession: %v", source, err)
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"continue": true})
 	}
 }
 
-func ensureCodexSession(r *http.Request, d Deps, id string) (storage.Session, error) {
+func ensureCodexSession(r *http.Request, d Deps, id, source string) (storage.Session, error) {
 	sess, err := d.Store.GetSession(r.Context(), id)
 	if err == nil {
 		return sess, nil
@@ -314,7 +346,7 @@ func ensureCodexSession(r *http.Request, d Deps, id string) (storage.Session, er
 		SessionPubKey: "none",
 		Signer:        "none",
 		SignerPubKey:  "none",
-		Harness:       "codex",
+		Harness:       source,
 	}
 	if err := d.Store.CreateSession(r.Context(), newSess); err != nil {
 		if errors.Is(err, storage.ErrSessionExists) {
@@ -325,13 +357,13 @@ func ensureCodexSession(r *http.Request, d Deps, id string) (storage.Session, er
 	payloadBytes, _ := json.Marshal(map[string]any{
 		"session_id": id,
 		"signer":     "none",
-		"source":     "codex",
+		"source":     source,
 		"reason":     "auto-created on first hook traffic",
 	})
 	payloadHash := sha256.Sum256(payloadBytes)
 	if _, err := d.Store.AppendLedger(r.Context(), storage.AppendInput{
 		TS:          now,
-		Source:      "codex",
+		Source:      source,
 		ToolUseID:   "session.auto-create",
 		Signer:      "none",
 		PayloadHash: payloadHash[:],

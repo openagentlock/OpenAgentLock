@@ -7,7 +7,7 @@
 // shape.
 //
 // Differences from the Codex installer:
-//   * No enabling flag (Codex needed `codex_hooks = true` in
+//   * No enabling flag (Codex needed `[features].hooks = true` in
 //     config.toml). Gemini hooks activate as soon as the settings.json
 //     entry exists.
 //   * Settings file is shared with the rest of Gemini's config (model

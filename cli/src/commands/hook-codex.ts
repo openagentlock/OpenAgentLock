@@ -34,6 +34,18 @@ const ALLOWED_EVENTS = new Set([
   "stop",
 ]);
 
+const ALLOWED_HARNESSES = new Set(["codex", "codex-desktop", "codex-auto"]);
+
+function resolveCodexHookHarness(hookHarness: string): string {
+  if (hookHarness !== "codex-auto") return hookHarness;
+  const bundleID = process.env.__CFBundleIdentifier ?? "";
+  const xpcService = process.env.XPC_SERVICE_NAME ?? "";
+  if (bundleID === "com.openai.codex" || xpcService.includes("com.openai.codex")) {
+    return "codex-desktop";
+  }
+  return "codex";
+}
+
 interface CodexHookSpecifics {
   hookEventName?: string;
   permissionDecision?: "allow" | "deny";
@@ -62,11 +74,15 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-export async function runHookCodex(argv: string[]): Promise<void> {
+export async function runHookCodex(argv: string[], hookHarness = "codex"): Promise<void> {
+  if (!ALLOWED_HARNESSES.has(hookHarness)) {
+    process.stderr.write(`unsupported codex hook harness: ${hookHarness}\n`);
+    process.exit(2);
+  }
   const event = argv[0];
   if (!event || !ALLOWED_EVENTS.has(event)) {
     process.stderr.write(
-      `usage: agentlock hook codex <session-start|pre-tool-use|post-tool-use|stop>\n`,
+      `usage: agentlock hook ${hookHarness} <session-start|pre-tool-use|post-tool-use|stop>\n`,
     );
     process.exit(2);
   }
@@ -81,13 +97,16 @@ export async function runHookCodex(argv: string[]): Promise<void> {
     JSON.parse(raw);
   } catch (e) {
     process.stderr.write(
-      `agentlock hook codex ${event}: invalid JSON on stdin: ${(e as Error).message}\n`,
+      `agentlock hook ${hookHarness} ${event}: invalid JSON on stdin: ${(e as Error).message}\n`,
     );
     // Fail-open: invalid payload is the harness's bug, not policy.
     process.exit(0);
   }
 
-  const url = defaultDaemonUrl().replace(/\/+$/, "") + `/v1/hooks/codex/${event}`;
+  const routeHarness = resolveCodexHookHarness(hookHarness);
+  const url =
+    defaultDaemonUrl().replace(/\/+$/, "") +
+    `/v1/hooks/${encodeURIComponent(routeHarness)}/${encodeURIComponent(event)}`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -105,7 +124,7 @@ export async function runHookCodex(argv: string[]): Promise<void> {
 
   if (!res.ok) {
     process.stderr.write(
-      `agentlock hook codex ${event}: daemon returned ${res.status}\n`,
+      `agentlock hook ${hookHarness} ${event}: daemon returned ${res.status}\n`,
     );
     process.exit(0); // fail-open
   }
@@ -115,7 +134,7 @@ export async function runHookCodex(argv: string[]): Promise<void> {
     parsed = (await res.json()) as DaemonResponse;
   } catch (e) {
     process.stderr.write(
-      `agentlock hook codex ${event}: malformed daemon response: ${(e as Error).message}\n`,
+      `agentlock hook ${hookHarness} ${event}: malformed daemon response: ${(e as Error).message}\n`,
     );
     process.exit(0);
   }

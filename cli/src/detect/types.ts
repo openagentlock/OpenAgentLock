@@ -4,6 +4,7 @@
 export type HarnessId =
   | "claude-code"
   | "codex"
+  | "codex-desktop"
   | "opencode"
   | "cursor"
   | "cline"

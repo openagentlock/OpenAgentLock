@@ -7,10 +7,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { claudeCode } from "../src/detect/claude-code.ts";
 import { codex } from "../src/detect/codex.ts";
+import { codexDesktop } from "../src/detect/codex-desktop.ts";
 import { continueDev } from "../src/detect/continue-dev.ts";
 import { cursor } from "../src/detect/cursor.ts";
 import { gemini } from "../src/detect/gemini.ts";
@@ -21,13 +22,19 @@ import { vscodeUserDir } from "../src/util/paths.ts";
 let tmpHome: string;
 let originalHome: string | undefined;
 let originalXdg: string | undefined;
+let originalCodexDesktopPaths: string | undefined;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), "agentlock-test-"));
   originalHome = process.env.HOME;
   originalXdg = process.env.XDG_CONFIG_HOME;
+  originalCodexDesktopPaths = process.env.AGENTLOCK_CODEX_DESKTOP_PATHS;
   process.env.HOME = tmpHome;
   process.env.XDG_CONFIG_HOME = join(tmpHome, ".config");
+  process.env.AGENTLOCK_CODEX_DESKTOP_PATHS = [
+    join(tmpHome, "Applications", "Codex.app"),
+    join(tmpHome, "Library", "Application Support", "Codex"),
+  ].join(delimiter);
   mkdirSync(process.env.XDG_CONFIG_HOME, { recursive: true });
 });
 
@@ -36,6 +43,11 @@ afterEach(() => {
   else delete process.env.HOME;
   if (originalXdg !== undefined) process.env.XDG_CONFIG_HOME = originalXdg;
   else delete process.env.XDG_CONFIG_HOME;
+  if (originalCodexDesktopPaths !== undefined) {
+    process.env.AGENTLOCK_CODEX_DESKTOP_PATHS = originalCodexDesktopPaths;
+  } else {
+    delete process.env.AGENTLOCK_CODEX_DESKTOP_PATHS;
+  }
   rmSync(tmpHome, { recursive: true, force: true });
 });
 
@@ -48,6 +60,7 @@ describe("contract — every detector returns a well-formed Detection", () => {
   const detectors = [
     claudeCode,
     codex,
+    codexDesktop,
     opencode,
     cursor,
     continueDev,
@@ -86,6 +99,21 @@ describe("absent — installed=false on a clean home", () => {
     expect(r.installed).toBe(false);
   });
 
+  test("codex-desktop", async () => {
+    const r = await codexDesktop.detect();
+    expect(r.installed).toBe(false);
+  });
+
+  test("codex-desktop ignores shared ~/.codex files without Desktop app evidence", async () => {
+    mkdirSync(join(tmpHome, ".codex"), { recursive: true });
+    writeFileSync(join(tmpHome, ".codex", "config.toml"), "[features]\nhooks = true\n");
+    writeFileSync(join(tmpHome, ".codex", "hooks.json"), "{}\n");
+    const r = await codexDesktop.detect();
+    expect(r.installed).toBe(false);
+    expect(r.evidence.some((e) => e.includes(".codex/config.toml"))).toBe(true);
+    expect(r.evidence.some((e) => e.includes(".codex/hooks.json"))).toBe(true);
+  });
+
   test("opencode", async () => {
     const r = await opencode.detect();
     expect(r.installed).toBe(false);
@@ -121,6 +149,44 @@ describe("present — installed=true when expected files seeded", () => {
     const r = await codex.detect();
     expect(r.installed).toBe(true);
     expect(r.scopes[0]?.exists).toBe(true);
+  });
+
+  test("codex ignores legacy codex_hooks inside a TOML section", async () => {
+    touch(
+      join(tmpHome, ".codex", "config.toml"),
+      "[tui.model_availability_nux]\ncodex_hooks = true\n",
+    );
+    const r = await codex.detect();
+    expect(r.installed).toBe(true);
+    expect(
+      r.evidence.some((e) => e.includes("[features].hooks not set")),
+    ).toBe(true);
+  });
+
+  test("codex recognizes [features] with an inline comment", async () => {
+    touch(
+      join(tmpHome, ".codex", "config.toml"),
+      "[features] # Codex feature flags\nhooks = true\n",
+    );
+    const r = await codex.detect();
+    expect(r.installed).toBe(true);
+    expect(
+      r.evidence.some((e) => e.includes("[features].hooks = true")),
+    ).toBe(true);
+  });
+
+  test("codex-desktop with macOS app support directory", async () => {
+    mkdirSync(join(tmpHome, "Library", "Application Support", "Codex"), {
+      recursive: true,
+    });
+    const r = await codexDesktop.detect();
+    expect(r.id).toBe("codex-desktop");
+    expect(r.installed).toBe(true);
+    expect(r.evidence.some((e) => e.includes("Application Support/Codex"))).toBe(
+      true,
+    );
+    expect(r.scopes[0]?.path).toContain(".codex/config.toml");
+    expect(r.scopes[0]?.exists).toBe(false);
   });
 
   test("opencode at xdg path", async () => {

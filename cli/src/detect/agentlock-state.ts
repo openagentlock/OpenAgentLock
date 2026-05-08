@@ -73,6 +73,52 @@ export function claudeAgentlockState(settingsPath: string): AgentlockState {
   return NOT_INSTALLED;
 }
 
+export function codexAgentlockState(hooksPath: string): AgentlockState {
+  if (!existsSync(hooksPath)) return NOT_INSTALLED;
+  let raw: string;
+  try {
+    raw = readFileSync(hooksPath, "utf8");
+  } catch {
+    return NOT_INSTALLED;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return NOT_INSTALLED;
+  }
+  const root =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  const hooks =
+    root.hooks && typeof root.hooks === "object"
+      ? (root.hooks as Record<string, unknown>)
+      : root;
+  for (const list of Object.values(hooks)) {
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as Record<string, unknown>;
+      if (e._agentlock !== true) continue;
+      const inner = Array.isArray(e.hooks) ? (e.hooks as unknown[]) : [];
+      for (const h of inner) {
+        if (!h || typeof h !== "object") continue;
+        const hook = h as { env?: unknown };
+        const env = hook.env;
+        if (env && typeof env === "object") {
+          const url = (env as { AGENTLOCK_DAEMON_URL?: unknown }).AGENTLOCK_DAEMON_URL;
+          if (typeof url === "string" && url.length > 0) {
+            return { installed: true, daemonURL: originOf(url) };
+          }
+        }
+      }
+      return { installed: true };
+    }
+  }
+  return NOT_INSTALLED;
+}
+
 // devStubAgentlockState reads `.agentlock-dev.json` from a non-claude
 // harness's dev sandbox dir. The daemon's apply pipeline writes that
 // marker for harnesses without a real installer yet. Presence + the
