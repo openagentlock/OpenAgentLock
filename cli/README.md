@@ -25,7 +25,12 @@ Then use the CLI:
 agentlock detect            # list local agent harnesses
 agentlock install           # plan + apply hooks for selected harnesses
 agentlock status            # control-plane health
+agentlock dashboard         # OpenTUI dashboard — live ledger, sessions, gates
 ```
+
+<p align="center">
+  <img src="../assets/tui/dashboard-stats.png" alt="agentlock dashboard — Stats tab with activity sparkline, top deny rules and tools" width="100%" />
+</p>
 
 For attested install (TOTP, hardware signers) and policies, see [openagentlock.github.io/OpenAgentLock](https://openagentlock.github.io/OpenAgentLock/).
 

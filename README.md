@@ -48,6 +48,11 @@ For a quick eval without a signer (dev only): start the daemon with `-e AGENTLOC
 
 Open the local web dashboard at <http://127.0.0.1:7879/>, or run `agentlock dashboard` for a terminal TUI with the same live ledger tail, sessions, loaded gates, and a one-key monitor⇄enforce flip.
 
+<div align="center">
+  <img src="assets/tui/dashboard-stats.png" alt="agentlock dashboard — Stats tab with live activity sparkline, top deny rules, and per-source counts" width="100%" />
+  <sub><i><code>agentlock dashboard</code> — live ledger tail, top deny rules/tools, per-source counts, one-key firewall ↔ monitor flip.</i></sub>
+</div>
+
 Full walkthrough at <https://openagentlock.github.io/OpenAgentLock/guide/getting-started/>.
 
 ## Community rules registry
