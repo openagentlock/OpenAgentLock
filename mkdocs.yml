@@ -118,6 +118,7 @@ nav:
   - Architecture:
       - Overview: architecture/overview.md
       - LLM-based guardrails (roadmap): architecture/llm-guardrails.md
+      - False positive reporting (design): architecture/false-positive-reporting.md
   - Reference:
       - HTTP API: reference/api.md
       - Detection registry: reference/detection.md
