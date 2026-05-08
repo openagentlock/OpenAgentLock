@@ -47,6 +47,20 @@ The corresponding ledger entry may include `policy_trace`, listing every daemon 
 
 Returns the live policy as dashboard-friendly gates. Each gate includes `source`: `daemon` for built-in or direct policy-file gates, `registry:<id>` for rules installed from a rules registry, or `per-repo:<path>` for repo-local gates.
 
+## False Positives
+
+`GET /v1/false-positives/cases/:seq`
+
+Builds a redacted case bundle from a matched ledger event. The event must have a matched rule and must be a deny or monitor alert. Add `?include_raw=true` only when the caller explicitly wants raw event input included.
+
+`POST /v1/false-positives/validate`
+
+Validates replacement gate YAML against a case bundle. The replacement must parse as a gate and must not deny the original false-positive event.
+
+`POST /v1/false-positives/apply`
+
+Atomically marks the old matched gate `disabled: true` and appends the replacement gate. The request includes the case bundle policy hash; stale bundles are rejected so a dashboard cannot overwrite newer policy edits.
+
 ## Install
 
 `POST /v1/install/plan` — render a diff of what would change in the harness configs

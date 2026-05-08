@@ -1,7 +1,7 @@
 // Helpers for figuring out whether agentlock is already wired into a
 // harness on disk, and which daemon URL it currently points at. Used by
 // detectors so the install picker can pre-check rows that are already
-// installed and show "wired → http://..." next to them.
+// installed and show "wired -> http://..." next to them.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,10 +14,6 @@ export interface AgentlockState {
 
 const NOT_INSTALLED: AgentlockState = { installed: false };
 
-// originOf returns scheme://host[:port] for a parseable URL, or the
-// original string if URL parsing fails. Lets us collapse a per-hook
-// URL like "http://127.0.0.1:7878/v1/hooks/claude-code/pre-tool-use"
-// down to "http://127.0.0.1:7878" for the picker sub-line.
 function originOf(u: string): string {
   try {
     return new URL(u).origin;
@@ -26,10 +22,6 @@ function originOf(u: string): string {
   }
 }
 
-// claudeAgentlockState reads a Claude Code settings.json and reports
-// whether agentlock-tagged hook entries (the `_agentlock: true` marker
-// applyClaudeCode writes) are present, plus the daemon URL if we can
-// pull one out of any embedded HTTP hook.
 export function claudeAgentlockState(settingsPath: string): AgentlockState {
   if (!existsSync(settingsPath)) return NOT_INSTALLED;
   let raw: string;
@@ -54,10 +46,6 @@ export function claudeAgentlockState(settingsPath: string): AgentlockState {
       if (!entry || typeof entry !== "object") continue;
       const e = entry as Record<string, unknown>;
       if (e._agentlock !== true) continue;
-      // Prefer the URL from the first nested HTTP hook so the picker can
-      // surface "wired → http://...:7878" without rendering all of them.
-      // Strip the per-hook path (`/v1/hooks/...`) so the picker only
-      // shows the daemon origin — that's the part the user is choosing.
       const inner = Array.isArray(e.hooks) ? (e.hooks as unknown[]) : [];
       for (const h of inner) {
         if (h && typeof h === "object") {
@@ -73,10 +61,148 @@ export function claudeAgentlockState(settingsPath: string): AgentlockState {
   return NOT_INSTALLED;
 }
 
-// devStubAgentlockState reads `.agentlock-dev.json` from a non-claude
-// harness's dev sandbox dir. The daemon's apply pipeline writes that
-// marker for harnesses without a real installer yet. Presence + the
-// stamped daemon_url are enough for the picker.
+export function claudeDesktopAgentlockState(configPath: string): AgentlockState {
+  if (!existsSync(configPath)) return NOT_INSTALLED;
+  let raw: string;
+  try {
+    raw = readFileSync(configPath, "utf8");
+  } catch {
+    return NOT_INSTALLED;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return NOT_INSTALLED;
+  }
+  const servers = (parsed as { mcpServers?: Record<string, unknown> }).mcpServers;
+  if (!servers || typeof servers !== "object") return NOT_INSTALLED;
+
+  for (const name of Object.keys(servers)) {
+    const entry = servers[name];
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    if (e._agentlock !== true) continue;
+    const env = (e.env as Record<string, unknown> | undefined) ?? undefined;
+    const url = env && typeof env.AGENTLOCK_DAEMON_URL === "string"
+      ? env.AGENTLOCK_DAEMON_URL
+      : undefined;
+    return { installed: true, daemonURL: url ? originOf(url) : undefined };
+  }
+  return NOT_INSTALLED;
+}
+
+export function codexAgentlockState(hooksPath: string): AgentlockState {
+  if (!existsSync(hooksPath)) return NOT_INSTALLED;
+  let raw: string;
+  try {
+    raw = readFileSync(hooksPath, "utf8");
+  } catch {
+    return NOT_INSTALLED;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return NOT_INSTALLED;
+  }
+  const root =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  const hooks =
+    root.hooks && typeof root.hooks === "object"
+      ? (root.hooks as Record<string, unknown>)
+      : root;
+  for (const list of Object.values(hooks)) {
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as Record<string, unknown>;
+      if (e._agentlock !== true) continue;
+      const inner = Array.isArray(e.hooks) ? (e.hooks as unknown[]) : [];
+      for (const h of inner) {
+        if (!h || typeof h !== "object") continue;
+        const hook = h as { env?: unknown };
+        const env = hook.env;
+        if (env && typeof env === "object") {
+          const url = (env as { AGENTLOCK_DAEMON_URL?: unknown }).AGENTLOCK_DAEMON_URL;
+          if (typeof url === "string" && url.length > 0) {
+            return { installed: true, daemonURL: originOf(url) };
+          }
+        }
+      }
+      return { installed: true };
+    }
+  }
+  return NOT_INSTALLED;
+}
+
+export function cursorAgentlockState(hooksPath: string): AgentlockState {
+  return agentlockHookState(hooksPath);
+}
+
+export function geminiAgentlockState(settingsPath: string): AgentlockState {
+  return agentlockHookState(settingsPath);
+}
+
+function agentlockHookState(path: string): AgentlockState {
+  if (!existsSync(path)) return NOT_INSTALLED;
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return NOT_INSTALLED;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return NOT_INSTALLED;
+  }
+  const root =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  const hooks =
+    root.hooks && typeof root.hooks === "object"
+      ? (root.hooks as Record<string, unknown>)
+      : root;
+
+  for (const list of Object.values(hooks)) {
+    if (!Array.isArray(list)) continue;
+		for (const entry of list) {
+			if (!entry || typeof entry !== "object") continue;
+			const e = entry as Record<string, unknown>;
+			if (e._agentlock !== true) continue;
+			const url = daemonURLFromHookEntry(e);
+			return url ? { installed: true, daemonURL: originOf(url) } : { installed: true };
+		}
+	}
+  return NOT_INSTALLED;
+}
+
+function daemonURLFromHookEntry(entry: Record<string, unknown>): string | undefined {
+  const env = entry.env;
+  if (env && typeof env === "object") {
+    const url = (env as { AGENTLOCK_DAEMON_URL?: unknown }).AGENTLOCK_DAEMON_URL;
+    if (typeof url === "string" && url.length > 0) return url;
+  }
+
+  const inner = Array.isArray(entry.hooks) ? (entry.hooks as unknown[]) : [];
+  for (const h of inner) {
+    if (!h || typeof h !== "object") continue;
+    const hook = h as { env?: unknown };
+    const hookEnv = hook.env;
+    if (hookEnv && typeof hookEnv === "object") {
+      const url = (hookEnv as { AGENTLOCK_DAEMON_URL?: unknown }).AGENTLOCK_DAEMON_URL;
+      if (typeof url === "string" && url.length > 0) return url;
+    }
+  }
+
+  return undefined;
+}
+
 export function devStubAgentlockState(harnessDir: string): AgentlockState {
   const marker = join(harnessDir, ".agentlock-dev.json");
   if (!existsSync(marker)) return NOT_INSTALLED;
@@ -89,17 +215,10 @@ export function devStubAgentlockState(harnessDir: string): AgentlockState {
     const url = typeof parsed.daemon_url === "string" ? parsed.daemon_url : undefined;
     return { installed: true, daemonURL: url };
   } catch {
-    // Marker exists but is unparseable — treat as installed without a
-    // URL so the picker still flags it. Better than hiding partial
-    // state from the user.
     return { installed: true };
   }
 }
 
-// devStubStateForHarness mirrors the daemon's devStubDir layout: every
-// non-claude harness writes its marker under `<home>/.<harnessId>/`.
-// Detectors call this with their HarnessId to get the same answer the
-// install picker needs without hand-rolling paths.
 export function devStubStateForHarness(harnessID: string): AgentlockState {
   return devStubAgentlockState(join(home(), "." + harnessID));
 }

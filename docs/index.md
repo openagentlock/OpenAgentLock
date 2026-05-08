@@ -43,7 +43,7 @@ Interactive multi-select. Posts to `/v1/install/plan`, renders the diff, applies
 #### Registry-first policy
 <span class="gate-id">`agentlock rules install`</span>
 
-First-boot policy is intentionally minimal (one `rogue.destructive-bash` gate in monitor mode). Real coverage comes from the [openagentlock/rules](https://openagentlock.github.io/rules/) registry — `agentlock rules sync && agentlock rules install <id>` lands gates in the live policy with a fresh hash.
+First boot includes a thirteen-gate enforce-mode baseline for destructive shell, supply-chain RCE, secret reads, evasion, infra deletes, and persistence across supported harnesses. Add extras from [openagentlock/rules](https://openagentlock.github.io/rules/) with `agentlock rules sync && agentlock rules install <id>`.
 </div>
 
 <div class="gate-card" markdown>
@@ -54,10 +54,10 @@ Rust crate. SHA-256 leaf hashing, Merkle root, inclusion proofs, verification. T
 </div>
 
 <div class="gate-card" markdown>
-#### Local web dashboard
-<span class="gate-id">`127.0.0.1:7879`</span>
+#### Dashboard
+<span class="gate-id">`127.0.0.1:7879` · `agentlock dashboard`</span>
 
-Read logs, author rules, watch live activity. Firewall-admin shape.
+Read logs, author rules, watch live activity. Web SPA at `:7879`, or a terminal TUI via `agentlock dashboard`.
 </div>
 
 <div class="gate-card" markdown>

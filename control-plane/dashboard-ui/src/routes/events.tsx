@@ -4,11 +4,22 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AddRuleModal } from "@/components/AddRuleModal";
 import { useRootInfo } from "@/hooks/usePoll";
 import { useSSELedger } from "@/hooks/useSSE";
-import type { LedgerEntry } from "@/lib/types";
+import { apiJSON, apiSend } from "@/lib/api";
+import type {
+  FalsePositiveApplyResult,
+  FalsePositiveCase,
+  FalsePositiveValidation,
+  LedgerEntry,
+} from "@/lib/types";
 import { INTERNAL_SOURCES } from "@/lib/filters";
 import { fullLocal, shortTime } from "@/lib/time";
 import { shortHash } from "@/lib/filters";
 import { rulePresetFromLedgerEntry } from "@/lib/eventRulePreset";
+import {
+  isOutcomeEntry,
+  outcomeByToolUseId,
+  subjectFromLedgerEntry,
+} from "@/lib/ledgerEntryDisplay";
 import type { AddRuleInitialPreset } from "@/lib/rulePresetTypes";
 
 // verdictDisplay maps a ledger row to a (label, color-class) pair.
@@ -49,6 +60,7 @@ function EventsTab() {
   const [verdictFilter, setVerdictFilter] = useState("");
   const [ruleFilter, setRuleFilter] = useState("");
   const [showInternal, setShowInternal] = useState(false);
+  const [showOutcomes, setShowOutcomes] = useState(false);
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
@@ -63,7 +75,7 @@ function EventsTab() {
   // never lands on an empty page after narrowing the result set.
   useEffect(() => {
     setPage(0);
-  }, [sourceFilter, verdictFilter, ruleFilter, showInternal, pageSize]);
+  }, [sourceFilter, verdictFilter, ruleFilter, showInternal, showOutcomes, pageSize]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -100,6 +112,7 @@ function EventsTab() {
     return entries
       .filter((e) => {
         if (!showInternal && INTERNAL_SOURCES.has(e.source)) return false;
+        if (isOutcomeEntry(e)) return false;
         if (sourceFilter && e.source !== sourceFilter) return false;
         if (verdictFilter && e.verdict !== verdictFilter) return false;
         if (rule && !(e.rule_id ?? "").toLowerCase().includes(rule)) return false;
@@ -108,6 +121,8 @@ function EventsTab() {
       .slice()
       .sort((a, b) => b.seq - a.seq);
   }, [entries, sourceFilter, verdictFilter, ruleFilter, showInternal]);
+
+  const outcomes = useMemo(() => outcomeByToolUseId(entries), [entries]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
@@ -208,6 +223,14 @@ function EventsTab() {
           <label className="flex items-center gap-2 text-[11px] text-muted ml-auto">
             <input
               type="checkbox"
+              checked={showOutcomes}
+              onChange={(e) => setShowOutcomes(e.target.checked)}
+            />
+            show tool outcomes
+          </label>
+          <label className="flex items-center gap-2 text-[11px] text-muted">
+            <input
+              type="checkbox"
               checked={showInternal}
               onChange={(e) => setShowInternal(e.target.checked)}
             />
@@ -237,48 +260,18 @@ function EventsTab() {
                   </td>
                 </tr>
               ) : (
-                paged.map((e) => (
-                  <tr
-                    key={`${e.seq}-${e.leaf_hash}`}
-                    onClick={() => setSelectedSeq(e.seq)}
-                    onContextMenu={(ev) => onRowContextMenu(ev, e)}
-                    className="cursor-pointer hover:bg-chip"
-                  >
-                    <td className="font-mono">{e.seq}</td>
-                    <td className="font-mono" title={fullLocal(e.ts)}>
-                      {shortTime(e.ts)}
-                    </td>
-                    <td>
-                      <span className="oal-chip">{e.source}</span>
-                    </td>
-                    <td className="font-mono">{e.rule_id || "—"}</td>
-                    <td>
-                      {e.verdict ? (
-                        (() => {
-                          const v = verdictDisplay(e.verdict, e.monitor_match);
-                          const tip = e.monitor_match
-                            ? `monitor mode: rule ${e.rule_id ?? ""} would have denied`
-                            : undefined;
-                          return (
-                            <span
-                              className={`inline-block px-1.5 py-0.5 rounded text-[11px] ${v.cls}`}
-                              title={tip}
-                            >
-                              {v.label}
-                            </span>
-                          );
-                        })()
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-                    <td className="font-mono">{e.signer}</td>
-                    <td className="font-mono text-muted">{shortHash(e.tool_use_id, 16)}</td>
-                    <td className="font-mono text-muted" title={e.leaf_hash}>
-                      {shortHash(e.leaf_hash, 12)}
-                    </td>
-                  </tr>
-                ))
+                paged.map((e) => {
+                  const outcome = showOutcomes ? outcomes.get(e.tool_use_id) : undefined;
+                  return (
+                    <EventRows
+                      key={`${e.seq}-${e.leaf_hash}`}
+                      entry={e}
+                      outcome={outcome}
+                      onSelect={setSelectedSeq}
+                      onContextMenu={onRowContextMenu}
+                    />
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -364,6 +357,86 @@ function EventsTab() {
   );
 }
 
+function EventRows({
+  entry,
+  outcome,
+  onSelect,
+  onContextMenu,
+}: {
+  entry: LedgerEntry;
+  outcome?: LedgerEntry;
+  onSelect: (seq: number) => void;
+  onContextMenu: (ev: React.MouseEvent, entry: LedgerEntry) => void;
+}) {
+  const v = verdictDisplay(entry.verdict, entry.monitor_match);
+  const tip = entry.monitor_match
+    ? `monitor mode: rule ${entry.rule_id ?? ""} would have denied`
+    : undefined;
+  const outcomeVerdict = outcome ? verdictDisplay(outcome.verdict, outcome.monitor_match) : null;
+  return (
+    <>
+      <tr
+        onClick={() => onSelect(entry.seq)}
+        onContextMenu={(ev) => onContextMenu(ev, entry)}
+        className="cursor-pointer hover:bg-chip"
+      >
+        <td className="font-mono">{entry.seq}</td>
+        <td className="font-mono" title={fullLocal(entry.ts)}>
+          {shortTime(entry.ts)}
+        </td>
+        <td>
+          <span className="oal-chip">{entry.source}</span>
+        </td>
+        <td className="font-mono">{entry.rule_id || "—"}</td>
+        <td>
+          {entry.verdict ? (
+            <span
+              className={`inline-block px-1.5 py-0.5 rounded text-[11px] ${v.cls}`}
+              title={tip}
+            >
+              {v.label}
+            </span>
+          ) : (
+            <span className="text-muted">—</span>
+          )}
+        </td>
+        <td className="font-mono">{entry.signer}</td>
+        <td className="font-mono text-muted">{shortHash(entry.tool_use_id, 16)}</td>
+        <td className="font-mono text-muted" title={entry.leaf_hash}>
+          {shortHash(entry.leaf_hash, 12)}
+        </td>
+      </tr>
+      {outcome && outcomeVerdict && (
+        <tr
+          onClick={() => onSelect(outcome.seq)}
+          className="cursor-pointer bg-chip/30 hover:bg-chip text-muted"
+        >
+          <td className="font-mono pl-6">↳ {outcome.seq}</td>
+          <td className="font-mono" title={fullLocal(outcome.ts)}>
+            {shortTime(outcome.ts)}
+          </td>
+          <td>
+            <span className="oal-chip">{outcome.source}</span>
+          </td>
+          <td className="font-mono text-muted">tool outcome</td>
+          <td>
+            <span
+              className={`inline-block px-1.5 py-0.5 rounded text-[11px] ${outcomeVerdict.cls}`}
+            >
+              {outcomeVerdict.label}
+            </span>
+          </td>
+          <td className="font-mono">{outcome.signer}</td>
+          <td className="font-mono text-muted">{shortHash(outcome.tool_use_id, 16)}</td>
+          <td className="font-mono text-muted" title={outcome.leaf_hash}>
+            {shortHash(outcome.leaf_hash, 12)}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 // EventDetail renders every field on a ledger entry — verdict, monitor
 // match, payload + leaf hashes, signer — so a user inspecting "why
 // did this row show up" can see the full chain context without diving
@@ -375,6 +448,14 @@ function EventDetail({
   entry: LedgerEntry | null;
   onClose: () => void;
 }) {
+  const [fpCase, setFpCase] = useState<FalsePositiveCase | null>(null);
+  const [replacementYAML, setReplacementYAML] = useState("");
+  const [fpValidation, setFpValidation] = useState<FalsePositiveValidation | null>(
+    null,
+  );
+  const [fpApply, setFpApply] = useState<FalsePositiveApplyResult | null>(null);
+  const [fpError, setFpError] = useState<string | null>(null);
+  const [fpBusy, setFpBusy] = useState(false);
   // Esc-to-close + initial focus on the close button. Focus trap is left
   // out for now — the dialog has a single interactive element so Tab
   // would just cycle there anyway.
@@ -403,6 +484,70 @@ function EventDetail({
     );
   }
   const v = verdictDisplay(entry.verdict, entry.monitor_match);
+  const subject = subjectFromLedgerEntry(entry);
+  const canReportFalsePositive =
+    !!entry.rule_id &&
+    entry.rule_id !== "default" &&
+    !isOutcomeEntry(entry) &&
+    (entry.verdict === "deny" || !!entry.monitor_match);
+
+  async function loadFalsePositiveCase() {
+    if (!entry) return;
+    setFpBusy(true);
+    setFpError(null);
+    setFpApply(null);
+    setFpValidation(null);
+    try {
+      const c = await apiJSON<FalsePositiveCase>(
+        `/v1/false-positives/cases/${entry.seq}`,
+      );
+      setFpCase(c);
+      setReplacementYAML(defaultReplacementYAML(c));
+    } catch (err) {
+      setFpError((err as Error).message);
+    } finally {
+      setFpBusy(false);
+    }
+  }
+
+  async function validateFalsePositive() {
+    if (!fpCase) return;
+    setFpBusy(true);
+    setFpError(null);
+    setFpApply(null);
+    try {
+      const validation = await apiSend<FalsePositiveValidation>(
+        "/v1/false-positives/validate",
+        "POST",
+        { case: fpCase, replacement_yaml: replacementYAML },
+      );
+      setFpValidation(validation);
+    } catch (err) {
+      setFpError((err as Error).message);
+    } finally {
+      setFpBusy(false);
+    }
+  }
+
+  async function applyFalsePositive() {
+    if (!fpCase) return;
+    setFpBusy(true);
+    setFpError(null);
+    try {
+      const applied = await apiSend<FalsePositiveApplyResult>(
+        "/v1/false-positives/apply",
+        "POST",
+        { case: fpCase, replacement_yaml: replacementYAML },
+      );
+      setFpApply(applied);
+      setFpValidation({ ok: true, replacement_id: applied.replacement_id });
+    } catch (err) {
+      setFpError((err as Error).message);
+    } finally {
+      setFpBusy(false);
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-40"
@@ -430,6 +575,13 @@ function EventDetail({
         </div>
         <DetailRow label="time" value={fullLocal(entry.ts)} mono />
         <DetailRow label="source" value={entry.source} />
+        {subject && (
+          <DetailRow
+            label={subject.label}
+            value={<span className="whitespace-pre-wrap break-words">{subject.value}</span>}
+            mono
+          />
+        )}
         <DetailRow label="rule" value={entry.rule_id ?? "—"} mono />
         <DetailRow
           label="verdict"
@@ -474,9 +626,98 @@ function EventDetail({
         {entry.sig && entry.sig.length > 0 && (
           <DetailRow label="sig" value={entry.sig} mono wrap />
         )}
+        {canReportFalsePositive && (
+          <div className="mt-4 border-t border-border pt-4">
+            <button
+              type="button"
+              className="oal-btn-link"
+              onClick={loadFalsePositiveCase}
+              disabled={fpBusy}
+            >
+              {fpCase ? "refresh false-positive case" : "report false positive"}
+            </button>
+          </div>
+        )}
+        {fpCase && (
+          <div className="mt-4 rounded border border-border bg-black/20 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+              False positive case
+            </div>
+            <DetailRow
+              label="matched"
+              value={`${fpCase.matched_gate.id} (${fpCase.matched_gate.source})`}
+              mono
+              wrap
+            />
+            {Object.entries(fpCase.input).map(([k, val]) => (
+              <DetailRow key={k} label={k} value={val} mono wrap />
+            ))}
+            <label className="mt-3 block text-[10px] uppercase tracking-wider text-muted">
+              replacement rule
+            </label>
+            <textarea
+              className="mt-1 h-44 w-full resize-y rounded border border-border bg-bg p-2 font-mono text-xs text-neutral-100"
+              value={replacementYAML}
+              onChange={(e) => {
+                setReplacementYAML(e.target.value);
+                setFpValidation(null);
+                setFpApply(null);
+              }}
+              spellCheck={false}
+            />
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                className="oal-btn-link"
+                onClick={validateFalsePositive}
+                disabled={fpBusy}
+              >
+                validate
+              </button>
+              <button
+                type="button"
+                className="oal-btn-link"
+                onClick={applyFalsePositive}
+                disabled={fpBusy || fpValidation?.ok !== true}
+              >
+                apply replacement
+              </button>
+            </div>
+            {fpValidation && (
+              <div
+                className={`mt-2 text-xs ${
+                  fpValidation.ok ? "text-allow" : "text-deny"
+                }`}
+              >
+                {fpValidation.ok
+                  ? `valid; original event verdict: ${fpValidation.replacement_verdict ?? "allow"}`
+                  : (fpValidation.errors ?? ["validation failed"]).join("; ")}
+              </div>
+            )}
+            {fpApply && (
+              <div className="mt-2 text-xs text-allow">
+                applied {fpApply.replacement_id}; reload sessions to pick up policy{" "}
+                {shortHash(fpApply.hash)}
+              </div>
+            )}
+            {fpError && <div className="mt-2 text-xs text-deny">{fpError}</div>}
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+function defaultReplacementYAML(c: FalsePositiveCase): string {
+  const tool = c.event.tool ? `  tool: ${JSON.stringify(c.event.tool)}\n` : "";
+  return `id: ${c.event.rule_id}.replacement
+match:
+${tool}  any_command_regex:
+    - '(?!)'
+evaluate:
+  - kind: always
+    action: deny
+`;
 }
 
 function DetailRow({

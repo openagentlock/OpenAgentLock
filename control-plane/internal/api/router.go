@@ -76,6 +76,10 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"POST", "/v1/hooks/codex/pre-tool-use", codexPreToolUseHandler(d)},
 		{"POST", "/v1/hooks/codex/post-tool-use", codexPostToolUseHandler(d)},
 		{"POST", "/v1/hooks/codex/stop", codexStopHandler(d)},
+		{"POST", "/v1/hooks/codex-desktop/session-start", codexDesktopSessionStartHandler(d)},
+		{"POST", "/v1/hooks/codex-desktop/pre-tool-use", codexDesktopPreToolUseHandler(d)},
+		{"POST", "/v1/hooks/codex-desktop/post-tool-use", codexDesktopPostToolUseHandler(d)},
+		{"POST", "/v1/hooks/codex-desktop/stop", codexDesktopStopHandler(d)},
 		{"POST", "/v1/hooks/cursor/session-start", cursorSessionStartHandler(d)},
 		{"POST", "/v1/hooks/cursor/pre-tool-use", cursorPreToolUseHandler(d)},
 		{"POST", "/v1/hooks/cursor/before-shell-execution", cursorBeforeShellHandler(d)},
@@ -87,6 +91,10 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"POST", "/v1/hooks/gemini/pre-tool-use", geminiPreToolUseHandler(d)},
 		{"POST", "/v1/hooks/gemini/post-tool-use", geminiPostToolUseHandler(d)},
 		{"POST", "/v1/hooks/gemini/stop", geminiStopHandler(d)},
+		// Claude Desktop has no upstream PreToolUse hook; the agentlock
+		// mcp-proxy subprocess hits these on every JSON-RPC tools/call.
+		{"POST", "/v1/hooks/claude-desktop/pre-tool-use", claudeDesktopPreToolUseHandler(d)},
+		{"POST", "/v1/hooks/claude-desktop/post-tool-use", claudeDesktopPostToolUseHandler(d)},
 
 		// MCP TOFU pinning.
 		{"GET", "/v1/mcp/pins", mcpPinsListHandler(d)},
@@ -102,6 +110,9 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"POST", "/v1/policy/gates/yaml", policyAddGateYAMLHandler(d)},
 		{"PATCH", "/v1/policy/gates/{id}", policyPatchGateHandler(d)},
 		{"DELETE", "/v1/policy/gates/{id}", policyDeleteGateHandler(d)},
+		{"GET", "/v1/false-positives/cases/{seq}", falsePositiveCaseHandler(d)},
+		{"POST", "/v1/false-positives/validate", falsePositiveValidateHandler(d)},
+		{"POST", "/v1/false-positives/apply", falsePositiveApplyHandler(d)},
 		{"GET", "/v1/sessions", sessionsListHandler(d)},
 
 		// Ledger.

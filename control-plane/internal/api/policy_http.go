@@ -22,7 +22,20 @@ type gateView struct {
 	Tool            string   `json:"tool,omitempty"`
 	ToolPrefix      string   `json:"tool_prefix,omitempty"`
 	AnyCommandRegex []string `json:"any_command_regex,omitempty"`
+	AnyPathRegex    []string `json:"any_path_regex,omitempty"`
+	AnyURLRegex     []string `json:"any_url_regex,omitempty"`
+	Match           matchView `json:"match"`
 	Evaluators      []string `json:"evaluators"`
+}
+
+type matchView struct {
+	Tool            string      `json:"tool,omitempty"`
+	ToolPrefix      string      `json:"tool_prefix,omitempty"`
+	PathGlobRegex   string      `json:"path_glob_regex,omitempty"`
+	AnyCommandRegex []string    `json:"any_command_regex,omitempty"`
+	AnyPathRegex    []string    `json:"any_path_regex,omitempty"`
+	AnyURLRegex     []string    `json:"any_url_regex,omitempty"`
+	AnyOf           []matchView `json:"any_of,omitempty"`
 }
 
 func policyViewHandler(d Deps) http.HandlerFunc {
@@ -41,6 +54,9 @@ func policyViewHandler(d Deps) http.HandlerFunc {
 				Tool:            g.Match.Tool,
 				ToolPrefix:      g.Match.ToolPrefix,
 				AnyCommandRegex: regexStrings(g.Match.Regexes),
+				AnyPathRegex:    regexStrings(g.Match.PathRegexes),
+				AnyURLRegex:     regexStrings(g.Match.URLRegexes),
+				Match:           matcherView(g.Match),
 				Evaluators:      evaluatorNames(g.Evaluators()),
 			})
 		}
@@ -58,6 +74,26 @@ func effectiveGateMode(p *policy.Policy, g policy.Gate) string {
 		return g.Mode
 	}
 	return p.Mode
+}
+
+func matcherView(m policy.Matcher) matchView {
+	v := matchView{
+		Tool:            m.Tool,
+		ToolPrefix:      m.ToolPrefix,
+		AnyCommandRegex: regexStrings(m.Regexes),
+		AnyPathRegex:    regexStrings(m.PathRegexes),
+		AnyURLRegex:     regexStrings(m.URLRegexes),
+	}
+	if m.PathGlobRE != nil {
+		v.PathGlobRegex = m.PathGlobRE.String()
+	}
+	if len(m.AnyOf) > 0 {
+		v.AnyOf = make([]matchView, 0, len(m.AnyOf))
+		for _, sub := range m.AnyOf {
+			v.AnyOf = append(v.AnyOf, matcherView(sub))
+		}
+	}
+	return v
 }
 
 func regexStrings(rs []*regexp.Regexp) []string {

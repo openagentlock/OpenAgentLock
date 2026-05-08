@@ -1,0 +1,490 @@
+# OpenAgentLock first-boot baseline policy.
+#
+# Embedded into the daemon binary via //go:embed; loaded whenever
+# AGENTLOCK_POLICY is unset. Goal: every fresh install ships with
+# critical blocking coverage on every supported harness without an
+# `agentlock rules install` step.
+#
+# Per-harness tool-name truth (verified against the handlers in
+# control-plane/internal/api and against the upstream harness docs as
+# of 2026-05):
+#
+#   Claude Code      tool_name = Bash | Read | Write | Edit | MultiEdit |
+#                                NotebookEdit | WebFetch | WebSearch |
+#                                mcp__<server>__<tool>
+#   Claude Desktop   tool_name = mcp__<server>__<tool> ONLY (mcp-proxy).
+#                                Native shell/file tools never reach the
+#                                daemon.
+#   Codex CLI        tool_name = Bash (reliable). apply_patch + mcp__*
+#                                fire inconsistently per OpenAI codex#20204.
+#                                File reads do NOT fire PreToolUse at all
+#                                (verified against Codex docs) — Codex has
+#                                no `Read` tool.
+#   Cursor           tool_name = Shell | Read | Write | MCP | Task
+#                                (preToolUse) + synthetic "Shell" injected
+#                                by hooks_cursor.go for beforeShellExecution.
+#   Gemini CLI       MCP-stdio surface only (cli/src/detect/gemini.ts).
+#                                Native run_shell_command / write_file /
+#                                replace / read_file are NOT intercepted.
+#                                MCP tools arrive as mcp_<server>_<tool>
+#                                (single underscore) per hooks_gemini.go.
+#
+# Each cross-harness gate uses any_of arms to span:
+#   tool: Bash             - Claude Code, Codex CLI
+#   tool: Shell            - Cursor preToolUse + beforeShellExecution
+#   tool_prefix: mcp_      - Claude Desktop (mcp__ double), Gemini (mcp_
+#                            single). Single-underscore prefix is a strict
+#                            superset of double, so this one arm covers
+#                            both wire shapes.
+#
+# Path-side gates (file reads/writes) add the same tool_prefix: mcp_
+# arm so MCP filesystem servers fire the gate on Desktop / Gemini.
+
+version: 1
+mode: enforce
+defaults:
+  bash: allow
+  read: allow
+  write: allow
+
+gates:
+  - id: rogue.destructive-bash
+    severity: high
+    match:
+      any_of:
+        - tool: Bash
+          any_command_regex: &destructive_bash_regex
+            - 'rm\s+-rf?\s+/'
+            - 'rm\s+(-[rRfF]+\s+)+\S+'
+            - '(?i)DROP\s+(TABLE|DATABASE|SCHEMA)'
+            - 'dd\s+if=.*of=/dev/(?:sd|nvme|vd|xvd|hd|mmcblk|loop)'
+            - 'mkfs\.'
+        - tool: Shell
+          any_command_regex: *destructive_bash_regex
+        - tool_prefix: mcp_
+          any_command_regex: *destructive_bash_regex
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "Use a non-destructive variant (move to trash, rm a single file, or scope to a project subtree) and re-issue."
+
+  - id: supply-chain.installer-curl-bash
+    severity: high
+    match:
+      any_of:
+        - tool: Bash
+          any_command_regex: &installer_curl_bash_regex
+            - '\bcurl\s+[^|;&]*\|\s*(?:bash|sh|zsh)(?:\s+-s)?\s*(?:$|[;&|])'
+            - '\bcurl\s+[^|;&]*\s+-o\s+\S+\s*&&\s*(?:bash|sh|zsh|python3?|node|ruby|perl|php)\s'
+            - '\bwget\s+[^|;&]*\s+-O\s+\S+\s*&&\s*(?:bash|sh|zsh|python3?|node|ruby|perl|php)\s'
+            - '\bwget\s+(?:[^|;&]*\s+)?-O\s*-\s+[^|]*\|\s*(?:bash|sh|zsh)(?:\s+-s)?\s*(?:$|[;&|])'
+            - '\bwget\s+(?:[^|;&]*\s+)?-O\s*-\s+[^|]*\|\s*python3?(?:\s+-)?\s*(?:$|[;&|])'
+            - '\bwget\s+(?:[^|;&]*\s+)?-O\s*-\s+[^|]*\|\s*(?:node|ruby|perl|php)\s*(?:$|[;&|])'
+            - '\beval\s+["''`]?\$\((?:curl|wget|fetch)\s'
+            - '\beval\s+["''`]\$\((?:curl|wget|fetch)[^)]*\)["''`]'
+            - '\b(?:bash|sh|zsh)\s+<\(\s*(?:curl|wget|fetch)\s'
+            - '\b(?:bash|sh|zsh)\s+-c\s+["''][^"'']*\$\((?:curl|wget|fetch)\s'
+            - '\bcurl\s+[^|;&]*\|\s*python3?(?:\s+-)?\s*(?:$|[;&|])'
+            - '\bcurl\s+[^|;&]*\|\s*(?:node|ruby|perl|php|deno|bun)\s*(?:$|[;&|])'
+            - '\bcurl\s+[^|;&]*\|\s*tee\s+[^|]*\|\s*(?:bash|sh)\b'
+            - '\bcurl\s+[^|;&]*\|\s*xargs\s+(?:[^|;&]*\s+)?(?:bash|sh|node|python)\b'
+            - '\bcurl\s+[^|;&]*\|\s*sudo\s+(?:bash|sh)\b'
+            - '\bwget\s+[^|;&]*\|\s*python3?(?:\s+-)?\s*(?:$|[;&|])'
+            - '\bwget\s+[^|;&]*\|\s*(?:node|ruby|perl|php|deno|bun)\s*(?:$|[;&|])'
+            - '\bfetch\s+(?:[^|;&]*\s+)?-o\s*-\s+[^|]*\|\s*(?:bash|sh)(?:\s+-s)?\s*(?:$|[;&|])'
+            - '\b(?:bash|sh)\s+-c\s+["''][^"'']*(?:curl|wget)[^"'']*\|\s*(?:bash|sh)'
+        - tool: Shell
+          any_command_regex: *installer_curl_bash_regex
+        - tool_prefix: mcp_
+          any_command_regex: *installer_curl_bash_regex
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "Download to a file, inspect it, then run it explicitly. Never pipe a remote download straight into an interpreter."
+
+  - id: rogue.eval-untrusted
+    severity: high
+    match:
+      any_of:
+        - tool: Bash
+          any_command_regex: &eval_untrusted_regex
+            - 'python3?\s+-c\s+["''].*(?:exec|eval|__import__|compile)\s*\('
+            - 'node\s+-e\s+["''].*(?:eval|Function|require\s*\(\s*["'']child_process)'
+            - '(?:ruby|perl)\s+-e\s+["''].*(?:eval|exec|system|`)'
+            - '(?:bash|sh|zsh)\s+-c\s+.*\$\((?:curl|wget)\s+'
+            - 'eval\s+["''`]?\$\((?:curl|wget)\s+'
+        - tool: Shell
+          any_command_regex: *eval_untrusted_regex
+        - tool_prefix: mcp_
+          any_command_regex: *eval_untrusted_regex
+    evaluate:
+      - kind: always
+        action: deny
+
+  - id: rogue.reverse-shell
+    severity: critical
+    match:
+      any_of:
+        - tool: Bash
+          any_command_regex: &reverse_shell_regex
+            - '\b(?:bash|sh|zsh|dash|ksh)\s+-i\s*[<>]&?\s*/dev/(?:tcp|udp)/'
+            - '\bexec\s+\d*<>\s*/dev/(?:tcp|udp)/'
+            - '\bnc(?:at)?\s+(?:[^|;&]*\s+)?-e\s+'
+            - '\bncat\s+(?:[^|;&]*\s+)?--exec(?:\s|=)'
+            - '\bsocat\s+(?:[^|;&]*\s+)?(?:exec|system):'
+            - '\bsocat\s+(?:[^|;&]*\s+)?TCP[46]?:[^\s]+\s+EXEC:'
+            - '\bmkfifo\s+[^|;&]*&&\s*[^|;&]*\|\s*(?:bash|sh|zsh)'
+            - '\bpython3?\s+-c\s+["''][^"'']*socket\.socket\([^"'']*'
+            - '\bperl\s+-e\s+["''][^"'']*socket'
+            - '\bphp\s+-r\s+["''][^"'']*fsockopen'
+            - '\bruby\s+-r?e?\s*["''][^"'']*TCPSocket'
+            - '\bbusybox\s+nc\s+(?:[^|;&]*\s+)?-e\b'
+        - tool: Shell
+          any_command_regex: *reverse_shell_regex
+        - tool_prefix: mcp_
+          any_command_regex: *reverse_shell_regex
+    evaluate:
+      - kind: always
+        action: deny
+
+  - id: rogue.security-disable
+    severity: critical
+    match:
+      any_of:
+        - tool: Bash
+          any_command_regex: &security_disable_regex
+            - '\biptables\s+(?:-t\s+\w+\s+)?-F\b'
+            - '\bip6tables\s+(?:-t\s+\w+\s+)?-F\b'
+            - '\bnft\s+flush\s+ruleset\b'
+            - '\bufw\s+disable\b'
+            - '\bsystemctl\s+(?:stop|disable|mask)\s+(?:firewalld|ufw|iptables|nftables)\b'
+            - '\bsetenforce\s+0\b'
+            - '\bsetenforce\s+Permissive\b'
+            - '\baa-disable\b'
+            - '\baa-complain\b'
+            - '\bsystemctl\s+(?:stop|disable|mask)\s+(?:apparmor|auditd|rsyslog|systemd-journald)\b'
+            - '\bauditctl\s+-D\b'
+            - '\bservice\s+auditd\s+stop\b'
+            - '\bcsrutil\s+disable\b'
+            - '\bspctl\s+--master-disable\b'
+            - '\bdefaults\s+write\s+/Library/Preferences/com\.apple\.security'
+            - '\bunset\s+HISTFILE\b'
+            - '\bset\s+\+o\s+history\b'
+            - '\bhistory\s+-c\b'
+            - '\bexport\s+HISTSIZE=0\b'
+            - '\bexport\s+HISTFILE=/dev/null\b'
+            - '\brm\s+(?:-[a-zA-Z]+\s+)?~?/?\.bash_history\b'
+            - '\brm\s+(?:-[a-zA-Z]+\s+)?~?/?\.zsh_history\b'
+            - '\baws\s+cloudtrail\s+(?:stop-logging|delete-trail|put-event-selectors)\b'
+            - '\baws\s+guardduty\s+(?:delete-detector|disable-organization-admin-account)\b'
+            - '\baws\s+config\s+(?:stop-configuration-recorder|delete-configuration-recorder|delete-delivery-channel)\b'
+            - '\baws\s+securityhub\s+(?:disable-security-hub|disassociate-from-administrator-account)\b'
+            - '\bgcloud\s+logging\s+sinks\s+delete\b'
+        - tool: Shell
+          any_command_regex: *security_disable_regex
+        - tool_prefix: mcp_
+          any_command_regex: *security_disable_regex
+    evaluate:
+      - kind: always
+        action: deny
+
+  - id: rogue.permission-loosening
+    severity: high
+    match:
+      any_of:
+        - tool: Bash
+          any_command_regex: &permission_loosening_regex
+            - '\bchmod\s+(?:-R\s+)?0?777\b'
+            - '\bchmod\s+(?:-R\s+)?[0-7]?777\b'
+            - '\bchmod\s+(?:-R\s+)?a\+w\b'
+            - '\bchmod\s+(?:-R\s+)?a=rwx\b'
+            - '\bchmod\s+(?:-R\s+)?o\+w\b'
+            - '\bchmod\s+(?:-R\s+)?(?:u|g|a)\+s\b'
+            - '\bchmod\s+(?:-R\s+)?\+s\b'
+            - '\bchmod\s+(?:-R\s+)?[2467]\d\d\d\b'
+            - '\bchmod\s+(?:-R\s+)?(?:0?666|a\+rw)\s+(?:/etc|/usr|/var|/root|/bin|/sbin|/boot)'
+            - '\bchown\s+-R\s+[^\s]+\s+/(?:etc|usr|bin|sbin|root|boot)(?:/|$|\s)'
+            - '\bchown\s+(?:[^|;&]*\s+)?-R\s+[^\s]+:[^\s]*\s+/'
+            - '\bsetfacl\s+(?:[^|;&]*\s+)?-m\s+(?:o|other):rwx\b'
+            - '\bxattr\s+-d\s+com\.apple\.quarantine\s+'
+        - tool: Shell
+          any_command_regex: *permission_loosening_regex
+        - tool_prefix: mcp_
+          any_command_regex: *permission_loosening_regex
+    evaluate:
+      - kind: always
+        action: deny
+
+  - id: rogue.k8s-destructive
+    severity: critical
+    match:
+      any_of:
+        - tool: Bash
+          any_command_regex: &k8s_destructive_regex
+            - '\bkubectl\s+delete\s+(?:[^|;&]*\s+)?--all\b'
+            - '\bkubectl\s+delete\s+(?:[^|;&]*\s+)?--all-namespaces\b'
+            - '\bkubectl\s+delete\s+ns(?:amespace)?\s+'
+            - '\bkubectl\s+delete\s+pv\b'
+            - '\bkubectl\s+delete\s+(?:persistentvolume|persistentvolumeclaim|pvc)\b'
+            - '\bkubectl\s+delete\s+secret(?:s)?\s+'
+            - '\bkubectl\s+delete\s+(?:[^|;&]*\s+)?--force\s+(?:[^|;&]*\s+)?--grace-period=0\b'
+            - '\bkubectl\s+delete\s+(?:crd|customresourcedefinition)\b'
+            - '\bkubectl\s+drain\s+(?:[^|;&]*\s+)?--force\b'
+            - '\bkubectl\s+(?:scale|patch)\s+(?:[^|;&]*\s+)?--replicas=0\b'
+            - '\bkubectl\s+exec\s+(?:[^|;&]*\s+)?--\s*rm\s+-rf\b'
+            - '\bhelm\s+uninstall\b'
+            - '\bhelm\s+delete\s+'
+            - '\bk3s\s+(?:[^|;&]*\s+)?uninstall\b'
+            - '\bkubeadm\s+reset\b'
+        - tool: Shell
+          any_command_regex: *k8s_destructive_regex
+        - tool_prefix: mcp_
+          any_command_regex: *k8s_destructive_regex
+    evaluate:
+      - kind: always
+        action: deny
+
+  - id: rogue.git-force-push
+    severity: high
+    match:
+      any_of:
+        - tool: Bash
+          any_command_regex: &git_force_push_regex
+            - 'git\s+push\s+(?:[^|;&]*\s+)?(?:--force-with-lease|--force|-f\b)\s+\S+\s+(main|master|develop|release(/[^\s]+)?)'
+            - 'git\s+push\s+(?:[^|;&]*\s+)?\+(main|master|develop|release(/[^\s]+)?)'
+        - tool: Shell
+          any_command_regex: *git_force_push_regex
+        - tool_prefix: mcp_
+          any_command_regex: *git_force_push_regex
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "Force-pushing a shared branch destroys peers' commits. Push to your topic branch and open a PR instead."
+
+  - id: rogue.secret-read
+    severity: high
+    match:
+      any_of:
+        - tool: Read
+          any_path_regex: &secret_read_path_regex
+            - '(^|/)\.env(\.[^/]+)?$'
+            - '(^|/)\.envrc$'
+            - '(^|/)\.aws/credentials$'
+            - '(^|/)\.aws/config$'
+            - '(^|/)\.ssh/id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$'
+            - '(^|/)\.ssh/identity$'
+            - '(^|/)\.npmrc$'
+            - '(^|/)\.pypirc$'
+            - '(^|/)\.netrc$'
+            - '(^|/)\.gnupg/.*'
+            - '(^|/)kubeconfig$'
+            - '(^|/)\.kube/config$'
+            - '(^|/)gha?-creds\.json$'
+        - tool_prefix: mcp_
+          any_path_regex: *secret_read_path_regex
+    evaluate:
+      - kind: always
+        action: deny
+        nudge: "Read secrets through your secrets manager or env-injection step rather than the file directly."
+
+  - id: exfil.cloud-cred-read
+    severity: critical
+    match:
+      any_of:
+        - tool: Read
+          any_path_regex: &cloud_cred_read_path_regex
+            - '(?:^|/)\.config/gcloud/application_default_credentials\.json$'
+            - '(?:^|/)\.config/gcloud/access_tokens\.db$'
+            - '(?:^|/)\.config/gcloud/credentials\.db$'
+            - '(?:^|/)\.config/gcloud/legacy_credentials/'
+            - '(?:^|/)\.config/gcloud/active_config$'
+            - '(?:^|/)\.azure/accessTokens\.json$'
+            - '(?:^|/)\.azure/azureProfile\.json$'
+            - '(?:^|/)\.azure/msal_token_cache\.(?:json|bin)$'
+            - '(?:^|/)\.azure/service_principal_entries\.json$'
+            - '(?:^|/)\.docker/config\.json$'
+            - '(?:^|/)gcp[._-]?service[._-]?account[^/]*\.json$'
+            - '(?:^|/)service[._-]?account[._-]?key[^/]*\.json$'
+            - '(?:^|/)service[._-]?account\.json$'
+            - '(?:^|/)\.terraform\.d/credentials\.tfrc\.json$'
+            - '(?:^|/)terraform\.tfstate(?:\.backup)?$'
+            - '(?:^|/)\.terraform/terraform\.tfstate$'
+            - '(?:^|/)\.helm/repository/repositories\.yaml$'
+            - '(?:^|/)\.helm/registry/config\.json$'
+            - '(?:^|/)\.databrickscfg$'
+            - '(?:^|/)\.databricks/token-cache\.json$'
+            - '(?:^|/)\.snowflake/connections\.toml$'
+            - '(?:^|/)\.config/cloudflared/cert\.pem$'
+            - '(?:^|/)\.config/heroku/config\.json$'
+            - '(?:^|/)\.config/digitalocean/config\.yaml$'
+            - '(?:^|/)\.fly/config\.yml$'
+            - '(?:^|/)\.config/op/config$'
+            - '(?:^|/)\.gh/hosts\.yml$'
+            - '(?:^|/)\.config/gh/hosts\.yml$'
+        - tool_prefix: mcp_
+          any_path_regex: *cloud_cred_read_path_regex
+    evaluate:
+      - kind: always
+        action: deny
+
+  # rogue.system-auth-write blocks edits to identity / auth / network
+  # files. Two arm-classes: direct file mutation tools (Write / Edit /
+  # MultiEdit on Claude Code, Write on Cursor, mcp_*_write_file on
+  # Desktop/Gemini) keyed on file_path; AND shell-side mutations
+  # (`tee /etc/sudoers`, `echo … > /etc/passwd`) keyed on command.
+  - id: rogue.system-auth-write
+    severity: critical
+    match:
+      any_of:
+        - tool: Write
+          any_path_regex: &system_auth_write_path_regex
+            - '^/etc/sudoers(?:$|\.d/)'
+            - '^/etc/passwd$'
+            - '^/etc/shadow$'
+            - '^/etc/group$'
+            - '^/etc/gshadow$'
+            - '^/etc/hosts$'
+            - '^/etc/hostname$'
+            - '^/etc/resolv\.conf$'
+            - '^/etc/nsswitch\.conf$'
+            - '^/etc/pam\.d/'
+            - '^/etc/security/'
+            - '^/etc/ssh/sshd_config(?:$|\.d/)'
+            - '^/etc/ssh/ssh_host_'
+            - '^/etc/ssh/ssh_config(?:$|\.d/)'
+            - '(?:^|/)\.ssh/authorized_keys2?$'
+            - '(?:^|/)\.ssh/config$'
+            - '(?:^|/)\.ssh/known_hosts$'
+            - '^/root/\.ssh/'
+            - '^/etc/login\.defs$'
+            - '^/etc/securetty$'
+            - '^/etc/sub(?:uid|gid)$'
+            - '^/etc/(?:hosts\.allow|hosts\.deny)$'
+            - '^/etc/cron\.allow$'
+            - '^/etc/cron\.deny$'
+            - '^/etc/at\.allow$'
+            - '^/private/etc/(?:sudoers|passwd|hosts|pam\.d|ssh)'
+        - tool: Edit
+          any_path_regex: *system_auth_write_path_regex
+        - tool: MultiEdit
+          any_path_regex: *system_auth_write_path_regex
+        - tool_prefix: mcp_
+          any_path_regex: *system_auth_write_path_regex
+        - tool: Bash
+          any_command_regex: &system_auth_write_command_regex
+            - '\btee\s+(?:-a\s+)?/(?:private/)?etc/(?:sudoers|passwd|shadow|group|gshadow|hosts|hostname|resolv\.conf|nsswitch\.conf|pam\.d/|security/|ssh/|login\.defs|securetty|sub(?:uid|gid)|hosts\.(?:allow|deny)|cron\.(?:allow|deny)|at\.allow)'
+            - '(?:>|>>)\s*/(?:private/)?etc/(?:sudoers|passwd|shadow|group|gshadow|hosts|hostname|resolv\.conf|nsswitch\.conf|pam\.d/|security/|ssh/|login\.defs|securetty|sub(?:uid|gid)|hosts\.(?:allow|deny)|cron\.(?:allow|deny)|at\.allow)'
+            - '(?:>|>>)\s*~?/?\.ssh/authorized_keys2?\b'
+            - '(?:>|>>)\s*[^\s]*?/\.ssh/authorized_keys2?\b'
+            - '\btee\s+(?:-a\s+)?[^\s]*?/\.ssh/authorized_keys2?\b'
+            - '\bsed\s+-i\s+[^\s]+\s+/(?:private/)?etc/(?:sudoers|passwd|shadow|group|gshadow|hosts|resolv\.conf|nsswitch\.conf|pam\.d/|ssh/sshd_config)'
+        - tool: Shell
+          any_command_regex: *system_auth_write_command_regex
+        - tool_prefix: mcp_
+          any_command_regex: *system_auth_write_command_regex
+    evaluate:
+      - kind: always
+        action: deny
+
+  # rogue.shell-rc-write blocks both direct edits to shell rc files
+  # (Write/Edit/MultiEdit + MCP fs writes) and shell-side appends
+  # (`echo … >> ~/.bashrc`, `tee -a ~/.zshrc`). Persistence shape: any
+  # new shell session re-executes the file.
+  - id: rogue.shell-rc-write
+    severity: high
+    match:
+      any_of:
+        - tool: Write
+          any_path_regex: &shell_rc_path_regex
+            - '(?:^|/)\.bashrc$'
+            - '(?:^|/)\.bash_profile$'
+            - '(?:^|/)\.bash_aliases$'
+            - '(?:^|/)\.bash_login$'
+            - '(?:^|/)\.zshrc$'
+            - '(?:^|/)\.zshenv$'
+            - '(?:^|/)\.zprofile$'
+            - '(?:^|/)\.zlogin$'
+            - '(?:^|/)\.profile$'
+            - '(?:^|/)\.config/fish/config\.fish$'
+            - '^/etc/(?:bashrc|bash\.bashrc|zshrc|profile)(?:$|\.d/)'
+            - '^/etc/profile\.d/'
+        - tool: Edit
+          any_path_regex: *shell_rc_path_regex
+        - tool: MultiEdit
+          any_path_regex: *shell_rc_path_regex
+        - tool_prefix: mcp_
+          any_path_regex: *shell_rc_path_regex
+        - tool: Bash
+          any_command_regex: &shell_rc_command_regex
+            - '(?:>|>>)\s*~?/?\.bashrc(?:$|\s)'
+            - '(?:>|>>)\s*~?/?\.bash_profile(?:$|\s)'
+            - '(?:>|>>)\s*~?/?\.bash_login(?:$|\s)'
+            - '(?:>|>>)\s*~?/?\.bash_aliases(?:$|\s)'
+            - '(?:>|>>)\s*~?/?\.zshrc(?:$|\s)'
+            - '(?:>|>>)\s*~?/?\.zshenv(?:$|\s)'
+            - '(?:>|>>)\s*~?/?\.zprofile(?:$|\s)'
+            - '(?:>|>>)\s*~?/?\.zlogin(?:$|\s)'
+            - '(?:>|>>)\s*~?/?\.profile(?:$|\s)'
+            - '(?:>|>>)\s*[^\s]*?/\.bashrc(?:$|\s)'
+            - '(?:>|>>)\s*[^\s]*?/\.bash_profile(?:$|\s)'
+            - '(?:>|>>)\s*[^\s]*?/\.bash_login(?:$|\s)'
+            - '(?:>|>>)\s*[^\s]*?/\.zshrc(?:$|\s)'
+            - '(?:>|>>)\s*[^\s]*?/\.zshenv(?:$|\s)'
+            - '(?:>|>>)\s*[^\s]*?/\.zprofile(?:$|\s)'
+            - '(?:>|>>)\s*[^\s]*?/\.zlogin(?:$|\s)'
+            - '(?:>|>>)\s*[^\s]*?/\.profile(?:$|\s)'
+            - '(?:>|>>)\s*[^\s]*?/\.config/fish/config\.fish(?:$|\s)'
+            - '(?:>|>>)\s*/etc/(?:bashrc|bash\.bashrc|zshrc|profile|profile\.d/)'
+            - '\btee\s+(?:-a\s+)?[^\s]*\.(?:bashrc|bash_profile|bash_login|bash_aliases|zshrc|zshenv|zprofile|zlogin|profile)\b'
+            - '\bsed\s+-i\s+[^\s]+\s+[^\s]*\.(?:bashrc|bash_profile|bash_login|bash_aliases|zshrc|zshenv|zprofile|zlogin|profile)\b'
+        - tool: Shell
+          any_command_regex: *shell_rc_command_regex
+        - tool_prefix: mcp_
+          any_command_regex: *shell_rc_command_regex
+    evaluate:
+      - kind: always
+        action: deny
+
+  # rogue.cron-persistence blocks installing recurring jobs (cron,
+  # systemd-timer, at). Shape only meaningfully shows up shell-side
+  # since cron is a process invocation; file-write to /etc/cron.d/* is
+  # also covered through the redirect arm below.
+  - id: rogue.cron-persistence
+    severity: high
+    match:
+      any_of:
+        - tool: Bash
+          any_command_regex: &cron_persistence_regex
+            - '\bcrontab\s+-\s*$'
+            - '\bcrontab\s+-\s*<'
+            - '\bcrontab\s+/[^\s]+'
+            - '\bcrontab\s+[^\s|;&-][^\s]*\.(?:cron|txt)\b'
+            - '\)\s*\|\s*crontab\s+-'
+            - '\}\s*\|\s*crontab\s+-'
+            - '\becho\s+[^|]*\|\s*crontab\s+-'
+            - '(?:>|>>)\s*/etc/cron(?:tab|\.(?:hourly|daily|weekly|monthly|d)/)'
+            - '(?:>|>>)\s*/var/spool/cron/'
+            - '\bsystemd-run\s+(?:[^|;&]*\s+)?--on-(?:calendar|active|boot|startup|unit-active|unit-inactive)\b'
+            # `at` scheduling: positive match for time-spec args (now, midnight, HH:MM, tomorrow, …)
+            # and scheduling flags (-f file, -t time, -q queue, -m, -M, -v). Excludes read-only
+            # flags (-l/-d/-h/-c/-r/-V) by enumerating the accept-list since RE2 has no lookahead.
+            - '\bat\s+(?:[^-\s]|-[fmtqMv])\S*'
+        - tool: Shell
+          any_command_regex: *cron_persistence_regex
+        - tool_prefix: mcp_
+          any_command_regex: *cron_persistence_regex
+        - tool: Write
+          any_path_regex: &cron_persistence_path_regex
+            - '^/etc/cron(?:tab$|\.(?:hourly|daily|weekly|monthly|d)/)'
+            - '^/var/spool/cron/'
+            - '^/etc/systemd/system/[^/]*\.timer$'
+            - '(?:^|/)\.config/systemd/user/[^/]*\.timer$'
+        - tool: Edit
+          any_path_regex: *cron_persistence_path_regex
+        - tool: MultiEdit
+          any_path_regex: *cron_persistence_path_regex
+        - tool_prefix: mcp_
+          any_path_regex: *cron_persistence_path_regex
+    evaluate:
+      - kind: always
+        action: deny
