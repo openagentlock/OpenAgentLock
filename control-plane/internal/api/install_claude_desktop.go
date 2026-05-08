@@ -340,7 +340,11 @@ func bundleManifestOps(bundlesDir, daemonURL, agentlockBinary string, settings m
 	}
 	var ops []fileOp
 	for path, body := range existingFiles {
-		if !strings.HasSuffix(path, "/manifest.json") {
+		// filepath.Base is platform-agnostic; strings.HasSuffix on a
+		// hard-coded "/manifest.json" misses Windows paths that use
+		// backslash separators when the CLI sends native-separator
+		// paths (CodeRabbit finding).
+		if filepath.Base(path) != "manifest.json" {
 			continue
 		}
 		// path layout: <abs>/<extID>/manifest.json
