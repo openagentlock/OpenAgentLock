@@ -147,7 +147,7 @@ The command does not auto-commit or open a PR in v1. If no rules repo checkout e
 
 ## API Surface
 
-Add API endpoints behind the existing loopback/auth model:
+The implementation exposes these API endpoints behind the existing loopback/auth model:
 
 - `GET /v1/false-positives/cases/{seq}`: build a redacted case bundle for a ledger event.
 - `POST /v1/false-positives/validate`: validate a replacement gate against a case bundle.

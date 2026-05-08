@@ -48,6 +48,9 @@ export interface ApiClient {
   patchGate(id: string, req: PatchGateRequest): Promise<InstallGateYAMLResponse>;
   deleteGate(id: string): Promise<DeleteGateResponse>;
   ledgerInsights(window?: InsightWindow, top?: number): Promise<LedgerInsightsResponse>;
+  falsePositiveCase(seq: number, includeRaw?: boolean): Promise<FalsePositiveCaseResponse>;
+  falsePositiveValidate(req: FalsePositiveValidateRequest): Promise<FalsePositiveValidateResponse>;
+  falsePositiveApply(req: FalsePositiveApplyRequest): Promise<FalsePositiveApplyResponse>;
 }
 
 export type InsightWindow = "1h" | "24h" | "7d" | "all";
@@ -165,6 +168,64 @@ export interface PolicyViewResponse {
   policy_mode: string;
   daemon_mode: string;
   gates: PolicyGateView[];
+}
+
+export interface FalsePositiveCaseResponse {
+  schema_version: number;
+  created_at: string;
+  policy_hash: string;
+  event: {
+    seq: number;
+    source: string;
+    tool?: string;
+    tool_use_id: string;
+    verdict: string;
+    monitor_match?: boolean;
+    rule_id: string;
+  };
+  input: Record<string, string>;
+  raw_input?: Record<string, string>;
+  redactions?: string[];
+  matched_gate: PolicyGateView;
+  policy_trace?: PolicyTraceItem[];
+  audit: {
+    payload_hash: string;
+    leaf_hash: string;
+    prev_leaf: string;
+  };
+}
+
+export interface PolicyTraceItem {
+  layer?: string;
+  source?: string;
+  rule_id: string;
+  verdict: string;
+  precedence?: string;
+  priority?: number;
+}
+
+export interface FalsePositiveValidateRequest {
+  case: FalsePositiveCaseResponse;
+  replacement_yaml: string;
+}
+
+export interface FalsePositiveValidateResponse {
+  ok: boolean;
+  errors?: string[];
+  replacement_id?: string;
+  replacement_verdict?: string;
+}
+
+export interface FalsePositiveApplyRequest extends FalsePositiveValidateRequest {
+  note?: string;
+}
+
+export interface FalsePositiveApplyResponse {
+  hash: string;
+  gates: number;
+  disabled_id: string;
+  replacement_id: string;
+  needs_reload: boolean;
 }
 
 export interface AuthModeResponse {
@@ -697,6 +758,46 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
         throw new Error(`ledger.insights: ${res.status} ${res.statusText} ${body}`);
       }
       return (await res.json()) as LedgerInsightsResponse;
+    },
+
+    async falsePositiveCase(seq: number, includeRaw?: boolean): Promise<FalsePositiveCaseResponse> {
+      const qs = includeRaw ? "?include_raw=true" : "";
+      const res = await fetch(`${url}/v1/false-positives/cases/${encodeURIComponent(String(seq))}${qs}`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`false_positive.case: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as FalsePositiveCaseResponse;
+    },
+
+    async falsePositiveValidate(
+      req: FalsePositiveValidateRequest,
+    ): Promise<FalsePositiveValidateResponse> {
+      const res = await fetch(`${url}/v1/false-positives/validate`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify(req),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`false_positive.validate: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as FalsePositiveValidateResponse;
+    },
+
+    async falsePositiveApply(req: FalsePositiveApplyRequest): Promise<FalsePositiveApplyResponse> {
+      const res = await fetch(`${url}/v1/false-positives/apply`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify(req),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`false_positive.apply: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as FalsePositiveApplyResponse;
     },
   };
 

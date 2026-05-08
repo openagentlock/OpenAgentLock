@@ -24,6 +24,7 @@ import { createRoot, flushSync, useRenderer } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
 import type {
   ApiClient,
+  FalsePositiveCaseResponse,
   InsightWindow,
   LedgerInsightsResponse,
   LedgerRootResponse,
@@ -332,6 +333,38 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
       .catch(() => {});
   }
 
+  async function runFalsePositiveFlow(entry: LedgerEntry): Promise<void> {
+    try {
+      const c = await api.falsePositiveCase(entry.seq, false);
+      const yaml = await runEditor(
+        defaultFalsePositiveReplacementYAML(c),
+        `agentlock-false-positive-${entry.seq}.yaml`,
+      );
+      if (!yaml) {
+        flashToast("false-positive edit cancelled");
+        return;
+      }
+      const validation = await api.falsePositiveValidate({
+        case: c,
+        replacement_yaml: yaml,
+      });
+      if (!validation.ok) {
+        flashToast(`replacement invalid: ${(validation.errors ?? []).join("; ")}`);
+        return;
+      }
+      const applied = await api.falsePositiveApply({
+        case: c,
+        replacement_yaml: yaml,
+      });
+      flashToast(`disabled ${applied.disabled_id}; added ${applied.replacement_id}`);
+      refreshPolicy();
+    } catch (err) {
+      flashToast(
+        `false-positive failed: ${truncate(err instanceof Error ? err.message : String(err), 80)}`,
+      );
+    }
+  }
+
   // Keyboard handler. One handler covers every tab; the dispatch tree
   // is roughly: editor active → ignore; modal open → modal-specific
   // keys; filter editing → text input; otherwise tab-specific keys
@@ -347,6 +380,15 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
 
       // ---- Modal: event detail ----
       if (detailSeqRef.current !== null) {
+        if (name === "f") {
+          const entry = eventsRef.current.find((ev) => ev.seq === detailSeqRef.current);
+          if (entry && canReportFalsePositive(entry)) {
+            void runFalsePositiveFlow(entry);
+          } else {
+            flashToast("false-positive action unavailable for this row");
+          }
+          return;
+        }
         if (name === "escape" || name === "q" || name === "return" || name === "enter") {
           flushSync(() => setDetailSeq(null));
           return;
@@ -1646,9 +1688,32 @@ function DetailModal({
       <Row k="leaf_hash" v={hashFmt(entry.leaf_hash)} />
       <Row k="prev_leaf" v={hashFmt(entry.prev_leaf)} />
       <Row k="sig" v={hashFmt(entry.sig)} />
-      <text fg="#555555">  H toggle full hashes   esc/enter close</text>
+      <text fg="#555555">
+        {`  H toggle full hashes${canReportFalsePositive(entry) ? "   f report false positive" : ""}   esc/enter close`}
+      </text>
     </box>
   );
+}
+
+function canReportFalsePositive(entry: LedgerEntry): boolean {
+  return (
+    Boolean(entry.rule_id) &&
+    entry.rule_id !== "default" &&
+    !isOutcomeEntry(entry) &&
+    (entry.verdict === "deny" || Boolean(entry.monitor_match))
+  );
+}
+
+function defaultFalsePositiveReplacementYAML(c: FalsePositiveCaseResponse): string {
+  const tool = c.event.tool ? `  tool: ${JSON.stringify(c.event.tool)}\n` : "";
+  return `id: ${c.event.rule_id}.replacement
+match:
+${tool}  any_command_regex:
+    - '(?!)'
+evaluate:
+  - kind: always
+    action: deny
+`;
 }
 
 function subjectFromLedgerEntry(

@@ -115,3 +115,43 @@ export interface RootInfo {
   count: number;
   computed_at: string;
 }
+
+export interface FalsePositiveCase {
+  schema_version: number;
+  created_at: string;
+  policy_hash: string;
+  event: {
+    seq: number;
+    source: string;
+    tool?: string;
+    tool_use_id: string;
+    verdict: string;
+    monitor_match?: boolean;
+    rule_id: string;
+  };
+  input: Record<string, string>;
+  raw_input?: Record<string, string>;
+  redactions?: string[];
+  matched_gate: GateView;
+  policy_trace?: PolicyTraceItem[];
+  audit: {
+    payload_hash: string;
+    leaf_hash: string;
+    prev_leaf: string;
+  };
+}
+
+export interface FalsePositiveValidation {
+  ok: boolean;
+  errors?: string[];
+  replacement_id?: string;
+  replacement_verdict?: string;
+}
+
+export interface FalsePositiveApplyResult {
+  hash: string;
+  gates: number;
+  disabled_id: string;
+  replacement_id: string;
+  needs_reload: boolean;
+}

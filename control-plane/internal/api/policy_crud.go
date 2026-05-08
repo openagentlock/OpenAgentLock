@@ -38,19 +38,24 @@ var errGateNotFound = errors.New("gate not found")
 // unmarshal the raw YAML cached on *policy.Policy without exporting
 // that internal schema.
 type yamlRawPolicy struct {
-	Version  int            `yaml:"version"`
-	Mode     string         `yaml:"mode"`
-	Defaults yaml.Node      `yaml:"defaults,omitempty"`
-	Gates    []yamlRawGate  `yaml:"gates"`
+	Version  int           `yaml:"version"`
+	Mode     string        `yaml:"mode"`
+	Defaults yaml.Node     `yaml:"defaults,omitempty"`
+	Gates    []yamlRawGate `yaml:"gates"`
 }
 
 type yamlRawGate struct {
-	ID       string        `yaml:"id"`
-	Mode     string        `yaml:"mode,omitempty"`
-	Severity string        `yaml:"severity,omitempty"`
-	Disabled bool          `yaml:"disabled,omitempty"`
-	Match    yaml.Node     `yaml:"match"`
-	Evaluate yaml.Node     `yaml:"evaluate"`
+	ID                 string    `yaml:"id"`
+	Mode               string    `yaml:"mode,omitempty"`
+	Severity           string    `yaml:"severity,omitempty"`
+	Disabled           bool      `yaml:"disabled,omitempty"`
+	DisabledReason     string    `yaml:"disabled_reason,omitempty"`
+	DisabledByEventSeq uint64    `yaml:"disabled_by_event_seq,omitempty"`
+	DisabledAt         string    `yaml:"disabled_at,omitempty"`
+	ReplacementRuleID  string    `yaml:"replacement_rule_id,omitempty"`
+	FalsePositiveNote  string    `yaml:"false_positive_note,omitempty"`
+	Match              yaml.Node `yaml:"match"`
+	Evaluate           yaml.Node `yaml:"evaluate"`
 }
 
 type addGateRequest struct {

@@ -13,6 +13,7 @@ Both read from the same ledger and policy state — pick whichever fits the mome
 - **Rule tree** — visual editor for the YAML policy with diff preview before save
 - **Live activity** — Server-Sent Events feed; new entries stream in
 - **"Block this next time"** — right-click any logged tool call to generate a starter rule from its shape, then refine
+- **False-positive repair** — open a blocked or monitor-alert event detail, report it as a false positive, validate replacement gate YAML, then atomically disable the old rule and install the replacement
 - **Mode toggle** — flip the daemon between `monitor` and `enforce` (separate from the policy file's own `mode`)
 - **MCP pin queue** — accept or reject newly seen MCP servers
 
@@ -28,6 +29,7 @@ agentlock dashboard
 - **Sessions** — open sessions with their signer tier and policy hash
 - **Loaded gates** — the gates the daemon currently evaluates
 - **Mode flip** — one keypress to toggle the daemon between `monitor` and `enforce`
+- **False-positive repair** — open event detail for a matched deny or alert row and press `f` to edit, validate, and apply a replacement gate
 
 Rule edits and the MCP pin queue still live on the web dashboard.
 

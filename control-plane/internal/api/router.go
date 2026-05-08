@@ -110,6 +110,9 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"POST", "/v1/policy/gates/yaml", policyAddGateYAMLHandler(d)},
 		{"PATCH", "/v1/policy/gates/{id}", policyPatchGateHandler(d)},
 		{"DELETE", "/v1/policy/gates/{id}", policyDeleteGateHandler(d)},
+		{"GET", "/v1/false-positives/cases/{seq}", falsePositiveCaseHandler(d)},
+		{"POST", "/v1/false-positives/validate", falsePositiveValidateHandler(d)},
+		{"POST", "/v1/false-positives/apply", falsePositiveApplyHandler(d)},
 		{"GET", "/v1/sessions", sessionsListHandler(d)},
 
 		// Ledger.

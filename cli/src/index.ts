@@ -21,6 +21,11 @@ import { runLogin } from "./commands/login.ts";
 import { runStatus } from "./commands/status.ts";
 import { runSessionCreate, runSessionEnd, runSessionRotate } from "./commands/session.ts";
 import { runFakeHook } from "./commands/fake-hook.ts";
+import {
+  runFalsePositiveApply,
+  runFalsePositiveCreate,
+  runFalsePositiveRulesPatch,
+} from "./commands/false-positive.ts";
 import { runHookClaudeCode } from "./commands/hook-claude-code.ts";
 import { runHookCodex } from "./commands/hook-codex.ts";
 import { runHookCursor } from "./commands/hook-cursor.ts";
@@ -513,6 +518,73 @@ rules
   .option("--json", "Emit JSON instead of human output.", false)
   .action(async (registryId: string, opts: { json: boolean }) => {
     await runRulesRemove({ id: registryId, json: opts.json });
+  });
+
+const falsePositive = program
+  .command("false-positive [seq]")
+  .description("Create, validate, and apply a local replacement for a false-positive policy match.")
+  .option("--url <url>", "Control-plane base URL.")
+  .option("--out <dir>", "Output directory for `agentlock false-positive <seq>`.")
+  .option("--include-raw", "Include raw event input in case.json. Redacted only by default.", false)
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (seq: string | undefined, opts: { url?: string; out?: string; includeRaw?: boolean; json: boolean }) => {
+    if (seq === undefined) {
+      falsePositive.help();
+      return;
+    }
+    await runFalsePositiveCreate({
+      seq: Number(seq),
+      url: opts.url,
+      out: opts.out,
+      includeRaw: opts.includeRaw,
+      json: opts.json,
+    });
+  });
+
+falsePositive
+  .command("case <seq>")
+  .alias("create")
+  .description("Export a redacted false-positive case bundle for a matched ledger event.")
+  .option("--url <url>", "Control-plane base URL.")
+  .option("--out <dir>", "Output directory. Defaults to ./agentlock-false-positive-<seq>.")
+  .option("--include-raw", "Include raw event input in case.json. Redacted only by default.", false)
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (seq: string, opts: { url?: string; out?: string; includeRaw?: boolean; json: boolean }) => {
+    await runFalsePositiveCreate({
+      seq: Number(seq),
+      url: opts.url,
+      out: opts.out,
+      includeRaw: opts.includeRaw,
+      json: opts.json,
+    });
+  });
+
+falsePositive
+  .command("apply <case-dir>")
+  .description("Validate replacement.yaml and atomically disable the old rule plus install the replacement.")
+  .option("--url <url>", "Control-plane base URL.")
+  .option("--note <text>", "Human-readable note written to disabled rule metadata.")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (caseDir: string, opts: { url?: string; note?: string; json: boolean }) => {
+    await runFalsePositiveApply({
+      caseDir,
+      url: opts.url,
+      note: opts.note,
+      json: opts.json,
+    });
+  });
+
+falsePositive
+  .command("rules-patch <case-dir>")
+  .description("Write a ready-to-edit openagentlock/rules patch draft from a case bundle.")
+  .requiredOption("--rules-repo <path>", "Path to an openagentlock/rules checkout.")
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (caseDir: string, opts: { rulesRepo: string; json: boolean }) => {
+    await runFalsePositiveRulesPatch({
+      caseDir,
+      rulesRepo: opts.rulesRepo,
+      json: opts.json,
+    });
   });
 
 // `agentlock hook <harness> <event>` — shim spawned by command-hook

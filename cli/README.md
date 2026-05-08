@@ -27,6 +27,7 @@ agentlock install           # plan + apply hooks for selected harnesses
 agentlock status            # control-plane health
 agentlock dashboard         # OpenTUI dashboard — live ledger, sessions, gates
 agentlock doctor            # read-only daemon, ledger, policy, session, and hook diagnostics
+agentlock false-positive 42 # export a redacted case bundle for a matched event
 ```
 
 <p align="center">

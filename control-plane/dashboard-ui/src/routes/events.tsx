@@ -4,7 +4,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AddRuleModal } from "@/components/AddRuleModal";
 import { useRootInfo } from "@/hooks/usePoll";
 import { useSSELedger } from "@/hooks/useSSE";
-import type { LedgerEntry } from "@/lib/types";
+import { apiJSON, apiSend } from "@/lib/api";
+import type {
+  FalsePositiveApplyResult,
+  FalsePositiveCase,
+  FalsePositiveValidation,
+  LedgerEntry,
+} from "@/lib/types";
 import { INTERNAL_SOURCES } from "@/lib/filters";
 import { fullLocal, shortTime } from "@/lib/time";
 import { shortHash } from "@/lib/filters";
@@ -442,6 +448,14 @@ function EventDetail({
   entry: LedgerEntry | null;
   onClose: () => void;
 }) {
+  const [fpCase, setFpCase] = useState<FalsePositiveCase | null>(null);
+  const [replacementYAML, setReplacementYAML] = useState("");
+  const [fpValidation, setFpValidation] = useState<FalsePositiveValidation | null>(
+    null,
+  );
+  const [fpApply, setFpApply] = useState<FalsePositiveApplyResult | null>(null);
+  const [fpError, setFpError] = useState<string | null>(null);
+  const [fpBusy, setFpBusy] = useState(false);
   // Esc-to-close + initial focus on the close button. Focus trap is left
   // out for now — the dialog has a single interactive element so Tab
   // would just cycle there anyway.
@@ -471,6 +485,69 @@ function EventDetail({
   }
   const v = verdictDisplay(entry.verdict, entry.monitor_match);
   const subject = subjectFromLedgerEntry(entry);
+  const canReportFalsePositive =
+    !!entry.rule_id &&
+    entry.rule_id !== "default" &&
+    !isOutcomeEntry(entry) &&
+    (entry.verdict === "deny" || !!entry.monitor_match);
+
+  async function loadFalsePositiveCase() {
+    if (!entry) return;
+    setFpBusy(true);
+    setFpError(null);
+    setFpApply(null);
+    setFpValidation(null);
+    try {
+      const c = await apiJSON<FalsePositiveCase>(
+        `/v1/false-positives/cases/${entry.seq}`,
+      );
+      setFpCase(c);
+      setReplacementYAML(defaultReplacementYAML(c));
+    } catch (err) {
+      setFpError((err as Error).message);
+    } finally {
+      setFpBusy(false);
+    }
+  }
+
+  async function validateFalsePositive() {
+    if (!fpCase) return;
+    setFpBusy(true);
+    setFpError(null);
+    setFpApply(null);
+    try {
+      const validation = await apiSend<FalsePositiveValidation>(
+        "/v1/false-positives/validate",
+        "POST",
+        { case: fpCase, replacement_yaml: replacementYAML },
+      );
+      setFpValidation(validation);
+    } catch (err) {
+      setFpError((err as Error).message);
+    } finally {
+      setFpBusy(false);
+    }
+  }
+
+  async function applyFalsePositive() {
+    if (!fpCase) return;
+    setFpBusy(true);
+    setFpError(null);
+    try {
+      const applied = await apiSend<FalsePositiveApplyResult>(
+        "/v1/false-positives/apply",
+        "POST",
+        { case: fpCase, replacement_yaml: replacementYAML },
+      );
+      setFpApply(applied);
+      setFpValidation({ ok: true, replacement_id: applied.replacement_id });
+    } catch (err) {
+      setFpError((err as Error).message);
+    } finally {
+      setFpBusy(false);
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-40"
@@ -549,9 +626,98 @@ function EventDetail({
         {entry.sig && entry.sig.length > 0 && (
           <DetailRow label="sig" value={entry.sig} mono wrap />
         )}
+        {canReportFalsePositive && (
+          <div className="mt-4 border-t border-border pt-4">
+            <button
+              type="button"
+              className="oal-btn-link"
+              onClick={loadFalsePositiveCase}
+              disabled={fpBusy}
+            >
+              {fpCase ? "refresh false-positive case" : "report false positive"}
+            </button>
+          </div>
+        )}
+        {fpCase && (
+          <div className="mt-4 rounded border border-border bg-black/20 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+              False positive case
+            </div>
+            <DetailRow
+              label="matched"
+              value={`${fpCase.matched_gate.id} (${fpCase.matched_gate.source})`}
+              mono
+              wrap
+            />
+            {Object.entries(fpCase.input).map(([k, val]) => (
+              <DetailRow key={k} label={k} value={val} mono wrap />
+            ))}
+            <label className="mt-3 block text-[10px] uppercase tracking-wider text-muted">
+              replacement rule
+            </label>
+            <textarea
+              className="mt-1 h-44 w-full resize-y rounded border border-border bg-bg p-2 font-mono text-xs text-neutral-100"
+              value={replacementYAML}
+              onChange={(e) => {
+                setReplacementYAML(e.target.value);
+                setFpValidation(null);
+                setFpApply(null);
+              }}
+              spellCheck={false}
+            />
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                className="oal-btn-link"
+                onClick={validateFalsePositive}
+                disabled={fpBusy}
+              >
+                validate
+              </button>
+              <button
+                type="button"
+                className="oal-btn-link"
+                onClick={applyFalsePositive}
+                disabled={fpBusy || fpValidation?.ok !== true}
+              >
+                apply replacement
+              </button>
+            </div>
+            {fpValidation && (
+              <div
+                className={`mt-2 text-xs ${
+                  fpValidation.ok ? "text-allow" : "text-deny"
+                }`}
+              >
+                {fpValidation.ok
+                  ? `valid; original event verdict: ${fpValidation.replacement_verdict ?? "allow"}`
+                  : (fpValidation.errors ?? ["validation failed"]).join("; ")}
+              </div>
+            )}
+            {fpApply && (
+              <div className="mt-2 text-xs text-allow">
+                applied {fpApply.replacement_id}; reload sessions to pick up policy{" "}
+                {shortHash(fpApply.hash)}
+              </div>
+            )}
+            {fpError && <div className="mt-2 text-xs text-deny">{fpError}</div>}
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+function defaultReplacementYAML(c: FalsePositiveCase): string {
+  const tool = c.event.tool ? `  tool: ${JSON.stringify(c.event.tool)}\n` : "";
+  return `id: ${c.event.rule_id}.replacement
+match:
+${tool}  any_command_regex:
+    - '(?!)'
+evaluate:
+  - kind: always
+    action: deny
+`;
 }
 
 function DetailRow({
