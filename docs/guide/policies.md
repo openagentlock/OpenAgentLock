@@ -112,23 +112,56 @@ If a rule id collides between two registries the CLI errors out and asks you to 
 
 When the catalog doesn't have what you need, the [openagentlock/skills](https://github.com/openagentlock/skills) toolkit ships agent skills (Claude Code, Cursor, Codex) that turn natural-language intent into a `rule.yaml` and run `agentlock rules install` to land it. See the `block-pattern` skill for the canonical "block this command shape" flow.
 
-## First-boot policy
+## First-boot baseline policy
 
-When the daemon boots without `AGENTLOCK_POLICY` pointing at a custom file, it loads a built-in minimal policy: a single `rogue.destructive-bash` gate in monitor mode. This exists only so every session has a non-empty policy hash to attest against — it is **not** meant as production coverage. The previously-bundled `policies/default.yaml` (with five hardcoded gates) was deprecated and removed.
+When the daemon boots without `AGENTLOCK_POLICY` pointing at a custom file, it loads the **baseline policy embedded into the binary** at build time (source: `control-plane/internal/policy/baseline.yaml`). The baseline ships in `enforce` mode with thirteen gates so a fresh install has real protection without an `agentlock rules install` step.
 
-Real coverage comes from the registry. Recommended starting set:
+| Gate | Severity | What it blocks |
+|---|---|---|
+| `rogue.destructive-bash` | high | `rm -rf /`, `DROP TABLE`, `dd if=…of=/dev/sd*`, `mkfs.*` |
+| `supply-chain.installer-curl-bash` | high | `curl … \| bash`, `eval $(curl …)`, write-then-run installers, language-runtime pipes |
+| `rogue.eval-untrusted` | high | `python -c 'exec(…)'`, `node -e 'eval(…)'`, `sh -c "$(curl …)"` |
+| `rogue.reverse-shell` | critical | `bash -i >& /dev/tcp/…`, `nc -e`, socat exec, language socket+shell one-liners |
+| `rogue.security-disable` | critical | `iptables -F`, `setenforce 0`, `csrutil disable`, `history -c`, CloudTrail/GuardDuty stop |
+| `rogue.permission-loosening` | high | `chmod 777`, `chmod +s`, recursive `chown` of `/etc` `/usr` `/root` |
+| `rogue.k8s-destructive` | critical | `kubectl delete ns`, `kubectl delete pv`, `helm uninstall`, `kubeadm reset` |
+| `rogue.git-force-push` | high | `git push --force` to `main`/`master`/`develop`/`release/*` |
+| `rogue.secret-read` | high | reads of `.env`, `.aws/credentials`, `.ssh/id_*`, kubeconfig, `.gnupg/*` |
+| `exfil.cloud-cred-read` | critical | reads of gcloud / Azure / Docker / Terraform state / SA keys / Snowflake / Databricks creds |
+| `rogue.system-auth-write` | critical | writes to `/etc/sudoers`, `/etc/passwd`, `/etc/ssh/sshd_config`, `~/.ssh/authorized_keys`, etc. (Write/Edit/MultiEdit + shell `tee`/redirect arms) |
+| `rogue.shell-rc-write` | high | writes/appends to `~/.bashrc`, `~/.zshrc`, `~/.profile`, `/etc/profile.d/*` (persistence via shell init) |
+| `rogue.cron-persistence` | high | `crontab -`, `systemd-run --on-calendar`, `at`, writes to `/etc/cron.d/*` and `/var/spool/cron/*` |
+
+### Cross-harness coverage
+
+Each harness sends a different tool-name string on the wire. Each gate's `match:` block uses `any_of` arms covering every shape:
+
+- `tool: Bash` — Claude Code, Codex CLI
+- `tool: Shell` — Cursor `preToolUse` + the synthetic `Shell` injected for `beforeShellExecution`
+- `tool_prefix: mcp_` — Claude Desktop (MCP names use double-underscore `mcp__`) AND Gemini CLI (single-underscore `mcp_`); the single-underscore prefix is a strict superset of the double, so one arm catches both wire shapes
+- `tool: Write` / `tool: Edit` / `tool: MultiEdit` — Claude Code's three file-edit primitives, plus `tool: Write` for Cursor (write/edit gates only)
+
+| Harness | Shell coverage | File-read coverage | File-write coverage | Notes |
+|---|---|---|---|---|
+| Claude Code | ✅ full (`Bash`) | ✅ full (`Read`) | ✅ full (`Write`/`Edit`/`MultiEdit`) | |
+| Codex CLI | ✅ reliable (`Bash`) | ❌ no `Read` tool — file reads do not fire `PreToolUse` per OpenAI Codex docs | ⚠️ `apply_patch` fires inconsistently per OpenAI codex#20204 | |
+| Cursor | ✅ full (`Shell` arm) | ✅ full (`Read`) | ✅ full (`Write`) | |
+| Claude Desktop | ✅ via MCP shell-exec servers | ✅ via MCP filesystem servers | ✅ via MCP filesystem write servers | Desktop is mcp-proxy-only — coverage requires the user to wire an MCP server for the relevant capability |
+| Gemini CLI | ✅ via MCP shell-exec servers | ✅ via MCP filesystem servers | ✅ via MCP filesystem write servers | Native `run_shell_command` / `write_file` / `read_file` / `replace` bypass AgentLock today; tracked as a follow-up. Until native Gemini hooks land, baseline rules cover Gemini only when the workflow uses an MCP server |
+
+### Layering registry rules on top
+
+The baseline is intentionally tight — high-confidence, irreversible shapes only. The community catalog at <https://openagentlock.github.io/rules/> ships broader coverage (network egress allowlists, package typosquat, persistence shapes, etc.):
 
 ```bash
-agentlock rules install rogue.destructive-bash      # tighter regex than the bootstrap gate
-agentlock rules install rogue.secret-read           # deny reads of .env / .ssh / .aws / credentials
-agentlock rules install rogue.net-egress            # block curl/wget/POST shapes
+agentlock rules install rogue.net-egress            # block unknown-host curl/wget shapes
 agentlock rules install supply-chain.npm-untrusted  # block installs from URL/git/tarball
 agentlock rules install supply-chain.pip-untrusted  # same for pip / poetry / uv
 agentlock rules install exfil.curl-with-env         # catch $ENV_VAR exfil shapes
-agentlock rules install rogue.git-force-push        # deny force-push to main/develop/release
+agentlock rules install rogue.launchd-persistence   # macOS launchd-plist persistence
 ```
 
-Browse the full catalog at <https://openagentlock.github.io/rules/>. Pin a private registry alongside the upstream for org-internal rules — see the section above.
+Pin a private registry alongside the upstream for org-internal rules — see the section above.
 
 ## Authoring rules from scratch
 

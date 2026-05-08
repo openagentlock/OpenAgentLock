@@ -52,7 +52,7 @@ Full walkthrough at <https://openagentlock.github.io/OpenAgentLock/guide/getting
 
 ## Community rules registry
 
-Need more gates than the five baseline ones? Browse the community catalog at <https://openagentlock.github.io/rules/> — secret reads, force-push to shared branches, network exfil, untrusted eval. Install with one command:
+Need more gates than the thirteen that ship in the baseline? Browse the community catalog at <https://openagentlock.github.io/rules/> — network exfil host allowlists, package typosquat, broader persistence shapes, plus org-specific rules. Install with one command:
 
 ```bash
 agentlock rules sync
@@ -72,7 +72,7 @@ For agents that need to **author** new rules from natural-language intent, see [
 | `agentlock install` (Claude Code, Codex CLI, Cursor, Gemini CLI) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | `agentlock install --tier {unattested,software,totp}` | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | `agentlock install` (OpenCode, Cline, Continue, VS Code Copilot) | ![not yet](https://img.shields.io/badge/-not%20yet-f59e0b?style=flat-square) |
-| Five baseline gates in monitor mode | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
+| Thirteen cross-harness baseline gates in enforce mode (no `rules install` needed) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Tamper-evident Merkle ledger | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Local web dashboard | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
 | Software + TOTP signers (with `signer enroll` + session mint) | ![shipped](https://img.shields.io/badge/-shipped-16a34a?style=flat-square) |
@@ -111,16 +111,18 @@ Three languages, one repo:
 
 See [Architecture overview](https://openagentlock.github.io/OpenAgentLock/architecture/overview/) for the why behind the split.
 
-## Policy — registry-first
+## Policy — baseline + registry
 
-OpenAgentLock ships with a minimal first-boot policy (a single `rogue.destructive-bash` gate in monitor mode) so every session has *some* policy hash to attest against. Real coverage comes from the [openagentlock/rules](https://github.com/openagentlock/rules) registry — install whichever rules match your threat model:
+OpenAgentLock ships a **thirteen-gate enforce-mode baseline** embedded in the daemon binary (source: [`control-plane/internal/policy/baseline.yaml`](./control-plane/internal/policy/baseline.yaml)). Fresh installs block destructive shell commands, supply-chain RCE shapes (`curl … | bash`, `eval $(curl …)`), reverse shells, secret/credential reads (`.env`, `.aws/credentials`, gcloud/Azure/Terraform state), defence evasion (`iptables -F`, `csrutil disable`, `history -c`), `chmod 777`, destructive `kubectl delete ns` / `helm uninstall`, force-push to shared branches, writes to `/etc/sudoers` / `~/.ssh/authorized_keys`, persistence appends to `~/.bashrc` / `~/.zshrc`, and cron/systemd-timer install — across **Claude Code, Codex, Cursor, Claude Desktop, and Gemini (via MCP)** without an `agentlock rules install` step. Each gate uses `any_of` arms covering `Bash` + `Shell` + `tool_prefix: mcp_` (catches both Claude/Cursor's `mcp__` double-underscore and Gemini's `mcp_` single-underscore wire shape) and, for write/edit gates, `Write` + `Edit` + `MultiEdit`. See [`docs/guide/policies.md`](./docs/guide/policies.md#first-boot-baseline-policy) for the full gate inventory and per-harness coverage matrix.
+
+Layer org-specific or broader coverage on top via the [openagentlock/rules](https://github.com/openagentlock/rules) registry:
 
 ```bash
 agentlock rules sync                                 # tap the upstream registry
 agentlock rules search exfil                         # browse by keyword
-agentlock rules install rogue.destructive-bash       # land a gate in the live policy
-agentlock rules install exfil.curl-with-env
-agentlock rules install rogue.secret-read
+agentlock rules install rogue.net-egress             # block unknown-host curl/wget
+agentlock rules install supply-chain.npm-untrusted   # deny installs from URL/git/tarball
+agentlock rules install exfil.curl-with-env          # catch $ENV_VAR exfil shapes
 ```
 
 You can also tap a private registry (any Git repo with the same layout) for org-internal rules:
