@@ -308,7 +308,7 @@ describe("installAndResolveAgentlockBinary", () => {
       expect(st.mode & 0o100).toBe(0o100);
       const body = await fs.readFile(path, "utf8");
       expect(body).toContain("#!/usr/bin/env bash");
-      expect(body).toContain("exec bun run");
+      expect(body).toContain(`exec '${process.execPath}' run`);
       expect(body).toContain("src/index.ts");
     } finally {
       if (prev === undefined) delete process.env.AGENTLOCK_HOME;

@@ -34,25 +34,32 @@ When the daemon is unreachable, the shim never writes user-visible text into std
 - **Cursor — silent fail-open**. Cursor's hook spec has no UI surface that's outside the model's input stream and no statusLine equivalent. On daemon failures the shim emits a plain `{"permission":"allow"}` envelope and stays silent. A live indicator for Cursor would need a real Cursor extension; tracked separately.
 - **Gemini CLI — silent fail-open**. Gemini hooks have no status-line equivalent. On daemon failures the shim stays silent and lets the tool call continue.
 
-All four harnesses share the wrapper-stability fix: the hook command that Claude Code / Codex / Cursor / Gemini spawn points at `<agentlockHome>/bin/agentlock` (e.g. `~/Library/Application Support/OpenAgentLock/bin/agentlock` on macOS), written by `agentlock install`. The path lives in our state dir, not in the package manager's `node_modules` tree, so package upgrades don't strand the wired path. The same applies to `agentlock-status`. Both paths are shell-quoted in the wired command string so spaces (`Application Support`) survive `/bin/sh -c` parsing.
+All enforceable harnesses share the wrapper-stability fix: the hook command that Claude Code / Codex CLI / Cursor / Gemini spawn points at `<agentlockHome>/bin/agentlock` (e.g. `~/Library/Application Support/OpenAgentLock/bin/agentlock` on macOS), written by `agentlock install`. The path lives in our state dir, not in the package manager's `node_modules` tree, so package upgrades don't strand the wired path. The same applies to `agentlock-status`. Both paths are shell-quoted in the wired command string so spaces (`Application Support`) survive `/bin/sh -c` parsing.
 
 ## Codex CLI
 
-Codex uses **command hooks** declared in `~/.codex/config.toml`. The CLI ships an `agentlock hook codex <event>` shim so the same control-plane endpoints are reused:
+Codex CLI uses **command hooks** declared in `~/.codex/hooks.json`. Hook execution is enabled from `~/.codex/config.toml`:
 
 ```toml
-codex_hooks = true
-
-[[hook]]
-event = "pre_tool"
-command = ["agentlock", "hook", "codex", "pre-tool"]
+[features]
+hooks = true
 ```
 
-`agentlock install` auto-enables the flag for you: it creates `~/.codex/config.toml` if missing, flips `codex_hooks = false` to `true`, or appends the line to an existing TOML — backing the original up first. The flag stays user-removable; we never enable it without an install run.
+The installer writes `~/.codex/hooks.json` entries that spawn `agentlock hook codex <event>`, which forwards to `/v1/hooks/codex/<event>`. `agentlock install` auto-enables the flag for you: it creates `~/.codex/config.toml` if missing, flips `[features].hooks = false` to `true`, or adds the key to an existing TOML — backing the original up first. The flag stays user-removable; we never enable it without an install run.
+
+Codex requires new or changed hooks to be trusted before they run. After installing or reinstalling OpenAgentLock hooks, open Codex CLI, run `/hooks`, select the OpenAgentLock hook entry, then press `t` to trust it.
 
 Codex command hooks are bash-only today; MCP coverage at the hook layer is a tracked upstream gap, not something we can paper over.
 
 Daemon-down behavior is documented in the **Daemon-down UX** section above — Codex stays silent (it has no UI surface that renders on exit-0 hooks).
+
+## Codex Desktop
+
+Codex Desktop is supported, and is detected separately from Codex CLI. Current Desktop builds share the same `~/.codex/hooks.json` and `~/.codex/config.toml` hook state, so the installer writes the shared Codex hook config instead of a separate Desktop-only config. Selecting Codex Desktop installs the shared `agentlock hook codex <event>` command that covers both Codex CLI and Codex Desktop.
+
+Codex Desktop does not expose the Codex CLI `/hooks` trust UI. Trust OpenAgentLock hooks from Codex CLI with `/hooks`, select the OpenAgentLock entry, and press `t`; after that, Desktop sessions can run the shared user-level hook. Desktop may display internal hook phases in the UI too, so use the OpenAgentLock ledger or a blocked command result to confirm the `hooks.json` command actually ran.
+
+OpenAgentLock keeps a `codex-desktop` shim plus `/v1/hooks/codex-desktop/*` endpoints for probe traffic, but the production Desktop support path intentionally uses the shared `codex` hook route until Desktop exposes a separate hook config or reliable runtime identity.
 
 ## Cursor
 

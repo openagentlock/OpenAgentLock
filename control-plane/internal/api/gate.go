@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/openagentlock/openagentlock/control-plane/internal/policy"
 	"github.com/openagentlock/openagentlock/control-plane/internal/storage"
 )
 
@@ -66,15 +65,11 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 
 		// Resolve the policy pinned to this session's hash; falls back to
 		// live when the hash is unknown (e.g. registry not yet seeded).
-		evalPolicy := resolvePolicy(d, sess.PolicyHash)
+		evalPolicy, result := evaluatePolicyForSession(d, sess, req.Cwd, req.Tool, req.Input)
 		if evalPolicy == nil {
 			writeError(w, http.StatusServiceUnavailable, "policy_unavailable", "no policy loaded")
 			return
 		}
-		result := evalPolicy.Evaluate(policy.EvalRequest{
-			Tool:  req.Tool,
-			Input: req.Input,
-		})
 
 		var origVerdict string
 		result, _, origVerdict = applyDaemonModeOverride(result)
@@ -107,6 +102,7 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 			Verdict:      origVerdict,
 			MonitorMatch: result.MonitorMatch,
 			MatcherInput: ledgerMatcherInput(req.Input),
+			PolicyTrace:  storagePolicyTrace(result.Trace),
 			PayloadHash:  payloadHash[:],
 			Sig:          nil,
 		})

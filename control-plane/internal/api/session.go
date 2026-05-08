@@ -130,6 +130,12 @@ func sessionRotateHandler(d Deps) http.HandlerFunc {
 		updated.Signer = req.Signer
 		updated.SignerPubKey = req.SignerPubKey
 		updated.ExpiresAt = now.Add(sessionTTL)
+		if trimmed := strings.TrimSpace(req.UserID); trimmed != "" {
+			updated.UserID = trimmed
+		}
+		if req.Groups != nil {
+			updated.Groups = dedupeStrings(req.Groups)
+		}
 		if err := d.Store.UpdateSession(r.Context(), updated); err != nil {
 			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())
 			return
@@ -187,12 +193,14 @@ func splitTrim(s string) []string {
 }
 
 type sessionStartRequest struct {
-	PolicyHash    string `json:"policy_hash"`
-	SessionPubKey string `json:"session_pubkey"`
-	Signer        string `json:"signer"`
-	SignerPubKey  string `json:"signer_pubkey"`
-	Attestation   string `json:"attestation"`
-	Harness       string `json:"harness,omitempty"`
+	PolicyHash    string   `json:"policy_hash"`
+	SessionPubKey string   `json:"session_pubkey"`
+	Signer        string   `json:"signer"`
+	SignerPubKey  string   `json:"signer_pubkey"`
+	Attestation   string   `json:"attestation"`
+	Harness       string   `json:"harness,omitempty"`
+	UserID        string   `json:"user_id,omitempty"`
+	Groups        []string `json:"groups,omitempty"`
 }
 
 // current accepted signer kinds. Mirrors docs/guide/signers.md. "none" is valid on
@@ -256,6 +264,8 @@ func createSessionHandler(d Deps) http.HandlerFunc {
 			Signer:        req.Signer,
 			SignerPubKey:  req.SignerPubKey,
 			Harness:       strings.TrimSpace(req.Harness),
+			UserID:        strings.TrimSpace(req.UserID),
+			Groups:        dedupeStrings(req.Groups),
 		}
 		if err := d.Store.CreateSession(r.Context(), s); err != nil {
 			writeError(w, http.StatusInternalServerError, "storage_error", err.Error())

@@ -38,19 +38,24 @@ var errGateNotFound = errors.New("gate not found")
 // unmarshal the raw YAML cached on *policy.Policy without exporting
 // that internal schema.
 type yamlRawPolicy struct {
-	Version  int            `yaml:"version"`
-	Mode     string         `yaml:"mode"`
-	Defaults yaml.Node      `yaml:"defaults,omitempty"`
-	Gates    []yamlRawGate  `yaml:"gates"`
+	Version  int           `yaml:"version"`
+	Mode     string        `yaml:"mode"`
+	Defaults yaml.Node     `yaml:"defaults,omitempty"`
+	Gates    []yamlRawGate `yaml:"gates"`
 }
 
 type yamlRawGate struct {
-	ID       string        `yaml:"id"`
-	Mode     string        `yaml:"mode,omitempty"`
-	Severity string        `yaml:"severity,omitempty"`
-	Disabled bool          `yaml:"disabled,omitempty"`
-	Match    yaml.Node     `yaml:"match"`
-	Evaluate yaml.Node     `yaml:"evaluate"`
+	ID                 string    `yaml:"id"`
+	Mode               string    `yaml:"mode,omitempty"`
+	Severity           string    `yaml:"severity,omitempty"`
+	Disabled           bool      `yaml:"disabled,omitempty"`
+	DisabledReason     string    `yaml:"disabled_reason,omitempty"`
+	DisabledByEventSeq uint64    `yaml:"disabled_by_event_seq,omitempty"`
+	DisabledAt         string    `yaml:"disabled_at,omitempty"`
+	ReplacementRuleID  string    `yaml:"replacement_rule_id,omitempty"`
+	FalsePositiveNote  string    `yaml:"false_positive_note,omitempty"`
+	Match              yaml.Node `yaml:"match"`
+	Evaluate           yaml.Node `yaml:"evaluate"`
 }
 
 type addGateRequest struct {
@@ -68,6 +73,8 @@ type addGateRequest struct {
 type patchGateRequest struct {
 	Disabled        *bool    `json:"disabled,omitempty"`
 	AnyCommandRegex []string `json:"any_command_regex,omitempty"`
+	AnyPathRegex    []string `json:"any_path_regex,omitempty"`
+	AnyURLRegex     []string `json:"any_url_regex,omitempty"`
 	Mode            string   `json:"mode,omitempty"`
 }
 
@@ -200,7 +207,13 @@ func policyPatchGateHandler(d Deps) http.HandlerFunc {
 					raw.Gates[i].Mode = req.Mode
 				}
 				if req.AnyCommandRegex != nil {
-					rewriteMatchRegexes(&raw.Gates[i].Match, req.AnyCommandRegex)
+					rewriteMatchRegexes(&raw.Gates[i].Match, "any_command_regex", req.AnyCommandRegex)
+				}
+				if req.AnyPathRegex != nil {
+					rewriteMatchRegexes(&raw.Gates[i].Match, "any_path_regex", req.AnyPathRegex)
+				}
+				if req.AnyURLRegex != nil {
+					rewriteMatchRegexes(&raw.Gates[i].Match, "any_url_regex", req.AnyURLRegex)
 				}
 				return nil
 			}
@@ -354,23 +367,23 @@ func buildRawGateFromAdd(req addGateRequest) yamlRawGate {
 	}
 }
 
-// rewriteMatchRegexes replaces the any_command_regex field inside the
-// match map in-place, preserving other keys (tool, path_glob, etc.).
-func rewriteMatchRegexes(match *yaml.Node, regexes []string) {
+// rewriteMatchRegexes replaces one regex list field inside the match map
+// in-place, preserving other keys (tool, path_glob, etc.).
+func rewriteMatchRegexes(match *yaml.Node, key string, regexes []string) {
 	if match.Kind != yaml.MappingNode {
 		return
 	}
 	// yaml.Node mapping: Content[0]=key, Content[1]=value, ...
 	idx := -1
 	for i := 0; i+1 < len(match.Content); i += 2 {
-		if match.Content[i].Value == "any_command_regex" {
+		if match.Content[i].Value == key {
 			idx = i + 1
 			break
 		}
 	}
 	seq := yamlSeqNode(regexes)
 	if idx == -1 {
-		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: "any_command_regex"}
+		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
 		match.Content = append(match.Content, keyNode, seq)
 	} else {
 		match.Content[idx] = seq

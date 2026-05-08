@@ -11,6 +11,7 @@ export interface FakeHookOptions {
   tool: string;
   command?: string;
   filePath?: string;
+  cwd?: string;
   url?: string;
   json: boolean;
   inputJson?: string;
@@ -34,6 +35,7 @@ export async function runFakeHook(opts: FakeHookOptions): Promise<void> {
     source: opts.source,
     tool: opts.tool,
     input,
+    cwd: opts.cwd,
   };
   const client = apiClient(opts.url);
   let res: GateCheckResponse;

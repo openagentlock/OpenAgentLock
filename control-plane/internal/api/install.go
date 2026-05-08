@@ -128,14 +128,37 @@ func buildPlanOps(req installPlanRequest) ([]fileOp, []string, []string) {
 	ops := make([]fileOp, 0)
 	skipped := make([]string, 0)
 	warnings := make([]string, 0)
+	codexPlanned := false
 	for _, h := range req.Harnesses {
 		switch h {
 		case "claude-code":
 			ops = append(ops, claudeCodePlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.StatusLineScript, req.HarnessConfigDirs, req.ExistingFiles))
+		case "claude-desktop":
+			desktopOps, ws := claudeDesktopPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
+			ops = append(ops, desktopOps...)
+			warnings = append(warnings, ws...)
 		case "codex":
+			if codexPlanned {
+				continue
+			}
+			codexPlanned = true
 			codexOps, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
 			ops = append(ops, codexOps...)
 			warnings = append(warnings, ws...)
+		case "codex-desktop":
+			if codexPlanned {
+				continue
+			}
+			codexPlanned = true
+			overrides := req.HarnessConfigDirs
+			if req.ConfigDirOverride == "" && overrides["codex"] == "" && overrides["codex-desktop"] != "" {
+				overrides = copyStringMap(overrides)
+				overrides["codex"] = overrides["codex-desktop"]
+			}
+			codexOps, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, overrides, req.ExistingFiles)
+			ops = append(ops, codexOps...)
+			warnings = append(warnings, ws...)
+			warnings = append(warnings, "Codex Desktop is supported through the shared ~/.codex hook config. Trust the OpenAgentLock hook from Codex CLI /hooks; Desktop does not expose its own trust UI.")
 		case "cursor":
 			op, ws := cursorPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
 			ops = append(ops, op)
@@ -155,13 +178,21 @@ func buildPlanOps(req installPlanRequest) ([]fileOp, []string, []string) {
 	return ops, skipped, warnings
 }
 
+func copyStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 // knownHarnessID is the daemon-side whitelist of harness ids the install
 // pipeline recognises. It mirrors the CLI's HarnessId union — anything
 // outside this set is rejected up-front so a bad payload can't trick the
 // dev-stub branch into writing a file at an arbitrary nested path.
 func knownHarnessID(h string) bool {
 	switch h {
-	case "codex", "opencode", "cursor", "cline", "continue",
+	case "codex", "codex-desktop", "opencode", "cursor", "cline", "continue",
 		"gemini", "vscode-copilot":
 		return true
 	}
@@ -402,7 +433,7 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 		ops, skipped, warnings := buildPlanOps(req)
 		entries := make([]installManifestE, 0, len(ops))
 		for _, op := range ops {
-			harness := harnessForPath(op.Path)
+			harness := harnessForInstallOp(op.Path, req.Harnesses)
 			entries = append(entries, installManifestE{
 				Harness:      harness,
 				SettingsPath: op.Path,
@@ -468,6 +499,15 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 	}
 }
 
+func harnessForInstallOp(path string, selected []string) string {
+	if len(selected) == 1 && selected[0] == "codex-desktop" {
+		if strings.HasSuffix(path, "hooks.json") || strings.HasSuffix(path, "config.toml") {
+			return "codex-desktop"
+		}
+	}
+	return harnessForPath(path)
+}
+
 // harnessForPath maps an op.Path back to the harness id we'd record in
 // the manifest. The plan helpers always emit paths under a known
 // per-harness file name (settings.json for Claude, hooks.json /
@@ -477,6 +517,16 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 func harnessForPath(path string) string {
 	dir := filepath.Base(filepath.Dir(path))
 	switch {
+	case strings.HasSuffix(path, "claude_desktop_config.json"),
+		strings.HasSuffix(path, "extensions-installations.json"):
+		return "claude-desktop"
+	case filepath.Base(path) == "manifest.json" &&
+		filepath.Base(filepath.Dir(filepath.Dir(path))) == "Claude Extensions":
+		// Bundle manifest of a Desktop Extension. Path shape:
+		// <config-dir>/Claude Extensions/<ext-id>/manifest.json.
+		// filepath.Base avoids the cross-platform footgun of literal
+		// "/Claude Extensions/" not matching backslash paths on Windows.
+		return "claude-desktop"
 	case strings.HasSuffix(path, "settings.json"):
 		// Gemini also writes settings.json (in ~/.gemini); disambiguate
 		// by parent directory. Anything else is Claude Code.
@@ -582,7 +632,7 @@ func isAgentlockEntry(v any) bool {
 // executes "/Users/ronaldli/Library/Application" as a script — that's
 // the "line 1: on: command not found" failure mode that produced red
 // "PreToolUse:hook error" banners in earlier installs. Single quotes
-// are the simplest robust escape: macOS state dirs can't contain '\''.
+// are the simplest robust escape: macOS state dirs can't contain '\”.
 // For the (extremely unlikely) edge case where they do, we fall back
 // to the close-quote / escaped-quote / open-quote idiom.
 func shellQuote(s string) string {
@@ -669,12 +719,25 @@ func installUninstallHandler(d Deps) http.HandlerFunc {
 				stripErr error
 			)
 			switch e.Harness {
-			case "codex":
+			case "codex", "codex-desktop":
 				newBytes, removed, stripErr = stripCodexHooks(existing)
 			case "cursor":
 				newBytes, removed, stripErr = stripCursorHooks(existing)
 			case "gemini":
 				newBytes, removed, stripErr = stripGeminiSettings(existing)
+			case "claude-desktop":
+				// Three file shapes land here:
+				//   - claude_desktop_config.json (manual mcpServers path)
+				//   - extensions-installations.json (Desktop Extensions registry)
+				//   - <Claude Extensions>/<id>/manifest.json (bundle manifests, the actual launch source)
+				if strings.HasSuffix(e.SettingsPath, "extensions-installations.json") {
+					newBytes, removed, stripErr = stripExtensionRegistry(existing)
+				} else if filepath.Base(e.SettingsPath) == "manifest.json" &&
+					filepath.Base(filepath.Dir(filepath.Dir(e.SettingsPath))) == "Claude Extensions" {
+					newBytes, removed, stripErr = stripBundleManifest(existing)
+				} else {
+					newBytes, removed, stripErr = stripClaudeDesktopConfig(existing)
+				}
 			default:
 				// Default to Claude's settings.json shape. Older manifests
 				// without a Harness field land here, which is the right
@@ -818,8 +881,8 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 					}
 				}
 				ops = append(ops, op)
-			case "codex":
-				p, err := codexHooksPath(req.ConfigDirOverride, req.HarnessConfigDirs)
+			case "codex", "codex-desktop":
+				p, err := codexHooksPathForHarness(h, req.ConfigDirOverride, req.HarnessConfigDirs)
 				if err != nil {
 					failures++
 					ops = append(ops, uninstallOp{Op: "strip", Path: "<unresolved>", Error: err.Error()})
@@ -881,6 +944,82 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 					}
 				}
 				ops = append(ops, op)
+			case "claude-desktop":
+				// Strip both files Claude Desktop install touches: the
+				// mcpServers config (claude_desktop_config.json) and
+				// the Desktop Extensions registry
+				// (extensions-installations.json). Each is independent
+				// — one can be missing without affecting the other.
+				cfgP, err := claudeDesktopConfigPath(req.ConfigDirOverride, req.HarnessConfigDirs)
+				if err != nil {
+					failures++
+					ops = append(ops, uninstallOp{Op: "strip", Path: "<unresolved>", Error: err.Error()})
+				} else {
+					cfgExisting := []byte(req.ExistingFiles[cfgP])
+					newBytes, removed, stripErr := stripClaudeDesktopConfig(cfgExisting)
+					op := uninstallOp{Op: "strip", Path: cfgP}
+					if stripErr != nil {
+						failures++
+						op.Error = stripErr.Error()
+						log.Printf("install.uninstall_harnesses: strip claude-desktop %s: %v", cfgP, stripErr)
+					} else {
+						op.EntriesRemoved = removed
+						if removed > 0 {
+							op.Content = string(newBytes)
+						}
+					}
+					ops = append(ops, op)
+				}
+				if regP, err := extensionsRegistryPath(req.ConfigDirOverride, req.HarnessConfigDirs); err == nil {
+					regExisting := []byte(req.ExistingFiles[regP])
+					if len(regExisting) > 0 {
+						newBytes, removed, stripErr := stripExtensionRegistry(regExisting)
+						op := uninstallOp{Op: "strip", Path: regP}
+						if stripErr != nil {
+							failures++
+							op.Error = stripErr.Error()
+							log.Printf("install.uninstall_harnesses: strip claude-desktop extensions %s: %v", regP, stripErr)
+						} else {
+							op.EntriesRemoved = removed
+							if removed > 0 {
+								op.Content = string(newBytes)
+							}
+						}
+						ops = append(ops, op)
+					}
+				}
+				// Strip every per-extension bundle manifest the CLI sent
+				// us. The on-disk manifest is THE launch source for
+				// Desktop Extensions (probed empirically) so this is
+				// what actually un-gates the user.
+				bundlesDir, _ := claudeDesktopExtensionsDir(req.ConfigDirOverride, req.HarnessConfigDirs)
+				if bundlesDir != "" {
+					absBundles := bundlesDir
+					if a, err := filepath.Abs(bundlesDir); err == nil {
+						absBundles = a
+					}
+					for path, body := range req.ExistingFiles {
+						if filepath.Base(path) != "manifest.json" {
+							continue
+						}
+						if filepath.Dir(filepath.Dir(path)) != absBundles {
+							continue
+						}
+						newBytes, removed, stripErr := stripBundleManifest([]byte(body))
+						op := uninstallOp{Op: "strip", Path: path}
+						if stripErr != nil {
+							failures++
+							op.Error = stripErr.Error()
+							log.Printf("install.uninstall_harnesses: strip claude-desktop bundle %s: %v", path, stripErr)
+						} else {
+							op.EntriesRemoved = removed
+							if removed > 0 {
+								op.Content = string(newBytes)
+							}
+						}
+						ops = append(ops, op)
+					}
+				}
 			default:
 				if devHome == "" || !knownHarnessID(h) {
 					// No real installer + not in dev mode → nothing to do.

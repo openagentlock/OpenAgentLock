@@ -4,7 +4,7 @@ OpenAgentLock policy is **deterministic YAML**. No LLM lives inside the evaluato
 
 Most operators do not author policies from scratch. The shape of a real-world policy is:
 
-1. The **five built-in defaults** the daemon boots with — useful baseline, intentionally narrow.
+1. The **thirteen-gate built-in baseline** the daemon boots with — useful baseline, intentionally narrow.
 2. A handful of **community rules** pulled from [openagentlock/rules](https://openagentlock.github.io/rules/) on top.
 3. Optionally, a **private rules registry** with internal-to-your-org rules.
 
@@ -38,12 +38,58 @@ agentlock rules search bash
 agentlock rules install exfil.curl-with-env
 agentlock rules install rogue.secret-read
 
+# Or commit the rule to the current repo only. This writes the registry
+# rule's gate block into .agentlock.yaml instead of the daemon policy.
+agentlock rules install rogue.secret-read --repo
+
 # Remove later — by gate id, the same /v1/policy/gates/{id} DELETE
 # handler the dashboard uses.
 agentlock rules uninstall exfil.curl-with-env
 ```
 
 `agentlock rules` is wired through to the same daemon endpoint the [local web dashboard](dashboard.md) uses, so installs are immediately visible at `http://127.0.0.1:7879/rules`.
+
+## Repo-local `.agentlock.yaml`
+
+Repos can commit a root `.agentlock.yaml` for policy that applies only when a request `cwd` is inside that tree:
+
+```yaml
+version: 1
+gates:
+  - id: repo.block-prod-env
+    match:
+      tool: Bash
+      any_command_regex:
+        - 'cat\s+\.env\.production'
+    evaluate:
+      - kind: always
+        action: deny
+```
+
+The daemon walks upward from `cwd` and uses the nearest `.agentlock.yaml`. Sibling repos are unaffected. Because cloned repos are not trusted, repo-local policy is additive by default: new deny-producing gates apply immediately, but disabled gates, same-id overrides, and `always: allow` content cannot weaken daemon policy without an operator approval flow. See [Per-Repo Policy](../architecture/per-repo-policy.md) for the full trust model and precedence chain.
+
+## Group policy
+
+Multi-user deployments can add `AGENTLOCK_HOME/group-policy.yaml` to layer group and personal gates over the daemon policy. Sessions may carry optional `user_id` and `groups` fields that determine which policy gates apply to each user. Today those fields can be supplied by the session API / CLI; directory-backed population belongs with the auth integration.
+
+```yaml
+version: 1
+groups:
+  compliance:
+    gates:
+      - id: group.secret-read
+        match:
+          tool: Bash
+          command_regex: '^cat secret'
+        evaluate:
+          - kind: always
+            action: deny
+users:
+  alice:
+    groups: [compliance]
+```
+
+Across daemon, registry, group, user, and repo layers, deny-overrides is the default. A shared gate id may opt into `precedence: priority` plus `priority: <number>` when an operator wants highest-priority-wins for that id. Ledger entries include `policy_trace` so the dashboard can show which layers allowed or denied a call. See [Group Policy](../architecture/group-policy.md).
 
 ### Pin a private registry too
 
@@ -66,23 +112,56 @@ If a rule id collides between two registries the CLI errors out and asks you to 
 
 When the catalog doesn't have what you need, the [openagentlock/skills](https://github.com/openagentlock/skills) toolkit ships agent skills (Claude Code, Cursor, Codex) that turn natural-language intent into a `rule.yaml` and run `agentlock rules install` to land it. See the `block-pattern` skill for the canonical "block this command shape" flow.
 
-## First-boot policy
+## First-boot baseline policy
 
-When the daemon boots without `AGENTLOCK_POLICY` pointing at a custom file, it loads a built-in minimal policy: a single `rogue.destructive-bash` gate in monitor mode. This exists only so every session has a non-empty policy hash to attest against — it is **not** meant as production coverage. The previously-bundled `policies/default.yaml` (with five hardcoded gates) was deprecated and removed.
+When the daemon boots without `AGENTLOCK_POLICY` pointing at a custom file, it loads the **baseline policy embedded into the binary** at build time (source: `control-plane/internal/policy/baseline.yaml`). The baseline ships in `enforce` mode with thirteen gates so a fresh install has real protection without an `agentlock rules install` step.
 
-Real coverage comes from the registry. Recommended starting set:
+| Gate | Severity | What it blocks |
+|---|---|---|
+| `rogue.destructive-bash` | high | `rm -rf /`, `DROP TABLE`, `dd if=…of=/dev/sd*`, `mkfs.*` |
+| `supply-chain.installer-curl-bash` | high | `curl … \| bash`, `eval $(curl …)`, write-then-run installers, language-runtime pipes |
+| `rogue.eval-untrusted` | high | `python -c 'exec(…)'`, `node -e 'eval(…)'`, `sh -c "$(curl …)"` |
+| `rogue.reverse-shell` | critical | `bash -i >& /dev/tcp/…`, `nc -e`, socat exec, language socket+shell one-liners |
+| `rogue.security-disable` | critical | `iptables -F`, `setenforce 0`, `csrutil disable`, `history -c`, CloudTrail/GuardDuty stop |
+| `rogue.permission-loosening` | high | `chmod 777`, `chmod +s`, recursive `chown` of `/etc` `/usr` `/root` |
+| `rogue.k8s-destructive` | critical | `kubectl delete ns`, `kubectl delete pv`, `helm uninstall`, `kubeadm reset` |
+| `rogue.git-force-push` | high | `git push --force` to `main`/`master`/`develop`/`release/*` |
+| `rogue.secret-read` | high | reads of `.env`, `.aws/credentials`, `.ssh/id_*`, kubeconfig, `.gnupg/*` |
+| `exfil.cloud-cred-read` | critical | reads of gcloud / Azure / Docker / Terraform state / SA keys / Snowflake / Databricks creds |
+| `rogue.system-auth-write` | critical | writes to `/etc/sudoers`, `/etc/passwd`, `/etc/ssh/sshd_config`, `~/.ssh/authorized_keys`, etc. (Write/Edit/MultiEdit + shell `tee`/redirect arms) |
+| `rogue.shell-rc-write` | high | writes/appends to `~/.bashrc`, `~/.zshrc`, `~/.profile`, `/etc/profile.d/*` (persistence via shell init) |
+| `rogue.cron-persistence` | high | `crontab -`, `systemd-run --on-calendar`, `at`, writes to `/etc/cron.d/*` and `/var/spool/cron/*` |
+
+### Cross-harness coverage
+
+Each harness sends a different tool-name string on the wire. Each gate's `match:` block uses `any_of` arms covering every shape:
+
+- `tool: Bash` — Claude Code, Codex CLI
+- `tool: Shell` — Cursor `preToolUse` + the synthetic `Shell` injected for `beforeShellExecution`
+- `tool_prefix: mcp_` — Claude Desktop (MCP names use double-underscore `mcp__`) AND Gemini CLI (single-underscore `mcp_`); the single-underscore prefix is a strict superset of the double, so one arm catches both wire shapes
+- `tool: Write` / `tool: Edit` / `tool: MultiEdit` — Claude Code's three file-edit primitives, plus `tool: Write` for Cursor (write/edit gates only)
+
+| Harness | Shell coverage | File-read coverage | File-write coverage | Notes |
+|---|---|---|---|---|
+| Claude Code | ✅ full (`Bash`) | ✅ full (`Read`) | ✅ full (`Write`/`Edit`/`MultiEdit`) | |
+| Codex CLI | ✅ reliable (`Bash`) | ❌ no `Read` tool — file reads do not fire `PreToolUse` per OpenAI Codex docs | ⚠️ `apply_patch` fires inconsistently per OpenAI codex#20204 | |
+| Cursor | ✅ full (`Shell` arm) | ✅ full (`Read`) | ✅ full (`Write`) | |
+| Claude Desktop | ✅ via MCP shell-exec servers | ✅ via MCP filesystem servers | ✅ via MCP filesystem write servers | Desktop is mcp-proxy-only — coverage requires the user to wire an MCP server for the relevant capability |
+| Gemini CLI | ✅ via MCP shell-exec servers | ✅ via MCP filesystem servers | ✅ via MCP filesystem write servers | Native `run_shell_command` / `write_file` / `read_file` / `replace` bypass AgentLock today; tracked as a follow-up. Until native Gemini hooks land, baseline rules cover Gemini only when the workflow uses an MCP server |
+
+### Layering registry rules on top
+
+The baseline is intentionally tight — high-confidence, irreversible shapes only. The community catalog at <https://openagentlock.github.io/rules/> ships broader coverage (network egress allowlists, package typosquat, persistence shapes, etc.):
 
 ```bash
-agentlock rules install rogue.destructive-bash      # tighter regex than the bootstrap gate
-agentlock rules install rogue.secret-read           # deny reads of .env / .ssh / .aws / credentials
-agentlock rules install rogue.net-egress            # block curl/wget/POST shapes
+agentlock rules install rogue.net-egress            # block unknown-host curl/wget shapes
 agentlock rules install supply-chain.npm-untrusted  # block installs from URL/git/tarball
 agentlock rules install supply-chain.pip-untrusted  # same for pip / poetry / uv
 agentlock rules install exfil.curl-with-env         # catch $ENV_VAR exfil shapes
-agentlock rules install rogue.git-force-push        # deny force-push to main/develop/release
+agentlock rules install rogue.launchd-persistence   # macOS launchd-plist persistence
 ```
 
-Browse the full catalog at <https://openagentlock.github.io/rules/>. Pin a private registry alongside the upstream for org-internal rules — see the section above.
+Pin a private registry alongside the upstream for org-internal rules — see the section above.
 
 ## Authoring rules from scratch
 
