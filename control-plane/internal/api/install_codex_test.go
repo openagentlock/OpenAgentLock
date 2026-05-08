@@ -114,7 +114,7 @@ func TestInstallApply_CodexAutoEnablesFlagWhenMissing(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
 	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
-	// config.toml exists but the flag isn't set: auto-append.
+	// config.toml exists but the flag isn't set: add [features].hooks.
 	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
 		tomlPath: "# nothing relevant\n",
 	})
@@ -129,19 +129,17 @@ func TestInstallApply_CodexAutoEnablesFlagWhenMissing(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected config.toml op in: %+v", out.Operations)
 	}
-	if !strings.Contains(tomlOp.Content, "codex_hooks = true") {
-		t.Fatalf("expected codex_hooks = true appended, got:\n%s", tomlOp.Content)
+	if !strings.Contains(tomlOp.Content, "[features]\nhooks = true") {
+		t.Fatalf("expected [features].hooks = true appended, got:\n%s", tomlOp.Content)
 	}
 	if tomlOp.BackupPath == "" {
 		t.Fatalf("expected backup_path on toml op (existing file present), got empty")
 	}
 }
 
-// Regression: when config.toml contains [section] headers and no
-// top-level codex_hooks flag, the new line MUST be inserted before the
-// first section, not appended at the end. Appending at end lands inside
-// the last section and the codex parser rejects it
-// ("invalid type: boolean true, expected u32 in tui.model_availability_nux").
+// Regression: when config.toml contains [section] headers and no hooks
+// flag, the new key must land in its own [features] table, not inside the
+// last unrelated section.
 func TestInstallApply_CodexFlagInsertedBeforeFirstSection(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
@@ -161,16 +159,8 @@ func TestInstallApply_CodexFlagInsertedBeforeFirstSection(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected config.toml op in: %+v", out.Operations)
 	}
-	flagIdx := strings.Index(tomlOp.Content, "codex_hooks = true")
-	sectionIdx := strings.Index(tomlOp.Content, "[")
-	if flagIdx < 0 {
-		t.Fatalf("missing codex_hooks line:\n%s", tomlOp.Content)
-	}
-	if sectionIdx < 0 {
-		t.Fatalf("expected first section preserved:\n%s", tomlOp.Content)
-	}
-	if flagIdx > sectionIdx {
-		t.Fatalf("codex_hooks must come BEFORE first section header; got:\n%s", tomlOp.Content)
+	if !strings.Contains(tomlOp.Content, "\n[features]\nhooks = true\n") {
+		t.Fatalf("missing standalone [features].hooks line:\n%s", tomlOp.Content)
 	}
 	// Original content must be preserved.
 	if !strings.Contains(tomlOp.Content, "[tui.model_availability_nux]") {
@@ -181,7 +171,7 @@ func TestInstallApply_CodexFlagInsertedBeforeFirstSection(t *testing.T) {
 	}
 }
 
-func TestInstallApply_CodexFlipsFalseToTrue(t *testing.T) {
+func TestInstallApply_CodexMigratesLegacyFalseToFeaturesHooks(t *testing.T) {
 	fx := newGateFixture(t, enforcePolicyYAML)
 	dir := t.TempDir()
 	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
@@ -199,11 +189,11 @@ func TestInstallApply_CodexFlipsFalseToTrue(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected config.toml op: %+v", out.Operations)
 	}
-	if !strings.Contains(tomlOp.Content, "codex_hooks = true") {
-		t.Fatalf("expected flipped to true, got:\n%s", tomlOp.Content)
+	if !strings.Contains(tomlOp.Content, "[features]\nhooks = true") {
+		t.Fatalf("expected [features].hooks = true, got:\n%s", tomlOp.Content)
 	}
-	if strings.Contains(tomlOp.Content, "codex_hooks = false") {
-		t.Fatalf("expected old false line replaced, got:\n%s", tomlOp.Content)
+	if strings.Contains(tomlOp.Content, "codex_hooks") {
+		t.Fatalf("expected legacy codex_hooks line removed, got:\n%s", tomlOp.Content)
 	}
 	if tomlOp.BackupPath == "" {
 		t.Fatalf("expected backup_path set; got empty")
@@ -225,8 +215,8 @@ func TestInstallApply_CodexCreatesConfigWhenMissing(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected config.toml op when file missing: %+v", out.Operations)
 	}
-	if tomlOp.Content != "codex_hooks = true\n" {
-		t.Fatalf("expected fresh codex_hooks=true content, got:\n%s", tomlOp.Content)
+	if tomlOp.Content != "[features]\nhooks = true\n" {
+		t.Fatalf("expected fresh [features].hooks=true content, got:\n%s", tomlOp.Content)
 	}
 	if tomlOp.BackupPath != "" {
 		t.Fatalf("no backup expected when file was missing; got %q", tomlOp.BackupPath)
@@ -238,12 +228,12 @@ func TestInstallApply_CodexFlagAlreadyTrue_NoTomlOp(t *testing.T) {
 	dir := t.TempDir()
 	tomlPath, _ := filepath.Abs(filepath.Join(dir, "config.toml"))
 	res := postCodexApply(t, fx, dir, "/usr/local/bin/agentlock", map[string]string{
-		tomlPath: "codex_hooks = true\n",
+		tomlPath: "[features]\nhooks = true\n",
 	})
 	defer res.Body.Close()
 	out := decodeApplyResponse(t, res)
 	if _, ok := findCodexTomlOp(out.Operations); ok {
-		t.Fatalf("expected no config.toml op when flag is already true; got: %+v", out.Operations)
+		t.Fatalf("expected no config.toml op when [features].hooks is already true; got: %+v", out.Operations)
 	}
 }
 

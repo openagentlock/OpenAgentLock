@@ -3,7 +3,7 @@
 // hook entry spawns the agentlock shim, which in turn POSTs to the
 // daemon. See docs/reference/hook-daemon-path.md.
 //
-// Codex's lifecycle hooks are gated by `codex_hooks = true` in
+// Codex's lifecycle hooks are gated by `[features].hooks = true` in
 // ~/.codex/config.toml. The plan auto-emits a write op for that file
 // when the flag is missing or false, with the merged TOML bytes ready
 // for the CLI to write atomically.
@@ -23,7 +23,8 @@ import (
 const codexMCPGapWarning = "Codex CLI: PreToolUse only fires for shell tool calls today. MCP tool calls are NOT gated by OpenAgentLock until upstream expands hook coverage."
 
 var (
-	codexFlagLineRegex = regexp.MustCompile(`(?m)^\s*codex_hooks\s*=\s*(true|false)\b`)
+	codexFlagLineRegex        = regexp.MustCompile(`(?m)^\s*codex_hooks\s*=\s*(true|false)\b`)
+	codexFeatureHookLineRegex = regexp.MustCompile(`(?m)^\s*hooks\s*=\s*(true|false)\b`)
 )
 
 // codexHooksPath returns the absolute path to the hooks.json file we'd
@@ -31,7 +32,17 @@ var (
 // a synthesized "/.codex/hooks.json" prevents apply from suggesting an
 // attacker-friendly absolute path when HOME is unset.
 func codexHooksPath(configDirOverride string, overrides map[string]string) (string, error) {
+	return codexHooksPathForHarness("codex", configDirOverride, overrides)
+}
+
+func codexHooksPathForHarness(harnessID, configDirOverride string, overrides map[string]string) (string, error) {
 	dir, err := codexConfigDir(configDirOverride, overrides)
+	if configDirOverride == "" {
+		if d := overrides[harnessID]; d != "" {
+			dir = d
+			err = nil
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -39,7 +50,17 @@ func codexHooksPath(configDirOverride string, overrides map[string]string) (stri
 }
 
 func codexConfigTomlPath(configDirOverride string, overrides map[string]string) (string, error) {
+	return codexConfigTomlPathForHarness("codex", configDirOverride, overrides)
+}
+
+func codexConfigTomlPathForHarness(harnessID, configDirOverride string, overrides map[string]string) (string, error) {
 	dir, err := codexConfigDir(configDirOverride, overrides)
+	if configDirOverride == "" {
+		if d := overrides[harnessID]; d != "" {
+			dir = d
+			err = nil
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -83,6 +104,10 @@ func codexBinary(override string) string {
 // runner doesn't speak HTTP natively. The shim POSTs to the daemon and
 // translates the response into Codex's exit-code / JSON shape.
 func codexHookConfig(daemonURL, agentlockBinary string) map[string]any {
+	return codexHookConfigFor(daemonURL, agentlockBinary, "codex")
+}
+
+func codexHookConfigFor(daemonURL, agentlockBinary, hookHarness string) map[string]any {
 	bin := codexBinary(agentlockBinary)
 	mk := func(event string, timeout int) map[string]any {
 		return map[string]any{
@@ -91,7 +116,7 @@ func codexHookConfig(daemonURL, agentlockBinary string) map[string]any {
 			"hooks": []any{
 				map[string]any{
 					"type":    "command",
-					"command": fmt.Sprintf("%s hook codex %s", shellQuote(bin), event),
+					"command": fmt.Sprintf("%s hook %s %s", shellQuote(bin), hookHarness, event),
 					"env": map[string]any{
 						"AGENTLOCK_DAEMON_URL": strings.TrimRight(daemonURL, "/"),
 					},
@@ -108,15 +133,31 @@ func codexHookConfig(daemonURL, agentlockBinary string) map[string]any {
 	}
 }
 
+func codexDesktopPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string, existingFiles map[string]string) ([]fileOp, []string) {
+	ops, warnings := codexPlanFor("Codex Desktop", "codex-desktop", daemonURL, configDirOverride, agentlockBinary, overrides, existingFiles)
+	warnings = append(warnings, "Codex Desktop uses the shared Codex app-server hook config in ~/.codex for current desktop builds.")
+	return ops, warnings
+}
+
+func codexSharedPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string, existingFiles map[string]string) ([]fileOp, []string) {
+	ops, warnings := codexPlanFor("Codex CLI/Desktop", "codex-auto", daemonURL, configDirOverride, agentlockBinary, overrides, existingFiles)
+	warnings = append(warnings, "Codex CLI and Codex Desktop share ~/.codex/hooks.json; one shared hook set auto-tags runtime source as codex or codex-desktop.")
+	return ops, warnings
+}
+
 // codexPlan returns the file ops the CLI should execute for a Codex
 // install. Always one hooks.json op; optionally a config.toml op when
-// the codex_hooks flag isn't already true on the host. The daemon never
+// [features].hooks isn't already true on the host. The daemon never
 // reads or writes host files in the new flow.
 func codexPlan(daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string, existingFiles map[string]string) ([]fileOp, []string) {
+	return codexPlanFor("Codex CLI", "codex", daemonURL, configDirOverride, agentlockBinary, overrides, existingFiles)
+}
+
+func codexPlanFor(displayName, hookHarness, daemonURL, configDirOverride, agentlockBinary string, overrides map[string]string, existingFiles map[string]string) ([]fileOp, []string) {
 	warnings := []string{codexMCPGapWarning}
 	ops := make([]fileOp, 0, 2)
 
-	hooksPath, err := codexHooksPath(configDirOverride, overrides)
+	hooksPath, err := codexHooksPathForHarness(hookHarness, configDirOverride, overrides)
 	if err != nil {
 		hooksPath = "<unresolved: " + err.Error() + ">"
 	}
@@ -132,20 +173,20 @@ func codexPlan(daemonURL, configDirOverride, agentlockBinary string, overrides m
 		hooksBackup = fmt.Sprintf("%s.agentlock-backup-%d", hooksAbs, time.Now().UnixNano())
 	}
 
-	mergedHooks, mergeErr := mergeCodexHooks(existingHooks, daemonURL, agentlockBinary)
+	mergedHooks, mergeErr := mergeCodexHooksFor(existingHooks, daemonURL, agentlockBinary, hookHarness)
 	if mergeErr != nil {
-		body := map[string]any{"hooks": codexHookConfig(daemonURL, agentlockBinary)}
+		body := map[string]any{"hooks": codexHookConfigFor(daemonURL, agentlockBinary, hookHarness)}
 		mergedHooks, _ = json.MarshalIndent(body, "", "  ")
 	}
 	ops = append(ops, fileOp{
 		Op:         "write",
 		Path:       hooksAbs,
 		Content:    string(mergedHooks),
-		Reason:     fmt.Sprintf("wire Codex CLI hooks → %s (via shim)", daemonURL),
+		Reason:     fmt.Sprintf("wire %s hooks → %s (via shim)", displayName, daemonURL),
 		BackupPath: hooksBackup,
 	})
 
-	tomlPath, tomlErr := codexConfigTomlPath(configDirOverride, overrides)
+	tomlPath, tomlErr := codexConfigTomlPathForHarness(hookHarness, configDirOverride, overrides)
 	if tomlErr == nil {
 		tomlAbs := tomlPath
 		if a, abserr := filepath.Abs(tomlPath); abserr == nil {
@@ -162,87 +203,82 @@ func codexPlan(daemonURL, configDirOverride, agentlockBinary string, overrides m
 	return ops, warnings
 }
 
-// codexConfigTomlPlan returns the (optional) file op for the codex
-// config.toml flag-flip. Returns ok=false to mean "no change needed"
-// (flag already true). Pure: takes the existing bytes via existingFiles
-// and never touches disk. Mirrors the cases the old apply-time helper
-// covered:
-//  1. file missing → write "codex_hooks = true\n"
-//  2. flag missing → append "codex_hooks = true\n"
-//  3. flag = false → rewrite the matching line to true
-//  4. flag = true → skip
+// codexConfigTomlPlan returns the (optional) file op for enabling Codex
+// lifecycle hooks in config.toml. Current app-server builds require
+// `[features].hooks = true`; the legacy top-level `codex_hooks = true`
+// still works in some CLI builds but Desktop logs it as deprecated.
+// Pure: takes existing bytes via existingFiles and never touches disk.
 func codexConfigTomlPlan(tomlAbs string, existingFiles map[string]string) (fileOp, string, bool) {
 	c, present := existingFiles[tomlAbs]
 	if !present {
 		return fileOp{
 			Op:      "write",
 			Path:    tomlAbs,
-			Content: "codex_hooks = true\n",
-			Reason:  fmt.Sprintf("create %s with codex_hooks = true", tomlAbs),
-		}, fmt.Sprintf("created %s with codex_hooks = true", tomlAbs), true
+			Content: "[features]\nhooks = true\n",
+			Reason:  fmt.Sprintf("create %s with [features].hooks = true", tomlAbs),
+		}, fmt.Sprintf("created %s with [features].hooks = true", tomlAbs), true
 	}
 
 	existing := []byte(c)
-	state, idx := topLevelCodexFlag(existing)
+	state, idx, featuresInsertAt := featureHooksFlag(existing)
 	switch state {
 	case "true":
 		return fileOp{}, "", false
 	case "false":
 		updated := append([]byte(nil), existing[:idx.start]...)
-		updated = append(updated, []byte("codex_hooks = true")...)
+		updated = append(updated, []byte("hooks = true")...)
 		updated = append(updated, existing[idx.end:]...)
 		backup := fmt.Sprintf("%s.agentlock-backup-%d", tomlAbs, time.Now().UnixNano())
 		return fileOp{
 			Op:         "write",
 			Path:       tomlAbs,
 			Content:    string(updated),
-			Reason:     fmt.Sprintf("flip codex_hooks false→true in %s", tomlAbs),
+			Reason:     fmt.Sprintf("flip [features].hooks false→true in %s", tomlAbs),
 			BackupPath: backup,
-		}, fmt.Sprintf("flipped codex_hooks false→true in %s (backup: %s)", tomlAbs, backup), true
+		}, fmt.Sprintf("flipped [features].hooks false→true in %s (backup: %s)", tomlAbs, backup), true
 	default:
-		// Insert before the first [section] header. Appending to the end
-		// of a file that already has sections lands the line *inside*
-		// the last section — which the codex parser then reads as
-		// e.g. `tui.model_availability_nux.codex_hooks = true` and
-		// rejects ("invalid type: boolean true, expected u32"). Only
-		// fall back to end-of-file when the file has no sections at all.
-		insertAt := firstSectionHeaderOffset(existing)
+		// Migration rule: when we touch Codex config, write only the
+		// current [features].hooks key and remove legacy top-level
+		// codex_hooks lines. Desktop logs the legacy key as deprecated.
+		base := stripTopLevelCodexFlagLines(existing)
+		if string(base) != string(existing) {
+			_, _, featuresInsertAt = featureHooksFlag(base)
+		}
 		var buf []byte
-		if insertAt < 0 {
-			// No sections — safe to append.
-			buf = append(buf, existing...)
-			if len(buf) > 0 && buf[len(buf)-1] != '\n' {
-				buf = append(buf, '\n')
-			}
-			buf = append(buf, []byte("codex_hooks = true\n")...)
+		if featuresInsertAt >= 0 {
+			buf = append(buf, base[:featuresInsertAt]...)
+			buf = append(buf, []byte("hooks = true\n")...)
+			buf = append(buf, base[featuresInsertAt:]...)
 		} else {
-			// Insert immediately before the first section. Make sure the
-			// preceding bytes end with a newline so the new line stands
-			// alone, and add a trailing blank line so it's visually
-			// separated from the section header.
-			buf = append(buf, existing[:insertAt]...)
+			buf = append(buf, base...)
 			if len(buf) > 0 && buf[len(buf)-1] != '\n' {
 				buf = append(buf, '\n')
 			}
-			buf = append(buf, []byte("codex_hooks = true\n\n")...)
-			buf = append(buf, existing[insertAt:]...)
+			if len(buf) > 0 {
+				buf = append(buf, '\n')
+			}
+			buf = append(buf, []byte("[features]\nhooks = true\n")...)
 		}
 		backup := fmt.Sprintf("%s.agentlock-backup-%d", tomlAbs, time.Now().UnixNano())
 		return fileOp{
 			Op:         "write",
 			Path:       tomlAbs,
 			Content:    string(buf),
-			Reason:     fmt.Sprintf("insert codex_hooks = true at top of %s", tomlAbs),
+			Reason:     fmt.Sprintf("insert [features].hooks = true in %s", tomlAbs),
 			BackupPath: backup,
-		}, fmt.Sprintf("added codex_hooks = true to %s (backup: %s)", tomlAbs, backup), true
+		}, fmt.Sprintf("added [features].hooks = true to %s (backup: %s)", tomlAbs, backup), true
 	}
 }
 
-// firstSectionHeaderOffset returns the byte offset of the first line that
-// starts (after whitespace) with `[`. Returns -1 when no section header
-// exists in the file.
-func firstSectionHeaderOffset(b []byte) int {
+// featureHooksFlag scans config.toml for `[features].hooks`. It returns
+// the flag state, the span of an existing hooks assignment, and the byte
+// offset immediately after the [features] header for inserting a missing
+// hooks line. The legacy top-level codex_hooks key is intentionally not
+// treated as sufficient because Desktop app-server deprecates it.
+func featureHooksFlag(b []byte) (string, codexFlagSpan, int) {
 	cursor := 0
+	inFeatures := false
+	featuresInsertAt := -1
 	for cursor < len(b) {
 		nl := indexByteFrom(b, '\n', cursor)
 		end := nl
@@ -252,36 +288,17 @@ func firstSectionHeaderOffset(b []byte) int {
 		line := b[cursor:end]
 		trimmed := strings.TrimSpace(string(line))
 		if strings.HasPrefix(trimmed, "[") {
-			return cursor
-		}
-		if nl < 0 {
-			return -1
-		}
-		cursor = nl + 1
-	}
-	return -1
-}
-
-type codexFlagSpan struct{ start, end int }
-
-// topLevelCodexFlag scans bytes for the first top-level (pre-section)
-// `codex_hooks = (true|false)` line. Returns "" if none found.
-func topLevelCodexFlag(b []byte) (string, codexFlagSpan) {
-	cursor := 0
-	for cursor < len(b) {
-		nl := indexByteFrom(b, '\n', cursor)
-		end := nl
-		if end < 0 {
-			end = len(b)
-		}
-		line := b[cursor:end]
-		trimmed := strings.TrimSpace(string(line))
-		if strings.HasPrefix(trimmed, "[") {
-			return "", codexFlagSpan{}
-		}
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			if m := codexFlagLineRegex.FindSubmatchIndex(line); m != nil {
-				return string(line[m[2]:m[3]]), codexFlagSpan{cursor + m[0], cursor + m[1]}
+			inFeatures = trimmed == "[features]"
+			if inFeatures {
+				if nl >= 0 {
+					featuresInsertAt = nl + 1
+				} else {
+					featuresInsertAt = len(b)
+				}
+			}
+		} else if inFeatures && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			if m := codexFeatureHookLineRegex.FindSubmatchIndex(line); m != nil {
+				return string(line[m[2]:m[3]]), codexFlagSpan{cursor + m[0], cursor + m[1]}, featuresInsertAt
 			}
 		}
 		if nl < 0 {
@@ -289,7 +306,47 @@ func topLevelCodexFlag(b []byte) (string, codexFlagSpan) {
 		}
 		cursor = nl + 1
 	}
-	return "", codexFlagSpan{}
+	return "", codexFlagSpan{}, featuresInsertAt
+}
+
+type codexFlagSpan struct{ start, end int }
+
+// stripTopLevelCodexFlagLines removes deprecated pre-section
+// `codex_hooks = (true|false)` assignments while preserving all section
+// content. It is only used when emitting a replacement config.toml.
+func stripTopLevelCodexFlagLines(b []byte) []byte {
+	cursor := 0
+	out := make([]byte, 0, len(b))
+	for cursor < len(b) {
+		nl := indexByteFrom(b, '\n', cursor)
+		end := nl
+		if end < 0 {
+			end = len(b)
+		}
+		line := b[cursor:end]
+		trimmed := strings.TrimSpace(string(line))
+		if strings.HasPrefix(trimmed, "[") {
+			out = append(out, b[cursor:]...)
+			return out
+		}
+		includeLine := true
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			if m := codexFlagLineRegex.FindSubmatchIndex(line); m != nil {
+				includeLine = false
+			}
+		}
+		if includeLine {
+			out = append(out, b[cursor:end]...)
+			if nl >= 0 {
+				out = append(out, '\n')
+			}
+		}
+		if nl < 0 {
+			break
+		}
+		cursor = nl + 1
+	}
+	return out
 }
 
 func indexByteFrom(b []byte, c byte, from int) int {
@@ -308,6 +365,10 @@ func indexByteFrom(b []byte, c byte, from int) int {
 // Idempotent: re-applying replaces our own entries rather than
 // duplicating them. Mirrors mergeClaudeSettings.
 func mergeCodexHooks(existing []byte, daemonURL, agentlockBinary string) ([]byte, error) {
+	return mergeCodexHooksFor(existing, daemonURL, agentlockBinary, "codex")
+}
+
+func mergeCodexHooksFor(existing []byte, daemonURL, agentlockBinary, hookHarness string) ([]byte, error) {
 	root := map[string]any{}
 	if len(existing) > 0 {
 		if err := json.Unmarshal(existing, &root); err != nil {
@@ -328,7 +389,7 @@ func mergeCodexHooks(existing []byte, daemonURL, agentlockBinary string) ([]byte
 		hooks = map[string]any{}
 	}
 
-	ours := codexHookConfig(daemonURL, agentlockBinary)
+	ours := codexHookConfigFor(daemonURL, agentlockBinary, hookHarness)
 	for cat, oursArrAny := range ours {
 		oursArr, _ := oursArrAny.([]any)
 		existingArr, _ := hooks[cat].([]any)

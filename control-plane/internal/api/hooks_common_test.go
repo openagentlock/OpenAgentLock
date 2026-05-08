@@ -58,6 +58,18 @@ func TestSummarizeToolResponse(t *testing.T) {
 			wantSuccess: true,
 		},
 		{
+			name:        "codex successful exit overrides structured error metadata",
+			raw:         `{"output": "Process exited with code 0\nok", "exit_code": 0, "error": {"message": "metadata"}}`,
+			wantSize:    -1,
+			wantSuccess: true,
+		},
+		{
+			name:        "codex non-zero exit code fails",
+			raw:         `{"output": "Process exited with code 2", "exit_code": 2}`,
+			wantSize:    -1,
+			wantSuccess: false,
+		},
+		{
 			name:        "array payload",
 			raw:         `[1, 2, 3]`,
 			wantSize:    -1,

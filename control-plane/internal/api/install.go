@@ -128,6 +128,7 @@ func buildPlanOps(req installPlanRequest) ([]fileOp, []string, []string) {
 	ops := make([]fileOp, 0)
 	skipped := make([]string, 0)
 	warnings := make([]string, 0)
+	codexPlanned := false
 	for _, h := range req.Harnesses {
 		switch h {
 		case "claude-code":
@@ -137,9 +138,27 @@ func buildPlanOps(req installPlanRequest) ([]fileOp, []string, []string) {
 			ops = append(ops, desktopOps...)
 			warnings = append(warnings, ws...)
 		case "codex":
+			if codexPlanned {
+				continue
+			}
+			codexPlanned = true
 			codexOps, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
 			ops = append(ops, codexOps...)
 			warnings = append(warnings, ws...)
+		case "codex-desktop":
+			if codexPlanned {
+				continue
+			}
+			codexPlanned = true
+			overrides := req.HarnessConfigDirs
+			if req.ConfigDirOverride == "" && overrides["codex"] == "" && overrides["codex-desktop"] != "" {
+				overrides = copyStringMap(overrides)
+				overrides["codex"] = overrides["codex-desktop"]
+			}
+			codexOps, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, overrides, req.ExistingFiles)
+			ops = append(ops, codexOps...)
+			warnings = append(warnings, ws...)
+			warnings = append(warnings, "Codex Desktop is supported through the shared ~/.codex hook config. Trust the OpenAgentLock hook from Codex CLI /hooks; Desktop does not expose its own trust UI.")
 		case "cursor":
 			op, ws := cursorPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
 			ops = append(ops, op)
@@ -159,13 +178,21 @@ func buildPlanOps(req installPlanRequest) ([]fileOp, []string, []string) {
 	return ops, skipped, warnings
 }
 
+func copyStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 // knownHarnessID is the daemon-side whitelist of harness ids the install
 // pipeline recognises. It mirrors the CLI's HarnessId union — anything
 // outside this set is rejected up-front so a bad payload can't trick the
 // dev-stub branch into writing a file at an arbitrary nested path.
 func knownHarnessID(h string) bool {
 	switch h {
-	case "codex", "opencode", "cursor", "cline", "continue",
+	case "codex", "codex-desktop", "opencode", "cursor", "cline", "continue",
 		"gemini", "vscode-copilot":
 		return true
 	}
@@ -406,7 +433,7 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 		ops, skipped, warnings := buildPlanOps(req)
 		entries := make([]installManifestE, 0, len(ops))
 		for _, op := range ops {
-			harness := harnessForPath(op.Path)
+			harness := harnessForInstallOp(op.Path, req.Harnesses)
 			entries = append(entries, installManifestE{
 				Harness:      harness,
 				SettingsPath: op.Path,
@@ -470,6 +497,15 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 			Warnings:     warnings,
 		})
 	}
+}
+
+func harnessForInstallOp(path string, selected []string) string {
+	if len(selected) == 1 && selected[0] == "codex-desktop" {
+		if strings.HasSuffix(path, "hooks.json") || strings.HasSuffix(path, "config.toml") {
+			return "codex-desktop"
+		}
+	}
+	return harnessForPath(path)
 }
 
 // harnessForPath maps an op.Path back to the harness id we'd record in
@@ -683,7 +719,7 @@ func installUninstallHandler(d Deps) http.HandlerFunc {
 				stripErr error
 			)
 			switch e.Harness {
-			case "codex":
+			case "codex", "codex-desktop":
 				newBytes, removed, stripErr = stripCodexHooks(existing)
 			case "cursor":
 				newBytes, removed, stripErr = stripCursorHooks(existing)
@@ -845,8 +881,8 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 					}
 				}
 				ops = append(ops, op)
-			case "codex":
-				p, err := codexHooksPath(req.ConfigDirOverride, req.HarnessConfigDirs)
+			case "codex", "codex-desktop":
+				p, err := codexHooksPathForHarness(h, req.ConfigDirOverride, req.HarnessConfigDirs)
 				if err != nil {
 					failures++
 					ops = append(ops, uninstallOp{Op: "strip", Path: "<unresolved>", Error: err.Error()})

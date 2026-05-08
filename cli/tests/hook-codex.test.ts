@@ -55,10 +55,11 @@ function runShim(
   payload: string,
   daemonUrl: string,
   extraEnv: Record<string, string> = {},
+  harness = "codex",
 ): Promise<ShimResult> {
   return new Promise((resolve, reject) => {
     const entry = join(import.meta.dir, "..", "src", "index.ts");
-    const proc = spawn("bun", ["run", entry, "hook", "codex", ...args], {
+    const proc = spawn("bun", ["run", entry, "hook", harness, ...args], {
       env: {
         ...process.env,
         AGENTLOCK_DAEMON_URL: daemonUrl,
@@ -81,6 +82,85 @@ function runShim(
     proc.stdin.end();
   });
 }
+
+describe("hook codex-desktop shim", () => {
+  let server: ReturnType<typeof Bun.serve> | null = null;
+  afterEach(() => {
+    server?.stop(true);
+    server = null;
+  });
+
+  test("forwards to codex-desktop route", async () => {
+    const recorded: RecordedRequest[] = [];
+    const m = startMockDaemon(
+      {
+        "/v1/hooks/codex-desktop/pre-tool-use": {
+          status: 200,
+          body: {
+            continue: true,
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "allow",
+            },
+          },
+        },
+      },
+      recorded,
+    );
+    server = m.server;
+
+    const payload = JSON.stringify({
+      session_id: "desktop_sess_x",
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_use_id: "desktop_t_01",
+      tool_input: { command: "ls" },
+    });
+    const r = await runShim(["pre-tool-use"], payload, m.url, {}, "codex-desktop");
+    expect(r.code).toBe(0);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].path).toBe("/v1/hooks/codex-desktop/pre-tool-use");
+  });
+});
+
+describe("hook codex-auto shim", () => {
+  let server: ReturnType<typeof Bun.serve> | null = null;
+  afterEach(() => {
+    server?.stop(true);
+    server = null;
+  });
+
+  test("desktop environment routes to codex-desktop", async () => {
+    const recorded: RecordedRequest[] = [];
+    const m = startMockDaemon(
+      {
+        "/v1/hooks/codex-desktop/pre-tool-use": {
+          status: 200,
+          body: { continue: true },
+        },
+      },
+      recorded,
+    );
+    server = m.server;
+
+    const payload = JSON.stringify({
+      session_id: "auto_desktop_sess",
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_use_id: "auto_desktop_t_01",
+      tool_input: { command: "ls" },
+    });
+    const r = await runShim(
+      ["pre-tool-use"],
+      payload,
+      m.url,
+      { __CFBundleIdentifier: "com.openai.codex" },
+      "codex-auto",
+    );
+    expect(r.code).toBe(0);
+    expect(recorded[0].path).toBe("/v1/hooks/codex-desktop/pre-tool-use");
+  });
+});
 
 describe("hook codex shim", () => {
   let server: ReturnType<typeof Bun.serve> | null = null;
