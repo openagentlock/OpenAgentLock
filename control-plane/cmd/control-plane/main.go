@@ -157,16 +157,17 @@ func splitHostPort(addr string) (host, port string, ok bool) {
 }
 
 // loadPolicy reads $AGENTLOCK_POLICY if set; otherwise returns a built-in
-// minimal default (monitor mode, single destructive-bash gate) so the
-// daemon always starts with *some* policy bound to session attestations.
-// The first-boot expectation is that operators run
-// `agentlock rules sync && agentlock rules install <id>` against the
-// openagentlock/rules registry to populate real coverage. The bundled
-// `policies/default.yaml` was deprecated and removed — registry-first
-// is the new shape (see docs/guide/policies.md).
+// loadPolicy returns the daemon's policy. With path="" we load the
+// baseline embedded into the binary at build time
+// (control-plane/internal/policy/baseline.yaml) — thirteen enforce-mode
+// gates spanning destructive shell, supply-chain RCE, secret/credential
+// reads, defence-evasion, destructive infra, and system/auth/shell-rc/
+// cron persistence. Operators can still layer extras from
+// openagentlock/rules via `agentlock rules install`, or pin a custom
+// file with AGENTLOCK_POLICY=/path/to/policy.yaml.
 func loadPolicy(path string) (*policy.Policy, error) {
 	if path == "" {
-		return policy.LoadBytes([]byte(defaultPolicyYAML))
+		return policy.LoadBytes(policy.DefaultBaseline())
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -175,26 +176,3 @@ func loadPolicy(path string) (*policy.Policy, error) {
 	defer f.Close()
 	return policy.Load(f)
 }
-
-// defaultPolicyYAML is the minimal first-boot policy. It exists only so
-// every session has a non-empty policy hash to attest against. Operators
-// are expected to layer real coverage from openagentlock/rules on top.
-const defaultPolicyYAML = `
-version: 1
-mode: monitor
-defaults:
-  bash: allow
-gates:
-  - id: rogue.destructive-bash
-    match:
-      tool: Bash
-      any_command_regex:
-        - 'rm\s+(-[rRfF]+\s+)+\S+'
-        - 'git\s+push\s+.*--force'
-        - 'kubectl\s+delete\s+'
-        - 'DROP\s+(TABLE|DATABASE|SCHEMA)'
-        - 'chmod\s+-R\b'
-    evaluate:
-      - kind: always
-        action: deny
-`
