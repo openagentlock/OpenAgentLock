@@ -43,7 +43,7 @@ Interactive multi-select. Posts to `/v1/install/plan`, renders the diff, applies
 #### Registry-first policy
 <span class="gate-id">`agentlock rules install`</span>
 
-First-boot policy ships a thirteen-gate enforce-mode baseline embedded in the daemon (destructive shell, supply-chain RCE, secret reads, defence evasion, destructive infra, system/auth/shell-rc/cron persistence) covering Claude Code, Codex, Cursor, Claude Desktop, and Gemini-via-MCP. Layer extras from the [openagentlock/rules](https://openagentlock.github.io/rules/) registry — `agentlock rules sync && agentlock rules install <id>` lands gates in the live policy with a fresh hash.
+First boot includes a thirteen-gate enforce-mode baseline for destructive shell, supply-chain RCE, secret reads, evasion, infra deletes, and persistence across supported harnesses. Add extras from [openagentlock/rules](https://openagentlock.github.io/rules/) with `agentlock rules sync && agentlock rules install <id>`.
 </div>
 
 <div class="gate-card" markdown>
