@@ -330,10 +330,16 @@ func claudeStopHandler(d Deps) http.HandlerFunc {
 // ensureClaudeSession returns the daemon's session for the given ID,
 // auto-creating an unattested "none" signer session if we have never seen
 // it before. Auto-created sessions surface as red banners in the dashboard.
+//
+// For unattested sessions we re-pin to the live policy on every call —
+// see refreshUnattestedPolicyHash for why. Long-lived auto-created
+// sessions otherwise keep evaluating against whatever policy was live
+// at first-hit time, so policy edits made after the session existed
+// silently no-op for that session.
 func ensureClaudeSession(r *http.Request, d Deps, id string) (storage.Session, error) {
 	sess, err := d.Store.GetSession(r.Context(), id)
 	if err == nil {
-		return sess, nil
+		return refreshUnattestedPolicyHash(d, sess), nil
 	}
 	if !errors.Is(err, storage.ErrSessionNotFound) {
 		return storage.Session{}, err
@@ -356,7 +362,11 @@ func ensureClaudeSession(r *http.Request, d Deps, id string) (storage.Session, e
 	}
 	if err := d.Store.CreateSession(r.Context(), newSess); err != nil {
 		if errors.Is(err, storage.ErrSessionExists) {
-			return d.Store.GetSession(r.Context(), id)
+			existing, getErr := d.Store.GetSession(r.Context(), id)
+			if getErr != nil {
+				return storage.Session{}, getErr
+			}
+			return refreshUnattestedPolicyHash(d, existing), nil
 		}
 		return storage.Session{}, err
 	}

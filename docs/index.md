@@ -54,10 +54,10 @@ Rust crate. SHA-256 leaf hashing, Merkle root, inclusion proofs, verification. T
 </div>
 
 <div class="gate-card" markdown>
-#### Local web dashboard
-<span class="gate-id">`127.0.0.1:7879`</span>
+#### Dashboard
+<span class="gate-id">`127.0.0.1:7879` · `agentlock dashboard`</span>
 
-Read logs, author rules, watch live activity. Firewall-admin shape.
+Read logs, author rules, watch live activity. Web SPA at `:7879`, or a terminal TUI via `agentlock dashboard`.
 </div>
 
 <div class="gate-card" markdown>

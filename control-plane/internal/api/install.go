@@ -132,6 +132,10 @@ func buildPlanOps(req installPlanRequest) ([]fileOp, []string, []string) {
 		switch h {
 		case "claude-code":
 			ops = append(ops, claudeCodePlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.StatusLineScript, req.HarnessConfigDirs, req.ExistingFiles))
+		case "claude-desktop":
+			desktopOps, ws := claudeDesktopPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
+			ops = append(ops, desktopOps...)
+			warnings = append(warnings, ws...)
 		case "codex":
 			codexOps, ws := codexPlan(req.DaemonURL, req.ConfigDirOverride, req.AgentlockBinary, req.HarnessConfigDirs, req.ExistingFiles)
 			ops = append(ops, codexOps...)
@@ -477,6 +481,14 @@ func installApplyHandler(d Deps) http.HandlerFunc {
 func harnessForPath(path string) string {
 	dir := filepath.Base(filepath.Dir(path))
 	switch {
+	case strings.HasSuffix(path, "claude_desktop_config.json"),
+		strings.HasSuffix(path, "extensions-installations.json"):
+		return "claude-desktop"
+	case strings.HasSuffix(path, "manifest.json") &&
+		strings.Contains(path, "/Claude Extensions/"):
+		// Bundle manifest of a Desktop Extension. Path shape:
+		// <config-dir>/Claude Extensions/<ext-id>/manifest.json.
+		return "claude-desktop"
 	case strings.HasSuffix(path, "settings.json"):
 		// Gemini also writes settings.json (in ~/.gemini); disambiguate
 		// by parent directory. Anything else is Claude Code.
@@ -582,7 +594,7 @@ func isAgentlockEntry(v any) bool {
 // executes "/Users/ronaldli/Library/Application" as a script — that's
 // the "line 1: on: command not found" failure mode that produced red
 // "PreToolUse:hook error" banners in earlier installs. Single quotes
-// are the simplest robust escape: macOS state dirs can't contain '\''.
+// are the simplest robust escape: macOS state dirs can't contain '\”.
 // For the (extremely unlikely) edge case where they do, we fall back
 // to the close-quote / escaped-quote / open-quote idiom.
 func shellQuote(s string) string {
@@ -675,6 +687,19 @@ func installUninstallHandler(d Deps) http.HandlerFunc {
 				newBytes, removed, stripErr = stripCursorHooks(existing)
 			case "gemini":
 				newBytes, removed, stripErr = stripGeminiSettings(existing)
+			case "claude-desktop":
+				// Three file shapes land here:
+				//   - claude_desktop_config.json (manual mcpServers path)
+				//   - extensions-installations.json (Desktop Extensions registry)
+				//   - <Claude Extensions>/<id>/manifest.json (bundle manifests, the actual launch source)
+				if strings.HasSuffix(e.SettingsPath, "extensions-installations.json") {
+					newBytes, removed, stripErr = stripExtensionRegistry(existing)
+				} else if strings.HasSuffix(e.SettingsPath, "manifest.json") &&
+					strings.Contains(e.SettingsPath, "/Claude Extensions/") {
+					newBytes, removed, stripErr = stripBundleManifest(existing)
+				} else {
+					newBytes, removed, stripErr = stripClaudeDesktopConfig(existing)
+				}
 			default:
 				// Default to Claude's settings.json shape. Older manifests
 				// without a Harness field land here, which is the right
@@ -881,6 +906,82 @@ func installUninstallHarnessesHandler(d Deps) http.HandlerFunc {
 					}
 				}
 				ops = append(ops, op)
+			case "claude-desktop":
+				// Strip both files Claude Desktop install touches: the
+				// mcpServers config (claude_desktop_config.json) and
+				// the Desktop Extensions registry
+				// (extensions-installations.json). Each is independent
+				// — one can be missing without affecting the other.
+				cfgP, err := claudeDesktopConfigPath(req.ConfigDirOverride, req.HarnessConfigDirs)
+				if err != nil {
+					failures++
+					ops = append(ops, uninstallOp{Op: "strip", Path: "<unresolved>", Error: err.Error()})
+				} else {
+					cfgExisting := []byte(req.ExistingFiles[cfgP])
+					newBytes, removed, stripErr := stripClaudeDesktopConfig(cfgExisting)
+					op := uninstallOp{Op: "strip", Path: cfgP}
+					if stripErr != nil {
+						failures++
+						op.Error = stripErr.Error()
+						log.Printf("install.uninstall_harnesses: strip claude-desktop %s: %v", cfgP, stripErr)
+					} else {
+						op.EntriesRemoved = removed
+						if removed > 0 {
+							op.Content = string(newBytes)
+						}
+					}
+					ops = append(ops, op)
+				}
+				if regP, err := extensionsRegistryPath(req.ConfigDirOverride, req.HarnessConfigDirs); err == nil {
+					regExisting := []byte(req.ExistingFiles[regP])
+					if len(regExisting) > 0 {
+						newBytes, removed, stripErr := stripExtensionRegistry(regExisting)
+						op := uninstallOp{Op: "strip", Path: regP}
+						if stripErr != nil {
+							failures++
+							op.Error = stripErr.Error()
+							log.Printf("install.uninstall_harnesses: strip claude-desktop extensions %s: %v", regP, stripErr)
+						} else {
+							op.EntriesRemoved = removed
+							if removed > 0 {
+								op.Content = string(newBytes)
+							}
+						}
+						ops = append(ops, op)
+					}
+				}
+				// Strip every per-extension bundle manifest the CLI sent
+				// us. The on-disk manifest is THE launch source for
+				// Desktop Extensions (probed empirically) so this is
+				// what actually un-gates the user.
+				bundlesDir, _ := claudeDesktopExtensionsDir(req.ConfigDirOverride, req.HarnessConfigDirs)
+				if bundlesDir != "" {
+					absBundles := bundlesDir
+					if a, err := filepath.Abs(bundlesDir); err == nil {
+						absBundles = a
+					}
+					for path, body := range req.ExistingFiles {
+						if !strings.HasSuffix(path, "/manifest.json") {
+							continue
+						}
+						if filepath.Dir(filepath.Dir(path)) != absBundles {
+							continue
+						}
+						newBytes, removed, stripErr := stripBundleManifest([]byte(body))
+						op := uninstallOp{Op: "strip", Path: path}
+						if stripErr != nil {
+							failures++
+							op.Error = stripErr.Error()
+							log.Printf("install.uninstall_harnesses: strip claude-desktop bundle %s: %v", path, stripErr)
+						} else {
+							op.EntriesRemoved = removed
+							if removed > 0 {
+								op.Content = string(newBytes)
+							}
+						}
+						ops = append(ops, op)
+					}
+				}
 			default:
 				if devHome == "" || !knownHarnessID(h) {
 					// No real installer + not in dev mode → nothing to do.

@@ -73,6 +73,45 @@ export function claudeAgentlockState(settingsPath: string): AgentlockState {
   return NOT_INSTALLED;
 }
 
+// claudeDesktopAgentlockState reads a Claude Desktop config file
+// (claude_desktop_config.json) and reports whether agentlock is wired in
+// as an MCP server. Claude Desktop has no PreToolUse hook surface; the
+// only install we can do is registering an MCP server entry under
+// mcpServers. We mark our entry with `_agentlock: true` (an unknown key
+// MCP ignores) so uninstall can find it without name-collision risk.
+export function claudeDesktopAgentlockState(configPath: string): AgentlockState {
+  if (!existsSync(configPath)) return NOT_INSTALLED;
+  let raw: string;
+  try {
+    raw = readFileSync(configPath, "utf8");
+  } catch {
+    return NOT_INSTALLED;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return NOT_INSTALLED;
+  }
+  const servers = (parsed as { mcpServers?: Record<string, unknown> }).mcpServers;
+  if (!servers || typeof servers !== "object") return NOT_INSTALLED;
+
+  for (const name of Object.keys(servers)) {
+    const entry = servers[name];
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    if (e._agentlock !== true) continue;
+    // Daemon URL lives in `env.AGENTLOCK_DAEMON_URL` — same convention as
+    // the Claude Code shim. No nested HTTP hook on this surface.
+    const env = (e.env as Record<string, unknown> | undefined) ?? undefined;
+    const url = env && typeof env.AGENTLOCK_DAEMON_URL === "string"
+      ? env.AGENTLOCK_DAEMON_URL
+      : undefined;
+    return { installed: true, daemonURL: url ? originOf(url) : undefined };
+  }
+  return NOT_INSTALLED;
+}
+
 // devStubAgentlockState reads `.agentlock-dev.json` from a non-claude
 // harness's dev sandbox dir. The daemon's apply pipeline writes that
 // marker for harnesses without a real installer yet. Presence + the

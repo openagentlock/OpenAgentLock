@@ -109,7 +109,7 @@ nav:
       - Policies and rules: guide/policies.md
       - Signers: guide/signers.md
       - The ledger: guide/ledger.md
-      - Local web dashboard: guide/dashboard.md
+      - Dashboard: guide/dashboard.md
       - Isolation: guide/isolation.md
       - MCP: guide/mcp.md
       - Threat model: guide/threat-model.md

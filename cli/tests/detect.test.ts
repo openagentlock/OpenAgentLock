@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { claudeCode } from "../src/detect/claude-code.ts";
+import { claudeDesktop, claudeDesktopConfigPath } from "../src/detect/claude-desktop.ts";
 import { codex } from "../src/detect/codex.ts";
 import { continueDev } from "../src/detect/continue-dev.ts";
 import { cursor } from "../src/detect/cursor.ts";
@@ -47,6 +48,7 @@ function touch(p: string, body = ""): void {
 describe("contract — every detector returns a well-formed Detection", () => {
   const detectors = [
     claudeCode,
+    claudeDesktop,
     codex,
     opencode,
     cursor,
@@ -79,6 +81,11 @@ describe("absent — installed=false on a clean home", () => {
     const r = await claudeCode.detect();
     expect(r.installed).toBe(false);
     expect(r.evidence).toEqual([]);
+  });
+
+  test("claude-desktop", async () => {
+    const r = await claudeDesktop.detect();
+    expect(r.installed).toBe(false);
   });
 
   test("codex", async () => {
@@ -163,6 +170,53 @@ describe("contract details", () => {
     const r = await cursor.detect();
     expect(r.surfaces).toContain("mcp-stdio");
     expect(r.surfaces).toContain("extension-only");
+  });
+
+  // Claude Desktop's enforcement covers MCP tool calls (via the proxy),
+  // not Anthropic's server-side cloud features. The detector must not
+  // advertise lifecycle-hooks (we don't get a native PreToolUse) and
+  // must surface the cloud-features-out-of-scope caveat in notes so
+  // picker rows don't oversell coverage.
+  test("claude-desktop surfaces MCP enforcement and out-of-scope caveat", async () => {
+    const r = await claudeDesktop.detect();
+    expect(r.surfaces).toContain("mcp-stdio");
+    expect(r.surfaces).not.toContain("lifecycle-hooks");
+    expect(
+      r.notes.some(
+        (n) =>
+          n.includes("mcp-proxy") ||
+          n.includes("out of scope") ||
+          n.includes("cloud"),
+      ),
+    ).toBe(true);
+  });
+
+  test("claude-desktop detects when config dir exists", async () => {
+    const dir = join(claudeDesktopConfigPath(), "..");
+    mkdirSync(dir, { recursive: true });
+    const r = await claudeDesktop.detect();
+    expect(r.installed).toBe(true);
+  });
+
+  test("claude-desktop reports agentlockInstalled when our MCP entry is present", async () => {
+    const cfg = claudeDesktopConfigPath();
+    mkdirSync(join(cfg, ".."), { recursive: true });
+    writeFileSync(
+      cfg,
+      JSON.stringify({
+        mcpServers: {
+          agentlock: {
+            _agentlock: true,
+            command: "agentlock",
+            args: ["mcp-server"],
+            env: { AGENTLOCK_DAEMON_URL: "http://127.0.0.1:7878" },
+          },
+        },
+      }),
+    );
+    const r = await claudeDesktop.detect();
+    expect(r.agentlockInstalled).toBe(true);
+    expect(r.agentlockDaemonURL).toBe("http://127.0.0.1:7878");
   });
 });
 

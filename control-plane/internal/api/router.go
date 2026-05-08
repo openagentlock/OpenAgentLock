@@ -87,6 +87,10 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"POST", "/v1/hooks/gemini/pre-tool-use", geminiPreToolUseHandler(d)},
 		{"POST", "/v1/hooks/gemini/post-tool-use", geminiPostToolUseHandler(d)},
 		{"POST", "/v1/hooks/gemini/stop", geminiStopHandler(d)},
+		// Claude Desktop has no upstream PreToolUse hook; the agentlock
+		// mcp-proxy subprocess hits these on every JSON-RPC tools/call.
+		{"POST", "/v1/hooks/claude-desktop/pre-tool-use", claudeDesktopPreToolUseHandler(d)},
+		{"POST", "/v1/hooks/claude-desktop/post-tool-use", claudeDesktopPostToolUseHandler(d)},
 
 		// MCP TOFU pinning.
 		{"GET", "/v1/mcp/pins", mcpPinsListHandler(d)},

@@ -25,6 +25,8 @@ import { runHookCodex } from "./commands/hook-codex.ts";
 import { runHookCursor } from "./commands/hook-cursor.ts";
 import { runHookGemini } from "./commands/hook-gemini.ts";
 import { runLedgerRoot, runLedgerVerify } from "./commands/ledger.ts";
+import { runMcpProxy } from "./commands/mcp-proxy.ts";
+import { runMcpServer } from "./commands/mcp-server.ts";
 import { runSignerEnroll } from "./commands/signer-enroll.ts";
 import {
   runRulesAdd,
@@ -548,5 +550,42 @@ const hookClaudeCode = hook
     await runHookClaudeCode([event]);
   });
 void hookClaudeCode;
+
+// `agentlock mcp-server` — MCP stdio server spawned by Claude Desktop.
+// Claude Desktop has no PreToolUse/PostToolUse surface, so this is the
+// only honest install: register agentlock as an MCP server, expose
+// read-only observability tools (status, recent ledger entries) backed
+// by the daemon. No enforcement on Desktop's built-in tools.
+program
+  .command("mcp-server")
+  .description(
+    "Run the OpenAgentLock MCP stdio server. Spawned by Claude Desktop after `agentlock install` registers it under mcpServers. Exposes read-only status + ledger query tools.",
+  )
+  .action(async () => {
+    await runMcpServer();
+  });
+
+// `agentlock mcp-proxy --name <id> -- <child-cmd> [args...]`
+//
+// Stdio bridge spawned by Claude Desktop in place of each user-installed
+// MCP server (`agentlock install` rewrites their claude_desktop_config.json
+// to point here, preserving the original command under _agentlock_original).
+// Pumps bytes both directions verbatim except for tools/call requests,
+// which it forwards to /v1/hooks/claude-desktop/pre-tool-use for policy
+// evaluation. allowUnknownOption + helpOption(false) keeps commander from
+// gobbling the child's flags before we see the `--` separator.
+program
+  .command("mcp-proxy")
+  .description(
+    "Stdio proxy for Claude Desktop's MCP servers. Intercepts tools/call, applies policy via the daemon, forwards or denies. Spawned by Claude Desktop after `agentlock install` wraps each user MCP server.",
+  )
+  .allowUnknownOption()
+  .helpOption(false)
+  .action(async () => {
+    // Slice off "node|bun, scriptPath, mcp-proxy" — the rest are our args.
+    const ix = process.argv.indexOf("mcp-proxy");
+    const rest = ix >= 0 ? process.argv.slice(ix + 1) : [];
+    await runMcpProxy(rest);
+  });
 
 await program.parseAsync(process.argv);
