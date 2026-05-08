@@ -8,7 +8,7 @@
 // therefore install agentlock as an MCP server entry — that's the only
 // honest write we can do here.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { appSupport } from "../util/paths.ts";
 import { claudeDesktopAgentlockState } from "./agentlock-state.ts";
@@ -31,12 +31,24 @@ export const claudeDesktop: Detector = {
   async detect(): Promise<Detection> {
     const configPath = claudeDesktopConfigPath();
     const dir = join(configPath, "..");
+    const extensionsRegistry = join(dir, "extensions-installations.json");
 
     const evidence: string[] = [];
     const dirExists = existsSync(dir);
     const configExists = existsSync(configPath);
     if (dirExists) evidence.push(`found ${dir}`);
     if (configExists) evidence.push(`found ${configPath}`);
+
+    // Count Desktop Extensions installed via Settings → Extensions UI.
+    // This is the registry agentlock now wraps in addition to the
+    // manual mcpServers path; surfacing the count tells the user up
+    // front how much surface area they're hardening.
+    const extensionCount = countInstalledExtensions(extensionsRegistry);
+    if (extensionCount > 0) {
+      evidence.push(
+        `found ${extensionCount} Desktop Extension${extensionCount === 1 ? "" : "s"} (${extensionsRegistry})`,
+      );
+    }
 
     const scopes: DetectedScope[] = [
       { kind: "global", path: configPath, exists: configExists },
@@ -57,15 +69,33 @@ export const claudeDesktop: Detector = {
       surfaces: ["mcp-stdio"],
       notes: dirExists
         ? [
-            "Install wraps every MCP server entry with `agentlock mcp-proxy` so each tools/call is gated by daemon policy. Originals preserved under _agentlock_original for clean uninstall.",
+            "Install wraps every MCP server entry (manual mcpServers + Desktop Extensions installed via Settings → Extensions UI) with `agentlock mcp-proxy` so each tools/call is gated by daemon policy. Manual mcpServers entries preserve originals under _agentlock_original; Desktop Extension bundle manifests stash originals under _meta.agentlock (MCPB v0.3+ schema slot).",
+            "Anthropic auto-updates may overwrite the wrap on extension version bumps — re-run `agentlock install` after extension updates.",
             "Coverage is the MCP slice only: not gated are Computer Use, integrated terminal, native connectors (Slack/GCal), Cowork's non-MCP paths, and Anthropic cloud features. For full local enforcement, use Claude Code.",
           ]
         : [
             "Claude Desktop not detected. Selecting it will create the config dir on install.",
-            "When Claude Desktop is in use, install wraps each MCP server — coverage is MCP-slice only (not Computer Use, terminal, connectors, or cloud features).",
+            "When Claude Desktop is in use, install wraps each MCP server (mcpServers + Desktop Extensions) — coverage is MCP-slice only (not Computer Use, terminal, connectors, or cloud features).",
           ],
       agentlockInstalled: al.installed,
       agentlockDaemonURL: al.daemonURL,
     };
   },
 };
+
+// countInstalledExtensions parses extensions-installations.json and
+// returns the number of installed Desktop Extensions. Returns 0 on any
+// parse error or missing file — the count is informational; we don't
+// want detection to fail loud on a malformed registry that the install
+// pipeline will gracefully no-op past anyway.
+function countInstalledExtensions(registryPath: string): number {
+  if (!existsSync(registryPath)) return 0;
+  try {
+    const parsed = JSON.parse(readFileSync(registryPath, "utf8")) as {
+      extensions?: Record<string, unknown>;
+    };
+    return Object.keys(parsed.extensions ?? {}).length;
+  } catch {
+    return 0;
+  }
+}
