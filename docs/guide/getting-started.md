@@ -39,6 +39,14 @@ curl -s http://127.0.0.1:7878/v1/health
 # {"status":"ok","version":"…"}
 ```
 
+For a fuller local check after install or when hooks behave unexpectedly, run:
+
+```bash
+agentlock doctor
+```
+
+This is read-only. It checks daemon reachability, ledger verification, policy/session APIs, detected harnesses, hook wiring, and whether a hook is pointed at a different daemon URL than the one being checked.
+
 ## 2. Install the CLI
 
 === "npm / Bun"

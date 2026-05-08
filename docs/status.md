@@ -13,6 +13,7 @@ Live status of every component shipped to the public repo. <span class="md-statu
 | `agentlock install` (Openclaw, Nemoclaw, Hermesagent, Pi) | <span class="md-status-pill not-yet">Not yet implemented</span> — roadmap; awaiting per-app hook/config investigation |
 | `agentlock install --tier {unattested,software,totp}` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock status` | <span class="md-status-pill shipped">Shipped</span> |
+| `agentlock doctor` | <span class="md-status-pill shipped">Shipped</span> — read-only diagnostics for daemon health, ledger verification, policy/session APIs, local harness detection, hook wiring, and hook-vs-daemon URL mismatches |
 | `agentlock signer enroll --tier totp` | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock signer enroll --tier os-keychain` (macOS, optional `--ttl`) | <span class="md-status-pill shipped">Shipped</span> |
 | `agentlock signer enroll --tier yubikey` (PIV / FIDO2) | <span class="md-status-pill not-yet">Not yet implemented</span> |

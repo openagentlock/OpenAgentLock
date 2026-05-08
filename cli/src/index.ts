@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { runDashboard } from "./commands/dashboard.ts";
 import { runDetect } from "./commands/detect.ts";
+import { runDoctor } from "./commands/doctor.ts";
 import { runInstall } from "./commands/install.ts";
 import { runLogin } from "./commands/login.ts";
 import { runStatus } from "./commands/status.ts";
@@ -153,6 +154,18 @@ program
   .option("--json", "Emit JSON instead of human output.", false)
   .action(async (opts: { url?: string; json: boolean }) => {
     await runStatus({ url: opts.url, json: opts.json });
+  });
+
+program
+  .command("doctor")
+  .description("Run read-only diagnostics for the CLI, daemon, ledger, policy, sessions, and installed harness hooks.")
+  .option(
+    "--url <url>",
+    "Override the control-plane base URL (env: AGENTLOCK_CONTROL_PLANE_URL).",
+  )
+  .option("--json", "Emit JSON instead of human output.", false)
+  .action(async (opts: { url?: string; json: boolean }) => {
+    await runDoctor({ url: opts.url, json: opts.json, version: PKG_VERSION });
   });
 
 const session = program

@@ -26,6 +26,7 @@ agentlock detect            # list local agent harnesses
 agentlock install           # plan + apply hooks for selected harnesses
 agentlock status            # control-plane health
 agentlock dashboard         # OpenTUI dashboard — live ledger, sessions, gates
+agentlock doctor            # read-only daemon, ledger, policy, session, and hook diagnostics
 ```
 
 <p align="center">
