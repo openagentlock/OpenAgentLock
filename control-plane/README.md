@@ -10,6 +10,8 @@ docker run -d --name agentlock \
   -v agentlock-state:/var/lib/agentlock \
   -p 127.0.0.1:7878:7878 \
   -p 127.0.0.1:7879:7879 \
+  -e NVIDIA_API_KEY \
+  -e OPENROUTER_API_KEY \
   ghcr.io/openagentlock/agentlockd:latest
 ```
 
@@ -21,6 +23,8 @@ Or via the published `docker-compose.yml`:
 curl -O https://raw.githubusercontent.com/openagentlock/openagentlock/main/docker-compose.yml
 docker compose up -d
 ```
+
+External guardrail provider keys are optional. Set `NVIDIA_API_KEY` and/or `OPENROUTER_API_KEY` before starting Docker; the daemon reads them once into memory and does not persist them.
 
 ## Endpoints
 

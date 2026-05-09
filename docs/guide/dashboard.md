@@ -16,6 +16,7 @@ Both read from the same ledger and policy state — pick whichever fits the mome
 - **False-positive repair** — open a blocked or monitor-alert event detail, report it as a false positive, validate replacement gate YAML, then atomically disable the old rule and install the replacement
 - **Mode toggle** — flip the daemon between `monitor` and `enforce` (separate from the policy file's own `mode`)
 - **MCP pin queue** — accept or reject newly seen MCP servers
+- **External guardrails** — browse discovered guardrail catalog entries, enable runtime-capable classifier entries, and inspect event traces that show local policy, external guardrail, and final verdict stages. In the current slice, NVIDIA entries can run at runtime after a local allow; OpenRouter entries are catalog-only. Provider API keys are read from control-plane startup environment variables, not the browser.
 
 ## What the terminal dashboard does
 
@@ -30,8 +31,15 @@ agentlock dashboard
 - **Loaded gates** — the gates the daemon currently evaluates
 - **Mode flip** — one keypress to toggle the daemon between `monitor` and `enforce`
 - **False-positive repair** — open event detail for a matched deny or alert row and press `f` to edit, validate, and apply a replacement gate
+- **Guardrails catalog** — see configured external providers and discovered catalog entries from the terminal dashboard
 
-Rule edits and the MCP pin queue still live on the web dashboard.
+Rule edits and the MCP pin queue still live on the web dashboard. Provider keys are process environment only:
+
+```bash
+NVIDIA_API_KEY=... OPENROUTER_API_KEY=... docker compose up -d
+```
+
+Guardrail keys are kept in daemon memory only; restarting the daemon clears them.
 
 ## Why two surfaces
 

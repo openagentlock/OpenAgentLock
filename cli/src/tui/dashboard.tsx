@@ -25,6 +25,10 @@ import { useEffect, useRef, useState } from "react";
 import type {
   ApiClient,
   FalsePositiveCaseResponse,
+  GuardrailCatalogResponse,
+  GuardrailEnabledEntry,
+  GuardrailEnabledResponse,
+  GuardrailProvidersResponse,
   InsightWindow,
   LedgerInsightsResponse,
   LedgerRootResponse,
@@ -57,11 +61,12 @@ interface LedgerEntry {
   prev_leaf?: string;
 }
 
-type TabName = "stats" | "events" | "sessions" | "gates" | "mode";
+type TabName = "stats" | "events" | "guardrails" | "sessions" | "gates" | "mode";
 
 const TABS: { name: string; description: string; value: TabName }[] = [
   { name: "Stats", description: "Operational insights", value: "stats" },
   { name: "Events", description: "Live ledger tail", value: "events" },
+  { name: "Guardrails", description: "External guardrails", value: "guardrails" },
   { name: "Sessions", description: "Who's connected", value: "sessions" },
   { name: "Gates", description: "Loaded policy gates", value: "gates" },
   { name: "Mode", description: "Firewall / monitor", value: "mode" },
@@ -123,6 +128,7 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
   const [cursor, setCursor] = useState<Record<TabName, number>>({
     stats: 0,
     events: 0,
+    guardrails: 0,
     sessions: 0,
     gates: 0,
     mode: 0,
@@ -130,6 +136,7 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
   const [scroll, setScroll] = useState<Record<TabName, number>>({
     stats: 0,
     events: 0,
+    guardrails: 0,
     sessions: 0,
     gates: 0,
     mode: 0,
@@ -138,6 +145,12 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
   const [mode, setMode] = useState<ModeResponse | null>(null);
   const [sessions, setSessions] = useState<SessionsListResponse | null>(null);
   const [policy, setPolicy] = useState<PolicyViewResponse | null>(null);
+  const [guardrailProviders, setGuardrailProviders] =
+    useState<GuardrailProvidersResponse | null>(null);
+  const [guardrailCatalog, setGuardrailCatalog] =
+    useState<GuardrailCatalogResponse | null>(null);
+  const [guardrailEnabled, setGuardrailEnabled] =
+    useState<GuardrailEnabledResponse | null>(null);
   const [events, setEvents] = useState<LedgerEntry[]>([]);
   const [insights, setInsights] = useState<LedgerInsightsResponse | null>(null);
   const [statsWindow, setStatsWindow] = useState<InsightWindow>("24h");
@@ -176,6 +189,9 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
     api.getMode().then(setMode).catch(() => {});
     api.listSessions().then(setSessions).catch(() => {});
     api.policyView().then(setPolicy).catch(() => {});
+    api.guardrailProviders().then(setGuardrailProviders).catch(() => {});
+    api.guardrailCatalog().then(setGuardrailCatalog).catch(() => {});
+    api.guardrailEnabled().then(setGuardrailEnabled).catch(() => {});
     api.ledgerRoot().then(setLedgerRoot).catch(() => {});
   }, 2000);
 
@@ -243,6 +259,10 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
   pendingDeleteRef.current = pendingDelete;
   const statsWindowRef = useRef(statsWindow);
   statsWindowRef.current = statsWindow;
+  const guardrailCatalogRef = useRef(guardrailCatalog);
+  guardrailCatalogRef.current = guardrailCatalog;
+  const guardrailEnabledRef = useRef(guardrailEnabled);
+  guardrailEnabledRef.current = guardrailEnabled;
 
   // Filtered/visible derivations used by the keyboard handler when
   // computing what's "under the cursor."
@@ -274,10 +294,15 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
     );
   }
 
+  function visibleGuardrails() {
+    return guardrailCatalogRef.current?.entries ?? [];
+  }
+
   function moveCursor(delta: number): void {
     const t = tabRef.current;
     let max = 0;
     if (t === "events") max = filteredEvents().length;
+    else if (t === "guardrails") max = visibleGuardrails().length;
     else if (t === "sessions") max = visibleSessions().length;
     else if (t === "gates") max = policyRef.current?.gates.length ?? 0;
     if (max === 0) return;
@@ -331,6 +356,55 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
     api.policyView()
       .then((r) => flushSync(() => setPolicy(r)))
       .catch(() => {});
+  }
+
+  function refreshGuardrails(): void {
+    api.guardrailProviders()
+      .then((r) => flushSync(() => setGuardrailProviders(r)))
+      .catch(() => {});
+    api.guardrailCatalog()
+      .then((r) => flushSync(() => setGuardrailCatalog(r)))
+      .catch(() => {});
+    api.guardrailEnabled()
+      .then((r) => flushSync(() => setGuardrailEnabled(r)))
+      .catch(() => {});
+  }
+
+  function isGuardrailEnabled(entry: { provider_id: string; entry_id: string }): boolean {
+    return (guardrailEnabledRef.current?.entries ?? []).some(
+      (item) =>
+        item.provider_id === entry.provider_id && item.entry_id === entry.entry_id,
+    );
+  }
+
+  function toggleGuardrail(entry: GuardrailEnabledEntry & { supports_runtime_enforcement?: boolean; name?: string }): void {
+    if (!entry.supports_runtime_enforcement) {
+      flashToast(`${entry.name ?? entry.entry_id} is catalog-only`);
+      return;
+    }
+    const current = guardrailEnabledRef.current?.entries ?? [];
+    const enabled = current.some(
+      (item) =>
+        item.provider_id === entry.provider_id && item.entry_id === entry.entry_id,
+    );
+    const next = enabled
+      ? current.filter(
+          (item) =>
+            !(item.provider_id === entry.provider_id && item.entry_id === entry.entry_id),
+        )
+      : [...current, { provider_id: entry.provider_id, entry_id: entry.entry_id }];
+    flushSync(() => setGuardrailEnabled({ entries: next }));
+    api.saveGuardrailEnabled(next)
+      .then((saved) => {
+        flushSync(() => setGuardrailEnabled(saved));
+        flashToast(
+          `${entry.name ?? entry.entry_id} ${enabled ? "disabled" : "enabled"}`,
+        );
+      })
+      .catch((err) => {
+        flushSync(() => setGuardrailEnabled({ entries: current }));
+        flashToast(`guardrail toggle failed: ${truncate(err.message, 80)}`);
+      });
   }
 
   async function runFalsePositiveFlow(entry: LedgerEntry): Promise<void> {
@@ -513,6 +587,7 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
         api.getMode().then((r) => flushSync(() => setMode(r))).catch(() => {});
         api.listSessions().then((r) => flushSync(() => setSessions(r))).catch(() => {});
         api.policyView().then((r) => flushSync(() => setPolicy(r))).catch(() => {});
+        refreshGuardrails();
         api.ledgerRoot().then((r) => flushSync(() => setLedgerRoot(r))).catch(() => {});
         api.ledgerInsights(statsWindowRef.current)
           .then((r) => flushSync(() => setInsights(r)))
@@ -592,6 +667,21 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
           flushSync(() =>
             setFilters((f) => ({ ...f, outcomes: !f.outcomes })),
           );
+          return;
+        }
+        return;
+      }
+
+      if (t === "guardrails") {
+        const entries = visibleGuardrails();
+        const cur = cursorRef.current.guardrails;
+        const sel = entries[cur];
+        if (name === "space" || e.sequence === " ") {
+          if (!sel) {
+            flashToast("no guardrail selected");
+            return;
+          }
+          toggleGuardrail(sel);
           return;
         }
         return;
@@ -764,6 +854,15 @@ function Dashboard({ api, onQuit }: DashboardProps): React.ReactNode {
             filters={filters}
             filterField={filterField}
             filterBuffer={filterBuffer}
+          />
+        ) : tab === "guardrails" ? (
+          <GuardrailsPane
+            providers={guardrailProviders}
+            catalog={guardrailCatalog}
+            enabled={guardrailEnabled}
+            cursor={cursor.guardrails}
+            scroll={scroll.guardrails}
+            isEnabled={isGuardrailEnabled}
           />
         ) : tab === "sessions" ? (
           <SessionsPane
@@ -1393,6 +1492,111 @@ function signerColor(s: string): string {
   return "#AAAAAA";
 }
 
+function GuardrailsPane({
+  providers,
+  catalog,
+  enabled,
+  cursor,
+  scroll,
+  isEnabled,
+}: {
+  providers: GuardrailProvidersResponse | null;
+  catalog: GuardrailCatalogResponse | null;
+  enabled: GuardrailEnabledResponse | null;
+  cursor: number;
+  scroll: number;
+  isEnabled: (entry: { provider_id: string; entry_id: string }) => boolean;
+}): React.ReactNode {
+  if (!providers) {
+    return <text fg="#888888">loading guardrails...</text>;
+  }
+  const entries = catalog?.entries ?? [];
+  const providerErrors = catalog?.provider_errors ?? [];
+  const enabledCount = enabled?.entries.length ?? 0;
+  const rows = entries.slice(scroll, scroll + VISIBLE_ROWS);
+  return (
+    <box flexDirection="column">
+      <Divider title="providers" />
+      {providers.providers.length === 0 ? (
+        <text fg="#888888">no providers registered</text>
+      ) : (
+        providers.providers.map((p) => (
+          <box key={p.id} flexDirection="column">
+            <box flexDirection="row">
+              <text fg={p.configured ? "#7FE7DC" : "#888888"}>
+                {p.name.padEnd(14, " ")}
+              </text>
+              <text fg={p.configured ? "#00FF88" : "#F5A623"}>
+                {(p.configured ? "configured" : "not configured").padEnd(16, " ")}
+              </text>
+              <text fg="#666666">{p.capabilities.join(" / ")}</text>
+            </box>
+            <text fg="#666666">
+              {p.id === "nvidia"
+                ? "runtime classifier after local allow"
+                : p.id === "openrouter"
+                  ? "catalog only in this slice; no runtime classifier yet"
+                  : "provider behavior depends on runtime support"}
+            </text>
+          </box>
+        ))
+      )}
+      {providerErrors.length > 0 ? (
+        <>
+          <Divider title="provider errors" />
+          {providerErrors.map((item) => (
+            <box key={item.provider_id} flexDirection="row">
+              <text fg="#F5A623">{item.provider_id.padEnd(14, " ")}</text>
+              <text fg="#FF8888">{truncate(item.detail, 96)}</text>
+            </box>
+          ))}
+        </>
+      ) : null}
+      <Divider title="catalog" />
+      <box flexDirection="row" marginBottom={1}>
+        <text fg="#666666">{`${enabledCount} runtime guardrail${enabledCount === 1 ? "" : "s"} enabled`}</text>
+      </box>
+      {entries.length === 0 ? (
+        <text fg="#888888">no catalog entries</text>
+      ) : (
+        <>
+          <box flexDirection="row" marginBottom={1}>
+            <text fg="#555555" attributes={1}>
+              {"ON".padEnd(4, " ")}
+              {"PROVIDER".padEnd(14, " ")}
+              {"KIND".padEnd(18, " ")}
+              {"RUNTIME".padEnd(10, " ")}
+              {"ENTRY"}
+            </text>
+          </box>
+          {rows.map((entry, index) => {
+            const selected = scroll + index === cursor;
+            const marker = selected ? "▌" : " ";
+            const active = isEnabled(entry);
+            return (
+            <box key={`${entry.provider_id}/${entry.entry_id}`} flexDirection="row">
+              <text fg={selected ? "#7FE7DC" : "#555555"}>{`${marker}${active ? "[x]" : "[ ]"}`.padEnd(4, " ")}</text>
+              <text fg={selected ? "#CCCCCC" : "#AAAAAA"}>{entry.provider_id.padEnd(14, " ")}</text>
+              <text fg={entry.kind === "classifier_model" ? "#7FE7DC" : "#F5A623"}>
+                {(entry.kind === "classifier_model" ? "classifier" : "policy").padEnd(18, " ")}
+              </text>
+              <text fg={entry.supports_runtime_enforcement ? "#00FF88" : "#888888"}>
+                {(entry.supports_runtime_enforcement ? "yes" : "no").padEnd(10, " ")}
+              </text>
+              <text fg={selected ? "#FFFFFF" : "#CCCCCC"}>{truncate(entry.name || entry.entry_id, 56)}</text>
+            </box>
+          )})}
+          {entries.length > VISIBLE_ROWS ? (
+            <box marginTop={1}>
+              <text fg="#666666">{`rows ${scroll + 1}-${Math.min(entries.length, scroll + VISIBLE_ROWS)} of ${entries.length}`}</text>
+            </box>
+          ) : null}
+        </>
+      )}
+    </box>
+  );
+}
+
 const INTERNAL_SOURCES = new Set<string>([
   "internal",
   "agentlock",
@@ -1763,6 +1967,7 @@ function Footer({ toast, tab }: { toast: string; tab: TabName }): React.ReactNod
   const tabHelp: Record<TabName, string> = {
     stats: "(window keybinds shown next to each button above)",
     events: "enter detail  f filter  c clear  i internal  o outcomes  H hashes",
+    guardrails: "space toggle runtime guardrail  r refresh  startup env on control plane",
     sessions: "i toggle internal harnesses",
     gates: "enter detail  a add  e edit  space toggle  M cycle-mode  x x delete",
     mode: "(read-only — m on any tab flips mode)",

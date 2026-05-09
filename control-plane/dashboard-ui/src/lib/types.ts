@@ -20,6 +20,54 @@ export interface LedgerEntry {
   prev_leaf: string;
 }
 
+export interface GuardrailProviderView {
+  id: string;
+  name: string;
+  status: string;
+  capabilities: string[];
+  configured: boolean;
+}
+
+export interface GuardrailCatalogEntry {
+  provider_id: string;
+  entry_id: string;
+  name: string;
+  kind: "classifier_model" | "account_policy";
+  description?: string;
+  supports_runtime_enforcement: boolean;
+  metadata?: Record<string, string>;
+}
+
+export interface GuardrailCatalogProviderError {
+  provider_id: string;
+  detail: string;
+}
+
+export interface GuardrailEnabledEntry {
+  provider_id: string;
+  entry_id: string;
+}
+
+export interface GuardrailRuntimeStage {
+  provider_id: string;
+  entry_id: string;
+  verdict: string;
+  latency_ms: number;
+  details?: Record<string, string>;
+}
+
+export interface GuardrailTrace {
+  local_policy_verdict: string;
+  guardrail_verdict: string;
+  final_verdict: string;
+  stages: GuardrailRuntimeStage[];
+}
+
+export interface GuardrailTraceResponse {
+  ledger_seq: number;
+  trace: GuardrailTrace;
+}
+
 export interface PolicyTraceItem {
   layer?: string;
   source?: string;

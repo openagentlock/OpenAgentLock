@@ -2,13 +2,15 @@ import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { AddRuleModal } from "@/components/AddRuleModal";
+import { GuardrailTraceFlow } from "@/components/GuardrailTraceFlow";
 import { useRootInfo } from "@/hooks/usePoll";
 import { useSSELedger } from "@/hooks/useSSE";
-import { apiJSON, apiSend } from "@/lib/api";
+import { apiJSON, apiSend, guardrailTrace } from "@/lib/api";
 import type {
   FalsePositiveApplyResult,
   FalsePositiveCase,
   FalsePositiveValidation,
+  GuardrailTrace,
   LedgerEntry,
 } from "@/lib/types";
 import { INTERNAL_SOURCES } from "@/lib/filters";
@@ -456,6 +458,7 @@ function EventDetail({
   const [fpApply, setFpApply] = useState<FalsePositiveApplyResult | null>(null);
   const [fpError, setFpError] = useState<string | null>(null);
   const [fpBusy, setFpBusy] = useState(false);
+  const [trace, setTrace] = useState<GuardrailTrace | null>(null);
   // Esc-to-close + initial focus on the close button. Focus trap is left
   // out for now — the dialog has a single interactive element so Tab
   // would just cycle there anyway.
@@ -468,6 +471,21 @@ function EventDetail({
     closeBtnRef.current?.focus();
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  useEffect(() => {
+    if (!entry) return;
+    let active = true;
+    setTrace(null);
+    guardrailTrace(entry.seq)
+      .then((res) => {
+        if (active) setTrace(res.trace);
+      })
+      .catch(() => {
+        if (active) setTrace(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [entry]);
 
   if (!entry) {
     return (
@@ -617,6 +635,14 @@ function EventDetail({
             mono
             wrap
           />
+        )}
+        {trace && (
+          <div className="mt-4 border-t border-border pt-4">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
+              Guardrail trace
+            </div>
+            <GuardrailTraceFlow trace={trace} />
+          </div>
         )}
         <DetailRow label="signer" value={entry.signer || "—"} mono />
         <DetailRow label="tool_use_id" value={entry.tool_use_id || "—"} mono />

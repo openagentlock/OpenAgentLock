@@ -6,6 +6,10 @@ services:
       - "127.0.0.1:7878:7878"
     environment:
       AGENTLOCK_LISTEN: "0.0.0.0:7878"
+      # Optional external guardrail providers. Values are read once at
+      # control-plane startup, kept in daemon RAM, and cleared on restart.
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
     volumes:
       - ../dev/agentlock:/var/lib/agentlock
     healthcheck:

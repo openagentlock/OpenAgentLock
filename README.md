@@ -29,6 +29,8 @@ docker run -d --name agentlock \
   -p 127.0.0.1:7878:7878 \
   -p 127.0.0.1:7879:7879 \
   -v agentlock-state:/var/lib/agentlock \
+  -e NVIDIA_API_KEY \
+  -e OPENROUTER_API_KEY \
   ghcr.io/openagentlock/agentlockd:latest
 
 # 2. Install the CLI
@@ -45,6 +47,8 @@ agentlock install --tier totp --code 123456 --passphrase 'your-passphrase-here'
 ```
 
 For a quick eval without a signer (dev only): start the daemon with `-e AGENTLOCK_ALLOW_UNATTESTED=1`, then `agentlock install` (defaults to unattested).
+
+Optional external guardrails are enabled by starting the daemon with `NVIDIA_API_KEY` and/or `OPENROUTER_API_KEY`; keys are held in control-plane memory only. In the current shipped slice, NVIDIA provides post-local-allow runtime classification, while OpenRouter is catalog visibility only.
 
 Open the local web dashboard at <http://127.0.0.1:7879/>, or run `agentlock dashboard` for a terminal TUI with the same live ledger tail, sessions, loaded gates, and a one-key monitor⇄enforce flip.
 
