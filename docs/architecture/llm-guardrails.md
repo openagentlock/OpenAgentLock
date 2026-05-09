@@ -1,6 +1,6 @@
 # LLM-based guardrails (roadmap)
 
-> **Status: <span class="md-status-pill not-yet">Not yet implemented</span>** — design is in flight; this doc captures the shape we're aiming at so policy authors and contributors can reason about it before code lands.
+> **Status: <span class="md-status-pill shipped">Initial external-provider slice shipped</span>** — OpenAgentLock now has startup-env provider configuration, catalog discovery, runtime classifier evaluation for NVIDIA-style guardrails, and web/TUI visibility. Broader policy-schema integration and community-rule contribution flows remain roadmap.
 
 OpenAgentLock's evaluator is intentionally **deterministic YAML**: a path-shape match plus a verdict. That is the right default — fast, auditable, no LLM-shaped failure modes in the hot path. But there are policy questions that genuinely cannot be decided by regex, and forcing them through `command_regex` produces either dangerous false negatives or unworkable false positives. Examples we've hit in the wild:
 
@@ -8,7 +8,7 @@ OpenAgentLock's evaluator is intentionally **deterministic YAML**: a path-shape 
 - "Refuse to assist with self-harm or weapons synthesis" when the agent is wrapping a chat assistant.
 - "Block exfiltration of company-confidential content" when the content is extracted from real source files (not a regex away).
 
-For these we want a second tier of evaluator that calls into a small **safety classifier** model — running locally — and returns a numeric score that policy can act on.
+For these we want a second tier of evaluator that calls into a **safety classifier** model and returns a structured result that OpenAgentLock can audit. The first shipped slice supports external hosted providers as an explicit opt-in. Local-only operation remains the default when no provider is configured.
 
 ## Severity model
 
@@ -78,10 +78,34 @@ gates:
 
 Key invariants:
 
-1. **Local-first.** Model serving runs on the same host as the daemon. No prompts leave the box. Default backend is `ollama` (which already supports the NeMo Guard models); we'll wire `vllm` and `llama.cpp` as alternates.
+1. **Local policy first.** Deterministic YAML policy runs before external guardrails. Local deny stops immediately; external guardrails only run after a local allow.
 2. **Abstain, not deny, on failure.** If the model is slow/unavailable, the rule abstains (returns `skip`) rather than denying — guardrails must not become a DoS surface. The `monitor` policy mode logs the abstention.
 3. **Deterministic core stays primary.** Guardrail evaluators run *after* deterministic regex/glob matchers. The simple matchers absorb the easy cases; the LLM only sees what the policy explicitly routes to it.
-4. **Same audit trail.** Verdicts include the classifier output; ledger entries record `signer`, `model`, and the structured taxonomy verdict so a verifier can reproduce the call.
+4. **Same audit trail.** Verdicts keep local policy, guardrail, and final verdicts distinct. A guardrail deny is not presented as a deterministic YAML rule hit.
+
+## Shipped external-provider slice
+
+The daemon exposes:
+
+- `GET /v1/guardrails/providers`
+- `POST /v1/guardrails/providers/{id}/test`
+- `GET /v1/guardrails/catalog`
+- `PUT /v1/guardrails/enabled`
+- `GET /v1/guardrails/traces/{seq}`
+
+Provider credentials are read from environment variables when the control plane starts, not from the web dashboard or CLI:
+
+```bash
+NVIDIA_API_KEY=... OPENROUTER_API_KEY=... docker compose up -d
+```
+
+The daemon stores these keys in RAM only. They are never written by the dashboard and are cleared on daemon restart.
+
+Provider behavior:
+
+- NVIDIA catalog entries are normalized as `classifier_model` entries and can run in the post-local-policy runtime stage.
+- OpenRouter guardrails are normalized as `account_policy` entries. They are visible in catalog surfaces but do not run as OpenAgentLock runtime classifiers in this slice, so they should be treated as catalog visibility rather than enforcement.
+- Provider errors, unsupported runtime entries, and malformed classifier responses produce `abstain`, not implicit allow or deny.
 
 ## Wire shape
 
@@ -106,12 +130,18 @@ Policies can mix-and-match — most rules will stay regex; a small number will r
 | Step | Status |
 |---|---|
 | Roadmap doc (this file) | <span class="md-status-pill shipped">Shipped</span> |
+| `/v1/guardrails/providers` provider registry endpoint | <span class="md-status-pill shipped">Shipped</span> |
+| `/v1/guardrails/catalog` normalized provider catalog | <span class="md-status-pill shipped">Shipped</span> |
+| NVIDIA runtime classifier integration | <span class="md-status-pill shipped">Shipped</span> |
+| OpenRouter account-policy catalog visibility | <span class="md-status-pill shipped">Shipped</span> |
+| Startup-env RAM provider key configuration | <span class="md-status-pill shipped">Shipped</span> |
+| Catalog cache / abstain semantics + tests | <span class="md-status-pill shipped">Shipped</span> |
+| Provider-measured runtime latency in traces | <span class="md-status-pill not-yet">Not yet implemented</span> |
+| Dashboard and TUI multi-stage trace visibility | <span class="md-status-pill shipped">Shipped</span> |
 | Add `kind: llm_guardrail` to the policy schema, parser only | <span class="md-status-pill not-yet">Not yet implemented</span> |
-| `/v1/llm/models` registry endpoint | <span class="md-status-pill not-yet">Not yet implemented</span> |
-| First evaluator implementation against `ollama` running NeMo Guard locally | <span class="md-status-pill not-yet">Not yet implemented</span> |
-| Latency / cache / abstain semantics + tests | <span class="md-status-pill not-yet">Not yet implemented</span> |
+| Local `ollama` / `vllm` / `llama.cpp` backends | <span class="md-status-pill not-yet">Not yet implemented</span> |
 | Community-rule shape (`schema_version: 2` adds the kind) | <span class="md-status-pill not-yet">Not yet implemented</span> |
-| Dashboard UI shows model verdicts in the event row | <span class="md-status-pill not-yet">Not yet implemented</span> |
+| Opt-in community contribution pipeline | <span class="md-status-pill not-yet">Not yet implemented</span> |
 
 ## Why a roadmap doc instead of just an issue
 

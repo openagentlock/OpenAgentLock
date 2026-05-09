@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openagentlock/openagentlock/control-plane/internal/guardrails"
 	"github.com/openagentlock/openagentlock/control-plane/internal/policy"
 	"github.com/openagentlock/openagentlock/control-plane/internal/signer"
 	"github.com/openagentlock/openagentlock/control-plane/internal/storage"
@@ -109,6 +110,61 @@ func newGateFixture(t *testing.T, policyYAML string) gateFixture {
 	return gateFixture{srv: srv, store: store, sessionID: id, home: home}
 }
 
+func newGateFixtureWithGuardrails(t *testing.T, policyYAML string, provider guardrailsHTTPFakeProvider) gateFixture {
+	t.Helper()
+	pol, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+	home := t.TempDir()
+	store, err := storage.NewMemory(home)
+	if err != nil {
+		t.Fatalf("NewMemory: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.SaveGuardrailProviderConfig(context.Background(), guardrails.ProviderConfig{ProviderID: provider.id}); err != nil {
+		t.Fatalf("SaveGuardrailProviderConfig: %v", err)
+	}
+	enabled := make([]guardrails.EnabledEntry, 0, len(provider.catalog))
+	for _, entry := range provider.catalog {
+		enabled = append(enabled, guardrails.EnabledEntry{ProviderID: entry.ProviderID, EntryID: entry.EntryID})
+	}
+	if _, err := store.SaveGuardrailEnabled(context.Background(), enabled); err != nil {
+		t.Fatalf("SaveGuardrailEnabled: %v", err)
+	}
+	svc := guardrails.NewService(store, provider)
+	srv := httptest.NewServer(NewRouter(Deps{Store: store, Policy: pol, Guardrails: svc, AgentlockHome: home}))
+	t.Cleanup(srv.Close)
+
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	payload := signer.AttestationPayload{
+		PolicyHash:    pol.Hash,
+		SessionPubKey: "ed25519:" + hex.EncodeToString(pub),
+		Signer:        "software",
+		SignerPubKey:  "ed25519:" + hex.EncodeToString(pub),
+	}
+	canon := signer.CanonicalAttestation(payload)
+	sig := ed25519.Sign(priv, canon)
+	body := fmt.Sprintf(`{"policy_hash":%q,"session_pubkey":%q,"signer":"software","signer_pubkey":%q,"attestation":"ed25519:%s"}`,
+		payload.PolicyHash, payload.SessionPubKey, payload.SignerPubKey, hex.EncodeToString(sig))
+	res, err := http.Post(srv.URL+"/v1/sessions", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST sessions: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(res.Body)
+		t.Fatalf("session create: %d %s", res.StatusCode, buf.String())
+	}
+	var sess map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&sess)
+	id, _ := sess["id"].(string)
+
+	return gateFixture{srv: srv, store: store, sessionID: id, home: home}
+}
+
 func postGateCheck(t *testing.T, srv *httptest.Server, body string) (*http.Response, map[string]any) {
 	t.Helper()
 	res, err := http.Post(srv.URL+"/v1/gates/check", "application/json", strings.NewReader(body))
@@ -141,6 +197,62 @@ func TestGateCheck_AllowsBenignBash(t *testing.T) {
 	}
 	if out["rule_id"] != "default" {
 		t.Fatalf("rule_id = %v", out["rule_id"])
+	}
+}
+
+func TestGateCheck_LocalAllowGuardrailDenyReturnsDeny(t *testing.T) {
+	fx := newGateFixtureWithGuardrails(t, enforcePolicyYAML, guardrailsHTTPFakeProvider{
+		id: "nvidia",
+		catalog: []guardrails.CatalogEntry{{
+			ProviderID:                 "nvidia",
+			EntryID:                    "nemo-content-safety",
+			Name:                       "NeMo Content Safety",
+			Kind:                       guardrails.CatalogEntryClassifierModel,
+			SupportsRuntimeEnforcement: true,
+		}},
+		runtimeResult: guardrails.RuntimeResult{
+			ProviderID: "nvidia",
+			EntryID:    "nemo-content-safety",
+			Verdict:    "deny",
+			LatencyMS:  180,
+		},
+	})
+
+	body := fmt.Sprintf(`{
+		"session_id": %q,
+		"source": "codex",
+		"tool": "Bash",
+		"input": {"command": "cat secrets.txt"}
+	}`, fx.sessionID)
+	res, out := postGateCheck(t, fx.srv, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if out["verdict"] != "deny" {
+		t.Fatalf("verdict = %v, want deny", out["verdict"])
+	}
+	if out["rule_id"] != "guardrail:nvidia/nemo-content-safety" {
+		t.Fatalf("rule_id = %v", out["rule_id"])
+	}
+	seqFloat, ok := out["ledger_seq"].(float64)
+	if !ok || seqFloat < 1 {
+		t.Fatalf("ledger_seq = %v", out["ledger_seq"])
+	}
+	seq := uint64(seqFloat)
+	traceRes, err := http.Get(fmt.Sprintf("%s/v1/guardrails/traces/%d", fx.srv.URL, seq))
+	if err != nil {
+		t.Fatalf("GET trace: %v", err)
+	}
+	defer traceRes.Body.Close()
+	if traceRes.StatusCode != http.StatusOK {
+		t.Fatalf("trace status = %d", traceRes.StatusCode)
+	}
+	var traceBody GuardrailTraceResponse
+	if err := json.NewDecoder(traceRes.Body).Decode(&traceBody); err != nil {
+		t.Fatalf("decode trace: %v", err)
+	}
+	if traceBody.Trace.LocalPolicyVerdict != "allow" || traceBody.Trace.FinalVerdict != "deny" {
+		t.Fatalf("trace = %+v", traceBody.Trace)
 	}
 }
 

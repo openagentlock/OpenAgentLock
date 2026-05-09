@@ -14,8 +14,13 @@ The control plane is a small Go HTTP service that lives in a Docker container. I
 
     ```bash
     curl -O https://raw.githubusercontent.com/openagentlock/openagentlock/main/docker-compose.yml
+    # Optional external guardrails:
+    # export NVIDIA_API_KEY=...
+    # export OPENROUTER_API_KEY=...
     docker compose up -d
     ```
+
+    `NVIDIA_API_KEY` enables the shipped runtime-classifier path. `OPENROUTER_API_KEY` currently enables OpenRouter catalog discovery only.
 
 === "docker run"
 
@@ -25,6 +30,8 @@ The control plane is a small Go HTTP service that lives in a Docker container. I
       -v agentlock-state:/var/lib/agentlock \
       -p 127.0.0.1:7878:7878 \
       -p 127.0.0.1:7879:7879 \
+      -e NVIDIA_API_KEY \
+      -e OPENROUTER_API_KEY \
       ghcr.io/openagentlock/agentlockd:latest
     ```
 
