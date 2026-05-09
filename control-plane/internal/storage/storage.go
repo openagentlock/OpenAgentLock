@@ -4,7 +4,11 @@
 
 package storage
 
-import "context"
+import (
+	"context"
+
+	"github.com/openagentlock/openagentlock/control-plane/internal/guardrails"
+)
 
 type Storage interface {
 	Health(ctx context.Context) error
@@ -24,6 +28,17 @@ type Storage interface {
 	// SaveDetections replaces the detection set reported for the session.
 	SaveDetections(ctx context.Context, sessionID string, dets []Detection) error
 	GetDetections(ctx context.Context, sessionID string) ([]Detection, error)
+	// SaveGuardrailProviderConfig creates or updates a guardrail provider configuration.
+	SaveGuardrailProviderConfig(ctx context.Context, cfg guardrails.ProviderConfig) error
+	// GetGuardrailProviderConfig retrieves a provider configuration by ID.
+	// The found return is true when a config exists, false otherwise.
+	GetGuardrailProviderConfig(ctx context.Context, providerID string) (guardrails.ProviderConfig, bool, error)
+	// ListGuardrailProviderConfigs returns all guardrail provider configurations.
+	ListGuardrailProviderConfigs(ctx context.Context) ([]guardrails.ProviderConfig, error)
+	// SaveGuardrailEnabled replaces the entire enabled guardrail set and returns the saved set.
+	SaveGuardrailEnabled(ctx context.Context, entries []guardrails.EnabledEntry) ([]guardrails.EnabledEntry, error)
+	// ListGuardrailEnabled returns every enabled guardrail entry.
+	ListGuardrailEnabled(ctx context.Context) ([]guardrails.EnabledEntry, error)
 }
 
 type Detection struct {

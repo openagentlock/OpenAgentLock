@@ -4,6 +4,9 @@
 # required.
 #
 # Usage:
+#   # optional external guardrails:
+#   # export NVIDIA_API_KEY=...
+#   # export OPENROUTER_API_KEY=...
 #   docker compose up -d
 #   docker compose logs -f control-plane
 #   docker compose down
@@ -23,6 +26,10 @@ services:
       AGENTLOCK_LISTEN: "0.0.0.0:7878"
       AGENTLOCK_DASHBOARD_LISTEN: "0.0.0.0:7879"
       AGENTLOCK_HOME: "/var/lib/agentlock"
+      # Optional external guardrail providers. Values are read once at
+      # control-plane startup, kept in daemon RAM, and cleared on restart.
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
     volumes:
       - agentlock-state:/var/lib/agentlock
     healthcheck:

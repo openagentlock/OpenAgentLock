@@ -45,6 +45,16 @@ The compose file references `ghcr.io/openagentlock/agentlockd:latest` and binds 
 
 State is persisted in a named Docker volume (`agentlock-state`) so ledger entries survive restarts.
 
+Optional external guardrails are configured by environment when the control plane starts. These keys are read once, kept in daemon memory, and are not written to disk:
+
+```bash
+export NVIDIA_API_KEY=...
+export OPENROUTER_API_KEY=...
+docker compose up -d
+```
+
+Today, `NVIDIA_API_KEY` enables post-local-allow runtime classification. `OPENROUTER_API_KEY` enables catalog visibility for OpenRouter guardrails, but those entries do not run as OpenAgentLock runtime classifiers yet.
+
 ### `docker run`
 
 ```bash
@@ -52,6 +62,8 @@ docker run -d --name agentlock \
   -v agentlock-state:/var/lib/agentlock \
   -p 127.0.0.1:7878:7878 \
   -p 127.0.0.1:7879:7879 \
+  -e NVIDIA_API_KEY \
+  -e OPENROUTER_API_KEY \
   ghcr.io/openagentlock/agentlockd:latest
 ```
 
