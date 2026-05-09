@@ -41,7 +41,7 @@ function startMock(opts: MockOpts, recorded: Recorded[]): { url: string; stop: (
     async fetch(req) {
       const u = new URL(req.url);
       const body =
-        req.method === "POST" || req.method === "PATCH"
+        req.method === "POST" || req.method === "PATCH" || req.method === "PUT"
           ? await req.json().catch(() => null)
           : null;
       recorded.push({ method: req.method, path: u.pathname, body });

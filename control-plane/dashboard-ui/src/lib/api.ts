@@ -51,7 +51,7 @@ export async function apiJSON<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function apiSend<T>(
   path: string,
-  method: "POST" | "PATCH" | "DELETE",
+  method: "POST" | "PATCH" | "PUT" | "DELETE",
   body?: unknown,
 ): Promise<T> {
   const res = await fetch(`${apiBase()}${path}`, {
@@ -79,4 +79,35 @@ export async function apiSend<T>(
       `malformed JSON response: ${(err as Error).message}; body=${text.slice(0, 200)}`,
     );
   }
+}
+
+export async function listGuardrailProviders(): Promise<{
+  providers: import("./types").GuardrailProviderView[];
+}> {
+  return apiJSON("/v1/guardrails/providers");
+}
+
+export async function listGuardrailCatalog(): Promise<{
+  entries: import("./types").GuardrailCatalogEntry[];
+  provider_errors?: import("./types").GuardrailCatalogProviderError[];
+}> {
+  return apiJSON("/v1/guardrails/catalog");
+}
+
+export async function listGuardrailEnabled(): Promise<{
+  entries: import("./types").GuardrailEnabledEntry[];
+}> {
+  return apiJSON("/v1/guardrails/enabled");
+}
+
+export async function saveGuardrailEnabled(
+  entries: import("./types").GuardrailEnabledEntry[],
+): Promise<{ entries: import("./types").GuardrailEnabledEntry[] }> {
+  return apiSend("/v1/guardrails/enabled", "PUT", { entries });
+}
+
+export async function guardrailTrace(
+  seq: number,
+): Promise<import("./types").GuardrailTraceResponse> {
+  return apiJSON(`/v1/guardrails/traces/${encodeURIComponent(String(seq))}`);
 }

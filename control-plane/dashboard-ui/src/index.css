@@ -52,4 +52,16 @@ body {
   .oal-btn-link:focus-visible {
     @apply outline-none ring-2 ring-accent rounded-sm text-neutral-100;
   }
+  .trace-node {
+    @apply whitespace-pre-line rounded border border-border bg-panel px-3 py-2 text-center text-[11px] text-neutral-100 shadow;
+  }
+  .trace-node.allow {
+    @apply border-allow/50 bg-allow/10;
+  }
+  .trace-node.deny {
+    @apply border-deny/50 bg-deny/10;
+  }
+  .trace-node.abstain {
+    @apply border-monitor/50 bg-monitor/10;
+  }
 }

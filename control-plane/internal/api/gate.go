@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/openagentlock/openagentlock/control-plane/internal/guardrails"
+	"github.com/openagentlock/openagentlock/control-plane/internal/policy"
 	"github.com/openagentlock/openagentlock/control-plane/internal/storage"
 )
 
@@ -73,6 +76,15 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 
 		var origVerdict string
 		result, _, origVerdict = applyDaemonModeOverride(result)
+		guardrailTrace, guardrailRuleID := evaluateGuardrailsAfterLocalAllow(r.Context(), d, req.Source, req.Tool, req.Input, origVerdict, result)
+		if guardrailTrace.FinalVerdict == "deny" {
+			result.Verdict = "deny"
+			result.RuleID = guardrailRuleID
+			result.Reason = "blocked by external guardrail"
+			result.MonitorMatch = false
+			result.Nudge = ""
+			origVerdict = "deny"
+		}
 
 		// Ledger entry for the evaluated call. The payload hash is over the
 		// canonical request body so verifiers can re-derive it from the same
@@ -85,6 +97,7 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 			"input":      req.Input,
 			"verdict":    origVerdict,
 			"rule_id":    result.RuleID,
+			"guardrails": guardrailTrace,
 		})
 		if err != nil {
 			log.Printf("gate.check: payload marshal: %v", err)
@@ -110,6 +123,9 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "ledger_error", err.Error())
 			return
 		}
+		if d.Guardrails != nil && guardrailTrace.LocalPolicyVerdict != "" {
+			d.Guardrails.RecordTrace(entry.Seq, guardrailTrace)
+		}
 
 		writeJSON(w, http.StatusOK, gateCheckResponse{
 			Verdict:   result.Verdict,
@@ -120,4 +136,25 @@ func gateCheckHandler(d Deps) http.HandlerFunc {
 			Nudge:     result.Nudge,
 		})
 	}
+}
+
+func evaluateGuardrailsAfterLocalAllow(ctx context.Context, d Deps, source, tool string, input map[string]any, localVerdict string, result policy.EvalResult) (guardrails.Trace, string) {
+	if d.Guardrails == nil || result.Verdict != "allow" || localVerdict != "allow" {
+		return guardrails.Trace{}, ""
+	}
+	trace, final := d.Guardrails.EvaluatePostPolicy(ctx, guardrails.EvaluateRequest{
+		LocalPolicyVerdict: "allow",
+		Source:             source,
+		Tool:               tool,
+		Input:              input,
+	})
+	if final != "deny" {
+		return trace, ""
+	}
+	for _, stage := range trace.Stages {
+		if stage.Verdict == "deny" {
+			return trace, "guardrail:" + stage.ProviderID + "/" + stage.EntryID
+		}
+	}
+	return trace, "guardrail"
 }

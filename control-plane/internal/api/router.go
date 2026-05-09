@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/openagentlock/openagentlock/control-plane/internal/auth"
+	"github.com/openagentlock/openagentlock/control-plane/internal/guardrails"
 	"github.com/openagentlock/openagentlock/control-plane/internal/policy"
 	"github.com/openagentlock/openagentlock/control-plane/internal/storage"
 )
@@ -27,6 +28,7 @@ type route struct {
 type Deps struct {
 	Store         storage.Storage
 	Policy        *policy.Policy
+	Guardrails    *guardrails.Service
 	PinStorePath  string
 	AgentlockHome string
 	// PolicyPath is the on-disk YAML the daemon loaded at startup. When
@@ -49,6 +51,9 @@ func NewRouter(deps ...Deps) http.Handler {
 	// previous one pinned by hash.
 	if d.Policy != nil {
 		bootstrapPolicy(d.Policy)
+	}
+	if d.Guardrails == nil && d.Store != nil {
+		d.Guardrails = guardrails.NewDefaultService(d.Store)
 	}
 
 	routes := []route{
@@ -114,6 +119,12 @@ func NewRouter(deps ...Deps) http.Handler {
 		{"POST", "/v1/false-positives/validate", falsePositiveValidateHandler(d)},
 		{"POST", "/v1/false-positives/apply", falsePositiveApplyHandler(d)},
 		{"GET", "/v1/sessions", sessionsListHandler(d)},
+		{"GET", "/v1/guardrails/providers", guardrailsProvidersHandler(d)},
+		{"POST", "/v1/guardrails/providers/{id}/test", guardrailsProviderTestHandler(d)},
+		{"GET", "/v1/guardrails/catalog", guardrailsCatalogHandler(d)},
+		{"GET", "/v1/guardrails/enabled", guardrailsEnabledGetHandler(d)},
+		{"PUT", "/v1/guardrails/enabled", guardrailsEnabledHandler(d)},
+		{"GET", "/v1/guardrails/traces/{seq}", guardrailsTraceHandler(d)},
 
 		// Ledger.
 		{"GET", "/v1/ledger/tail", ledgerTailHandler(d)},

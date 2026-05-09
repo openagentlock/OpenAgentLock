@@ -16,9 +16,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/openagentlock/openagentlock/control-plane/internal/guardrails"
 	"github.com/openagentlock/openagentlock/control-plane/internal/ledger"
 )
 
@@ -98,14 +100,16 @@ type LedgerEntry struct {
 }
 
 type Memory struct {
-	mu         sync.Mutex
-	sessions   map[string]Session
-	endedSess  map[string]struct{}
-	detects    map[string][]Detection
-	home       string
-	nextSeq    uint64
-	lastLeaf   [32]byte
-	ledgerFile *os.File
+	mu                       sync.Mutex
+	sessions                 map[string]Session
+	endedSess                map[string]struct{}
+	detects                  map[string][]Detection
+	guardrailProviderConfigs map[string]guardrails.ProviderConfig
+	guardrailEnabled         []guardrails.EnabledEntry
+	home                     string
+	nextSeq                  uint64
+	lastLeaf                 [32]byte
+	ledgerFile               *os.File
 
 	subMu       sync.Mutex
 	subscribers map[int]chan LedgerEntry
@@ -134,14 +138,15 @@ func NewMemory(home string) (*Memory, error) {
 		return nil, fmt.Errorf("chmod %s: %w", p, err)
 	}
 	return &Memory{
-		sessions:    make(map[string]Session),
-		endedSess:   make(map[string]struct{}),
-		detects:     make(map[string][]Detection),
-		home:        home,
-		ledgerFile:  f,
-		nextSeq:     nextSeq,
-		lastLeaf:    lastLeaf,
-		subscribers: make(map[int]chan LedgerEntry),
+		sessions:                 make(map[string]Session),
+		endedSess:                make(map[string]struct{}),
+		detects:                  make(map[string][]Detection),
+		guardrailProviderConfigs: make(map[string]guardrails.ProviderConfig),
+		home:                     home,
+		ledgerFile:               f,
+		nextSeq:                  nextSeq,
+		lastLeaf:                 lastLeaf,
+		subscribers:              make(map[int]chan LedgerEntry),
 	}, nil
 }
 
@@ -162,6 +167,62 @@ func (m *Memory) GetDetections(_ context.Context, sessionID string) ([]Detection
 		return nil, ErrSessionNotFound
 	}
 	return append([]Detection(nil), m.detects[sessionID]...), nil
+}
+
+func (m *Memory) SaveGuardrailProviderConfig(_ context.Context, cfg guardrails.ProviderConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.guardrailProviderConfigs == nil {
+		m.guardrailProviderConfigs = map[string]guardrails.ProviderConfig{}
+	}
+	cfg.Metadata = cloneStringMap(cfg.Metadata)
+	m.guardrailProviderConfigs[cfg.ProviderID] = cfg
+	return nil
+}
+
+func (m *Memory) GetGuardrailProviderConfig(_ context.Context, providerID string) (guardrails.ProviderConfig, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cfg, ok := m.guardrailProviderConfigs[providerID]
+	if !ok {
+		return guardrails.ProviderConfig{}, false, nil
+	}
+	cfg.Metadata = cloneStringMap(cfg.Metadata)
+	return cfg, true, nil
+}
+
+func (m *Memory) ListGuardrailProviderConfigs(_ context.Context) ([]guardrails.ProviderConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]guardrails.ProviderConfig, 0, len(m.guardrailProviderConfigs))
+	for _, cfg := range m.guardrailProviderConfigs {
+		cfg.Metadata = cloneStringMap(cfg.Metadata)
+		out = append(out, cfg)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ProviderID < out[j].ProviderID
+	})
+	return out, nil
+}
+
+func (m *Memory) SaveGuardrailEnabled(_ context.Context, entries []guardrails.EnabledEntry) ([]guardrails.EnabledEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.guardrailEnabled = append([]guardrails.EnabledEntry(nil), entries...)
+	return cloneEnabledEntries(m.guardrailEnabled), nil
+}
+
+func (m *Memory) ListGuardrailEnabled(_ context.Context) ([]guardrails.EnabledEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return cloneEnabledEntries(m.guardrailEnabled), nil
+}
+
+func cloneEnabledEntries(entries []guardrails.EnabledEntry) []guardrails.EnabledEntry {
+	if len(entries) == 0 {
+		return []guardrails.EnabledEntry{}
+	}
+	return append([]guardrails.EnabledEntry(nil), entries...)
 }
 
 // Subscribe returns a channel that receives every entry AppendLedger
@@ -415,4 +476,15 @@ func (m *Memory) AppendLedger(_ context.Context, in AppendInput) (LedgerEntry, e
 	// avoid holding both locks; subscriber sends are non-blocking anyway.
 	go m.broadcast(entry)
 	return entry, nil
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
