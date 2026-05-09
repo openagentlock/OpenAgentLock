@@ -16,12 +16,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/openagentlock/openagentlock/control-plane/internal/api"
 	"github.com/openagentlock/openagentlock/control-plane/internal/auth"
 	"github.com/openagentlock/openagentlock/control-plane/internal/dashboard"
+	"github.com/openagentlock/openagentlock/control-plane/internal/guardrails"
 	"github.com/openagentlock/openagentlock/control-plane/internal/policy"
 	"github.com/openagentlock/openagentlock/control-plane/internal/storage"
 )
@@ -45,6 +47,11 @@ func main() {
 		log.Fatalf("open storage: %v", err)
 	}
 	defer store.Close()
+	if seeded, err := seedGuardrailProviderKeys(context.Background(), store, os.Getenv); err != nil {
+		log.Fatalf("seed guardrail provider keys: %v", err)
+	} else if len(seeded) > 0 {
+		log.Printf("guardrail provider keys loaded into memory: %s", strings.Join(seeded, ","))
+	}
 
 	pol, err := loadPolicy(os.Getenv("AGENTLOCK_POLICY"))
 	if err != nil {
@@ -118,6 +125,36 @@ func main() {
 	_ = srv.Shutdown(ctx)
 	_ = dashSrv.Shutdown(ctx)
 	log.Printf("control-plane stopped")
+}
+
+type guardrailKeyStore interface {
+	SaveGuardrailProviderConfig(context.Context, guardrails.ProviderConfig) error
+}
+
+func seedGuardrailProviderKeys(ctx context.Context, store guardrailKeyStore, getenv func(string) string) ([]string, error) {
+	envs := []struct {
+		providerID string
+		envName    string
+	}{
+		{providerID: "nvidia", envName: "NVIDIA_API_KEY"},
+		{providerID: "openrouter", envName: "OPENROUTER_API_KEY"},
+	}
+	seeded := make([]string, 0, len(envs))
+	for _, item := range envs {
+		apiKey := strings.TrimSpace(getenv(item.envName))
+		if apiKey == "" {
+			continue
+		}
+		if err := store.SaveGuardrailProviderConfig(ctx, guardrails.ProviderConfig{
+			ProviderID: item.providerID,
+			APIKey:     guardrails.SecretString(apiKey),
+			Metadata:   map[string]string{"source": "env:" + item.envName},
+		}); err != nil {
+			return seeded, err
+		}
+		seeded = append(seeded, item.providerID)
+	}
+	return seeded, nil
 }
 
 // runHealthProbe is invoked when the binary is run as `agentlockd --health`

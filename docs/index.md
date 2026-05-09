@@ -115,6 +115,9 @@ docker pull ghcr.io/openagentlock/agentlockd:latest
 
 # 2. Start it (drops a docker-compose example in your CWD)
 curl -O https://raw.githubusercontent.com/openagentlock/openagentlock/main/docker-compose.yml
+# Optional external guardrails:
+# export NVIDIA_API_KEY=...
+# export OPENROUTER_API_KEY=...
 docker compose up -d
 
 # 3. Install the CLI and wire up your agents

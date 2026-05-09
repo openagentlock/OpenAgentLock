@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/openagentlock/openagentlock/control-plane/internal/guardrails"
 )
 
 func newTestStore(t *testing.T) (*Memory, string) {
@@ -258,5 +262,77 @@ func TestMemory_LedgerFileCreatedMode0600(t *testing.T) {
 	}
 	if st.Mode().Perm() != 0o600 {
 		t.Fatalf("ledger.jsonl mode = %v, want 0600", st.Mode().Perm())
+	}
+}
+
+func TestMemoryStore_GuardrailStateRoundTrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+
+	cfg := guardrails.ProviderConfig{
+		ProviderID: "nvidia",
+		APIKey:     guardrails.SecretString("nvapi-test"),
+		Metadata:   map[string]string{"region": "us-west"},
+	}
+	cfg2 := guardrails.ProviderConfig{
+		ProviderID: "openrouter",
+		APIKey:     guardrails.SecretString("sk-or-test"),
+		Metadata:   map[string]string{"tier": "dev"},
+	}
+	if err := s.SaveGuardrailProviderConfig(ctx, cfg2); err != nil {
+		t.Fatalf("SaveGuardrailProviderConfig second: %v", err)
+	}
+	if err := s.SaveGuardrailProviderConfig(ctx, cfg); err != nil {
+		t.Fatalf("SaveGuardrailProviderConfig: %v", err)
+	}
+
+	gotCfg, ok, err := s.GetGuardrailProviderConfig(ctx, "nvidia")
+	if err != nil {
+		t.Fatalf("GetGuardrailProviderConfig: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected provider config to exist")
+	}
+	if !reflect.DeepEqual(cfg, gotCfg) {
+		t.Fatalf("provider config = %+v ok=%v", gotCfg, ok)
+	}
+	if leaked := fmt.Sprintf("%+v", gotCfg); strings.Contains(leaked, "nvapi-test") {
+		t.Fatalf("provider config formatting leaked API key: %s", leaked)
+	}
+
+	gotList, err := s.ListGuardrailProviderConfigs(ctx)
+	if err != nil {
+		t.Fatalf("ListGuardrailProviderConfigs: %v", err)
+	}
+	wantList := []guardrails.ProviderConfig{cfg, cfg2}
+	if !reflect.DeepEqual(wantList, gotList) {
+		t.Fatalf("provider config list mismatch: want %+v got %+v", wantList, gotList)
+	}
+
+	wantEnabled := []guardrails.EnabledEntry{
+		{ProviderID: "nvidia", EntryID: "llama-3.1-nemoguard-8b-content-safety"},
+	}
+	if saved, err := s.SaveGuardrailEnabled(ctx, wantEnabled); err != nil {
+		t.Fatalf("SaveGuardrailEnabled: %v", err)
+	} else if !reflect.DeepEqual(wantEnabled, saved) {
+		t.Fatalf("saved enabled mismatch: want %+v got %+v", wantEnabled, saved)
+	}
+	gotEnabled, err := s.ListGuardrailEnabled(ctx)
+	if err != nil {
+		t.Fatalf("ListGuardrailEnabled: %v", err)
+	}
+	if !reflect.DeepEqual(wantEnabled, gotEnabled) {
+		t.Fatalf("enabled mismatch: want %+v got %+v", wantEnabled, gotEnabled)
+	}
+}
+
+func TestMemoryStore_GuardrailEnabledEmptyListIsNonNil(t *testing.T) {
+	s, _ := newTestStore(t)
+	got, err := s.ListGuardrailEnabled(context.Background())
+	if err != nil {
+		t.Fatalf("ListGuardrailEnabled: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("enabled entries should be empty slice, got nil")
 	}
 }

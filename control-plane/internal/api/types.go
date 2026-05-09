@@ -3,7 +3,11 @@
 
 package api
 
-import "time"
+import (
+	"time"
+
+	"github.com/openagentlock/openagentlock/control-plane/internal/guardrails"
+)
 
 type Verdict string
 
@@ -31,12 +35,12 @@ type Session struct {
 }
 
 type GateCheckRequest struct {
-	SessionID string                 `json:"session_id"`
-	Source    string                 `json:"source"` // "claude-code" | "mcp-proxy" | ...
-	Tool      string                 `json:"tool"`
-	Input     map[string]any         `json:"input"`
-	Cwd       string                 `json:"cwd,omitempty"`
-	Meta      map[string]any         `json:"meta,omitempty"`
+	SessionID string         `json:"session_id"`
+	Source    string         `json:"source"` // "claude-code" | "mcp-proxy" | ...
+	Tool      string         `json:"tool"`
+	Input     map[string]any `json:"input"`
+	Cwd       string         `json:"cwd,omitempty"`
+	Meta      map[string]any `json:"meta,omitempty"`
 }
 
 type GateCheckResponse struct {
@@ -71,8 +75,26 @@ type ApprovalDecision struct {
 }
 
 type LedgerRoot struct {
-	Root         string    `json:"root"`
-	Seq          uint64    `json:"seq"`
-	GenesisPK    string    `json:"genesis_pubkey"`
-	ComputedAt   time.Time `json:"computed_at"`
+	Root       string    `json:"root"`
+	Seq        uint64    `json:"seq"`
+	GenesisPK  string    `json:"genesis_pubkey"`
+	ComputedAt time.Time `json:"computed_at"`
+}
+
+type GuardrailProviderView struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Status       string   `json:"status"`
+	Capabilities []string `json:"capabilities"`
+	Configured   bool     `json:"configured"`
+}
+
+type GuardrailCatalogResponse struct {
+	Entries        []guardrails.CatalogEntry          `json:"entries"`
+	ProviderErrors []guardrails.CatalogProviderError `json:"provider_errors,omitempty"`
+}
+
+type GuardrailTraceResponse struct {
+	LedgerSeq uint64           `json:"ledger_seq"`
+	Trace     guardrails.Trace `json:"trace"`
 }

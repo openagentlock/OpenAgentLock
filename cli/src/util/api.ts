@@ -51,6 +51,11 @@ export interface ApiClient {
   falsePositiveCase(seq: number, includeRaw?: boolean): Promise<FalsePositiveCaseResponse>;
   falsePositiveValidate(req: FalsePositiveValidateRequest): Promise<FalsePositiveValidateResponse>;
   falsePositiveApply(req: FalsePositiveApplyRequest): Promise<FalsePositiveApplyResponse>;
+  guardrailProviders(): Promise<GuardrailProvidersResponse>;
+  guardrailCatalog(): Promise<GuardrailCatalogResponse>;
+  guardrailEnabled(): Promise<GuardrailEnabledResponse>;
+  saveGuardrailEnabled(entries: GuardrailEnabledEntry[]): Promise<GuardrailEnabledResponse>;
+  guardrailTrace(seq: number): Promise<GuardrailTraceResponse>;
 }
 
 export type InsightWindow = "1h" | "24h" | "7d" | "all";
@@ -226,6 +231,61 @@ export interface FalsePositiveApplyResponse {
   disabled_id: string;
   replacement_id: string;
   needs_reload: boolean;
+}
+
+export interface GuardrailProviderView {
+  id: string;
+  name: string;
+  status: string;
+  capabilities: string[];
+  configured: boolean;
+}
+
+export interface GuardrailCatalogEntry {
+  provider_id: string;
+  entry_id: string;
+  name: string;
+  kind: "classifier_model" | "account_policy";
+  description?: string;
+  supports_runtime_enforcement: boolean;
+  metadata?: Record<string, string>;
+}
+
+export interface GuardrailEnabledEntry {
+  provider_id: string;
+  entry_id: string;
+}
+
+export interface GuardrailProvidersResponse {
+  providers: GuardrailProviderView[];
+}
+
+export interface GuardrailCatalogResponse {
+  entries: GuardrailCatalogEntry[];
+  provider_errors?: Array<{
+    provider_id: string;
+    detail: string;
+  }>;
+}
+
+export interface GuardrailEnabledResponse {
+  entries: GuardrailEnabledEntry[];
+}
+
+export interface GuardrailTraceResponse {
+  ledger_seq: number;
+  trace: {
+    local_policy_verdict: string;
+    guardrail_verdict: string;
+    final_verdict: string;
+    stages: Array<{
+      provider_id: string;
+      entry_id: string;
+      verdict: string;
+      latency_ms: number;
+      details?: Record<string, string>;
+    }>;
+  };
 }
 
 export interface AuthModeResponse {
@@ -798,6 +858,63 @@ export function apiClient(baseUrl?: string, initialToken?: string | null): ApiCl
         throw new Error(`false_positive.apply: ${res.status} ${res.statusText} ${body}`);
       }
       return (await res.json()) as FalsePositiveApplyResponse;
+    },
+
+    async guardrailProviders(): Promise<GuardrailProvidersResponse> {
+      const res = await fetch(`${url}/v1/guardrails/providers`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`guardrails.providers: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as GuardrailProvidersResponse;
+    },
+
+    async guardrailCatalog(): Promise<GuardrailCatalogResponse> {
+      const res = await fetch(`${url}/v1/guardrails/catalog`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`guardrails.catalog: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as GuardrailCatalogResponse;
+    },
+
+    async guardrailEnabled(): Promise<GuardrailEnabledResponse> {
+      const res = await fetch(`${url}/v1/guardrails/enabled`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`guardrails.enabled: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as GuardrailEnabledResponse;
+    },
+
+    async saveGuardrailEnabled(entries: GuardrailEnabledEntry[]): Promise<GuardrailEnabledResponse> {
+      const res = await fetch(`${url}/v1/guardrails/enabled`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ entries }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`guardrails.enabled.save: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as GuardrailEnabledResponse;
+    },
+
+    async guardrailTrace(seq: number): Promise<GuardrailTraceResponse> {
+      const res = await fetch(`${url}/v1/guardrails/traces/${encodeURIComponent(String(seq))}`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`guardrails.trace: ${res.status} ${res.statusText} ${body}`);
+      }
+      return (await res.json()) as GuardrailTraceResponse;
     },
   };
 
