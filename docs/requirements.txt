@@ -1,5 +1,5 @@
 mkdocs==1.6.1
 mkdocs-material==9.7.6
-pymdown-extensions==10.21.2
+pymdown-extensions==10.21.3
 pillow==12.2.0
 cairosvg==2.9.0
